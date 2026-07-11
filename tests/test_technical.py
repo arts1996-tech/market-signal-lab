@@ -1,6 +1,15 @@
 import pandas as pd
 
-from app.analysis.technical import atr, daily_returns, macd, rsi
+from app.analysis.technical import (
+    atr,
+    bollinger_bands,
+    daily_returns,
+    macd,
+    short_term_indicator_frame,
+    short_term_signal_snapshot,
+    rsi,
+    simple_moving_average,
+)
 
 
 def test_daily_returns_does_not_forward_fill_missing_values():
@@ -38,3 +47,26 @@ def test_atr_uses_true_range():
 
     assert result.dropna().iloc[0] == 2
 
+
+def test_moving_average_and_bollinger_bands():
+    close = pd.Series(range(1, 31), dtype=float)
+
+    ma = simple_moving_average(close, 5)
+    bands = bollinger_bands(close, 20)
+
+    assert ma.dropna().iloc[0] == 3
+    assert {"bb_upper", "bb_middle", "bb_lower"} == set(bands.columns)
+    assert bands["bb_upper"].dropna().iloc[-1] > bands["bb_lower"].dropna().iloc[-1]
+
+
+def test_short_term_indicator_frame_and_snapshot():
+    close = pd.Series(range(100, 180), dtype=float)
+
+    indicators = short_term_indicator_frame(close)
+    snapshot = short_term_signal_snapshot(indicators)
+
+    assert "sma_20" in indicators.columns
+    assert "rsi_14" in indicators.columns
+    assert "macd" in indicators.columns
+    assert 0 <= snapshot["score"] <= 100
+    assert snapshot["label"]

@@ -22,6 +22,7 @@ GitHub: https://github.com/arts1996-tech/market-signal-lab
 - 20日、60日、120日、250日相関
 - 60日ローリング相関
 - 米国株指数と日本株指数の相関結果をDBへ蓄積し、後続分析で再利用できる構成
+- 短期分析タブで移動平均、EMA、RSI、MACD、ボリンジャーバンド、簡易短期スコアを表示
 - 指数比較チャート、相関グラフ、取得ログ、ジョブ履歴
 - pytestによる主要ロジックのテスト
 
@@ -86,6 +87,20 @@ docker compose exec app python jobs/collect_fx.py
 docker compose exec app python jobs/run_mid_term_analysis.py
 docker compose exec app python jobs/run_backtest.py
 ```
+
+## 短期分析
+
+Streamlitの「短期分析」タブでは、取得済みの日次終値を使って以下を表示します。
+
+- 5日、20日、25日、50日、75日移動平均
+- EMA 12、EMA 26
+- RSI 14
+- MACD、シグナル、ヒストグラム
+- ボリンジャーバンド
+- 1日、5日、20日騰落率
+- 簡易短期スコアと加点・減点要因
+
+FRED由来の指数データは高値、安値、出来高を含まないため、ローソク足、出来高、ATRは今後のデータソース追加後に表示します。
 
 ## テスト
 

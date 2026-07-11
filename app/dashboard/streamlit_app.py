@@ -2,11 +2,12 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 from app.database.repositories import latest_correlation_results, latest_fetch_logs, latest_job_runs
 from app.database.session import SessionLocal
-from app.services.analysis_service import DEFAULT_SYMBOLS, load_market_analysis
+from app.services.analysis_service import DEFAULT_SYMBOLS, load_market_analysis, load_short_term_analysis
 
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -33,10 +34,18 @@ def load_data() -> dict:
         return load_market_analysis(session, DEFAULT_SYMBOLS)
 
 
+@st.cache_data(ttl=300)
+def load_short_data(symbol: str) -> dict:
+    with SessionLocal() as session:
+        return load_short_term_analysis(session, symbol)
+
+
 st.title("Market Signal Lab")
 st.caption("短期取引と中期投資の判断材料を整理する分析アプリです。自動売買や投資助言は行いません。")
 
-tab_market, tab_correlation, tab_system = st.tabs(["市場ダッシュボード", "市場連動性", "システム管理"])
+tab_market, tab_short, tab_correlation, tab_system = st.tabs(
+    ["市場ダッシュボード", "短期分析", "市場連動性", "システム管理"]
+)
 
 analysis = load_data()
 wide = analysis["wide"]
@@ -69,6 +78,87 @@ with tab_market:
             .assign(fetched_at_jst=lambda df: df["fetched_at"].map(format_jst))
         )
         st.dataframe(source_view[["symbol", "source", "fetched_at_jst"]], use_container_width=True)
+
+with tab_short:
+    st.subheader("短期分析")
+    selected_symbol = st.selectbox("対象", DEFAULT_SYMBOLS, index=0)
+    short = load_short_data(selected_symbol)
+    indicators = short["indicators"]
+    if indicators.empty:
+        st.warning("短期分析に必要な価格データがありません。")
+    else:
+        snapshot = short["snapshot"]
+        latest = indicators.dropna(subset=["close"]).iloc[-1]
+        metrics = st.columns(4)
+        metrics[0].metric("判定", snapshot["label"])
+        metrics[1].metric("短期スコア", f"{snapshot['score']} / 100")
+        metrics[2].metric("終値", f"{latest['close']:,.2f}")
+        metrics[3].metric("20日騰落率", format_percent(latest.get("return_20d")))
+
+        chart_frame = indicators.tail(260).reset_index().rename(columns={"index": "price_time"})
+        price_fig = go.Figure()
+        price_fig.add_trace(
+            go.Scatter(x=chart_frame["price_time"], y=chart_frame["close"], name="終値", mode="lines")
+        )
+        for column, label in [("sma_5", "5日MA"), ("sma_20", "20日MA"), ("sma_50", "50日MA"), ("sma_75", "75日MA")]:
+            price_fig.add_trace(
+                go.Scatter(x=chart_frame["price_time"], y=chart_frame[column], name=label, mode="lines")
+            )
+        price_fig.add_trace(
+            go.Scatter(
+                x=chart_frame["price_time"],
+                y=chart_frame["bb_upper"],
+                name="BB上限",
+                mode="lines",
+                line={"dash": "dot"},
+            )
+        )
+        price_fig.add_trace(
+            go.Scatter(
+                x=chart_frame["price_time"],
+                y=chart_frame["bb_lower"],
+                name="BB下限",
+                mode="lines",
+                line={"dash": "dot"},
+            )
+        )
+        price_fig.update_layout(xaxis_title="日付", yaxis_title="価格")
+        st.plotly_chart(price_fig, use_container_width=True)
+
+        rsi_fig = go.Figure()
+        rsi_fig.add_trace(
+            go.Scatter(x=chart_frame["price_time"], y=chart_frame["rsi_14"], name="RSI 14", mode="lines")
+        )
+        rsi_fig.add_hline(y=70, line_dash="dot")
+        rsi_fig.add_hline(y=30, line_dash="dot")
+        rsi_fig.update_layout(xaxis_title="日付", yaxis_title="RSI")
+        st.plotly_chart(rsi_fig, use_container_width=True)
+
+        macd_fig = go.Figure()
+        macd_fig.add_trace(
+            go.Scatter(x=chart_frame["price_time"], y=chart_frame["macd"], name="MACD", mode="lines")
+        )
+        macd_fig.add_trace(
+            go.Scatter(x=chart_frame["price_time"], y=chart_frame["signal"], name="シグナル", mode="lines")
+        )
+        macd_fig.add_trace(
+            go.Bar(x=chart_frame["price_time"], y=chart_frame["histogram"], name="ヒストグラム")
+        )
+        macd_fig.update_layout(xaxis_title="日付", yaxis_title="MACD")
+        st.plotly_chart(macd_fig, use_container_width=True)
+
+        reason_cols = st.columns(2)
+        with reason_cols[0]:
+            st.markdown("**加点要因**")
+            st.write(snapshot["positive_reasons"] or ["目立った加点要因はありません"])
+        with reason_cols[1]:
+            st.markdown("**減点要因**")
+            st.write(snapshot["negative_reasons"] or ["目立った減点要因はありません"])
+
+        st.caption(
+            "FRED由来の指数データは高値、安値、出来高を含まないため、ローソク足、出来高、ATRは今後のデータソース追加後に表示します。"
+        )
+        st.caption(f"データソース: {short.get('source', '-')} / 最終取得: {format_jst(short.get('fetched_at'))}")
 
 with tab_correlation:
     st.subheader("NASDAQ Composite 前営業日と日経平均 当日の対応")

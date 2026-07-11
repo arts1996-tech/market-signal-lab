@@ -12,6 +12,7 @@ from app.analysis.correlation import (
     rolling_correlation,
     us_japan_pair_frame,
 )
+from app.analysis.technical import short_term_indicator_frame, short_term_signal_snapshot
 from app.database.repositories import market_prices_frame, upsert_correlation_results
 
 
@@ -165,3 +166,22 @@ def persist_us_japan_correlation_results(session: Session, symbols: list[str] | 
     count = upsert_correlation_results(session, records)
     session.commit()
     return count
+
+
+def load_short_term_analysis(session: Session, symbol: str) -> dict:
+    prices = market_prices_frame(session, [symbol])
+    if prices.empty:
+        return {"prices": prices, "indicators": pd.DataFrame(), "snapshot": short_term_signal_snapshot(pd.DataFrame())}
+
+    frame = prices.copy()
+    frame["price_time"] = pd.to_datetime(frame["price_time"], utc=True).dt.normalize()
+    frame["close"] = pd.to_numeric(frame["close"])
+    close = frame.drop_duplicates("price_time").set_index("price_time")["close"].sort_index()
+    indicators = short_term_indicator_frame(close)
+    return {
+        "prices": frame,
+        "indicators": indicators,
+        "snapshot": short_term_signal_snapshot(indicators),
+        "source": frame["source"].dropna().iloc[-1] if not frame["source"].dropna().empty else "-",
+        "fetched_at": frame["fetched_at"].dropna().iloc[-1] if not frame["fetched_at"].dropna().empty else None,
+    }
