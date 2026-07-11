@@ -236,13 +236,13 @@ def collect_jquants_daily_bars(
 def collect_jquants_listed_info(session: Session, date: str | None = None, limit: int | None = None) -> dict:
     client = JQuantsClient()
     try:
-        assets, latency_ms = client.fetch_listed_info(date=date)
+        assets, latency_ms, endpoint = client.fetch_listed_info(date=date)
         selected_assets = assets[:limit] if limit else assets
         upsert_assets(session, selected_assets)
         insert_api_fetch_log(
             session,
             provider="jquants",
-            endpoint="/v2/listed/info",
+            endpoint=endpoint,
             status="success",
             asset_symbol=None,
             fetched_at=datetime.now(UTC),

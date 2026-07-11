@@ -12,6 +12,11 @@ from app.core.exceptions import DataProviderError
 
 class JQuantsClient:
     provider = "jquants"
+    listed_info_endpoints = (
+        "/v2/equities/listed/info",
+        "/v2/listed/info",
+        "/v1/listed/info",
+    )
 
     def __init__(self) -> None:
         self.settings = get_settings()
@@ -60,22 +65,27 @@ class JQuantsClient:
         stop=stop_after_attempt(3),
         reraise=True,
     )
-    def fetch_listed_info(self, date: str | None = None) -> tuple[list[dict[str, Any]], int]:
+    def fetch_listed_info(self, date: str | None = None) -> tuple[list[dict[str, Any]], int, str]:
         params: dict[str, Any] = {}
         if date:
             params["date"] = date
 
         started = perf_counter()
+        last_error: DataProviderError | None = None
         with httpx.Client(timeout=self.settings.api_timeout_seconds) as client:
-            response = client.get(
-                f"{self.settings.jquants_base_url}/v2/listed/info",
-                params=params,
-                headers=self._headers(),
-            )
-            if response.status_code >= 400:
-                raise DataProviderError(build_http_error_message(response))
+            for endpoint in self.listed_info_endpoints:
+                response = client.get(
+                    f"{self.settings.jquants_base_url}{endpoint}",
+                    params=params,
+                    headers=self._headers(),
+                )
+                if response.status_code < 400:
+                    latency_ms = int((perf_counter() - started) * 1000)
+                    return parse_listed_info_response(response.json()), latency_ms, endpoint
+                last_error = DataProviderError(build_http_error_message(response))
         latency_ms = int((perf_counter() - started) * 1000)
-        return parse_listed_info_response(response.json()), latency_ms
+        message = str(last_error) if last_error else "J-Quants listed info request failed"
+        raise DataProviderError(f"{message}. tried_endpoints={list(self.listed_info_endpoints)} latency_ms={latency_ms}")
 
     def respect_free_plan_rate_limit(self) -> None:
         if self.settings.jquants_min_request_interval_seconds:

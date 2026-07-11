@@ -5,6 +5,7 @@ import httpx
 from app.collectors.jquants import (
     build_http_error_message,
     find_record_list,
+    JQuantsClient,
     parse_daily_bars_response,
     parse_listed_info_response,
 )
@@ -154,3 +155,8 @@ def test_parse_listed_info_response_builds_assets():
 def test_parse_listed_info_response_reports_unparsable_keys():
     with pytest.raises(DataProviderError, match="No parsable J-Quants listed info"):
         parse_listed_info_response({"info": [{"foo": "bar"}]})
+
+
+def test_listed_info_endpoint_candidates_try_equities_path_first():
+    assert JQuantsClient.listed_info_endpoints[0] == "/v2/equities/listed/info"
+    assert "/v2/listed/info" in JQuantsClient.listed_info_endpoints
