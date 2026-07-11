@@ -44,7 +44,7 @@ services:
     command: >
       sh -c "alembic upgrade head &&
              python jobs/seed_sample_data.py &&
-             streamlit run app/dashboard/app.py --server.address=0.0.0.0 --server.port=8501"
+             streamlit run app/dashboard/streamlit_app.py --server.address=0.0.0.0 --server.port=8501"
 
 volumes:
   postgres_data:

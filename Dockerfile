@@ -19,4 +19,4 @@ COPY . .
 
 EXPOSE 8501
 
-CMD ["streamlit", "run", "app/dashboard/app.py", "--server.address=0.0.0.0", "--server.port=8501"]
+CMD ["streamlit", "run", "app/dashboard/streamlit_app.py", "--server.address=0.0.0.0", "--server.port=8501"]

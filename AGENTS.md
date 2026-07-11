@@ -33,7 +33,7 @@ Market Signal Lab
 │   ├── analysis/       # 日次リターン、相関、回帰、スコア、バックテスト
 │   ├── collectors/     # FREDなど外部APIクライアント
 │   ├── core/           # 設定、ログ、例外
-│   ├── dashboard/      # Streamlit画面
+│   ├── dashboard/      # Streamlit画面。入口は streamlit_app.py
 │   ├── database/       # SQLAlchemyモデル、Repository、Alembic
 │   └── services/       # 収集・分析サービス
 ├── docker/             # cron例など運用補助
@@ -94,4 +94,3 @@ python3.12 -m venv .venv312
 - StreamlitでNASDAQ、Dow Jones、S&P 500、日経平均、USD/JPYの比較チャートを確認できる。
 - NASDAQ Composite前営業日と日経平均当日の相関分析を確認できる。
 - pytestが通る。
-
