@@ -1,0 +1,49 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-market_signal_lab}
+      POSTGRES_USER: ${POSTGRES_USER:-market}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-market_password}
+      TZ: Asia/Tokyo
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-market} -d ${POSTGRES_DB:-market_signal_lab}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://market:market_password@db:5432/market_signal_lab}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Tokyo}
+      FRED_API_KEY: ${FRED_API_KEY:-}
+      FRED_BASE_URL: ${FRED_BASE_URL:-https://api.stlouisfed.org/fred}
+      BACKUP_DIR: ${BACKUP_DIR:-/backups}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8501:8501"
+    volumes:
+      - .:/app
+      - ./logs:/app/logs
+      - ./backups:/backups
+    command: >
+      sh -c "alembic upgrade head &&
+             python jobs/seed_sample_data.py &&
+             streamlit run app/dashboard/app.py --server.address=0.0.0.0 --server.port=8501"
+
+volumes:
+  postgres_data:

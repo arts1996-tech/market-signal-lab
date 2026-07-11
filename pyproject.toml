@@ -1,0 +1,40 @@
+[project]
+name = "market-signal-lab"
+version = "0.1.0"
+description = "Japanese stock and ETF decision support app for short-term and medium-term analysis."
+requires-python = ">=3.12"
+dependencies = [
+  "alembic>=1.13.2",
+  "httpx>=0.27.0",
+  "numpy>=1.26.4",
+  "pandas>=2.2.2",
+  "plotly>=5.22.0",
+  "psycopg[binary]>=3.2.1",
+  "pydantic-settings>=2.4.0",
+  "sqlalchemy>=2.0.32",
+  "statsmodels>=0.14.2",
+  "streamlit>=1.37.0",
+  "tenacity>=8.5.0",
+]
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*", "jobs*"]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.2",
+  "pytest-cov>=5.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"

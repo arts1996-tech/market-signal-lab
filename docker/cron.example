@@ -1,0 +1,12 @@
+# Raspberry Pi example. Run these inside the app container or map to docker compose exec.
+SHELL=/bin/sh
+TZ=Asia/Tokyo
+
+30 6 * * 1-5 cd /app && python jobs/collect_us_market.py
+40 6 * * 1-5 cd /app && python jobs/run_short_term_analysis.py
+30 8 * * 1-5 cd /app && python jobs/collect_fx.py
+40 15 * * 1-5 cd /app && python jobs/collect_japan_market.py
+0 16 * * 1-5 cd /app && python jobs/run_short_term_analysis.py
+30 16 * * 1-5 cd /app && python jobs/run_mid_term_analysis.py
+0 23 * * * cd /app && python jobs/backup_database.py
+
