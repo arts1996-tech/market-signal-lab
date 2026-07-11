@@ -10,6 +10,8 @@ GitHub: https://github.com/arts1996-tech/market-signal-lab
 
 本システムは原則として無料で利用できる技術、サービス、API、ライブラリで開発します。有料サービス、有料API、有料プランが必要な機能、無料枠の条件が不明なもの、将来的な課金リスクを判断しきれないものは、導入前に必ず確認します。
 
+データソースの採用方針は [docs/data_sources.md](/Users/tsurusumu/Projects/market-signal-lab/docs/data_sources.md) にまとめます。
+
 ## 初回実装範囲
 
 - Python 3.12 / Streamlit / PostgreSQL / SQLAlchemy / Alembic
