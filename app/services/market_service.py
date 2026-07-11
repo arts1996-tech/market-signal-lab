@@ -11,6 +11,7 @@ from app.database.repositories import (
     ASSET_DEFINITIONS,
     insert_api_fetch_log,
     insert_job_run,
+    list_assets_by_source,
     upsert_assets,
     upsert_market_prices,
 )
@@ -230,6 +231,101 @@ def collect_jquants_daily_bars(
         )
         session.commit()
         return {"status": "error", "message": message}
+
+
+def collect_jquants_listed_info(session: Session, date: str | None = None, limit: int | None = None) -> dict:
+    client = JQuantsClient()
+    try:
+        assets, latency_ms = client.fetch_listed_info(date=date)
+        selected_assets = assets[:limit] if limit else assets
+        upsert_assets(session, selected_assets)
+        insert_api_fetch_log(
+            session,
+            provider="jquants",
+            endpoint="/v2/listed/info",
+            status="success",
+            asset_symbol=None,
+            fetched_at=datetime.now(UTC),
+            latency_ms=latency_ms,
+            message=f"Saved {len(selected_assets)} listed assets",
+        )
+        session.commit()
+        return {"status": "success", "saved_assets": len(selected_assets), "latency_ms": latency_ms}
+    except DataProviderError as exc:
+        message = concise_error_message(exc)
+        insert_api_fetch_log(
+            session,
+            provider="jquants",
+            endpoint="/v2/listed/info",
+            status="skipped",
+            asset_symbol=None,
+            fetched_at=datetime.now(UTC),
+            latency_ms=None,
+            message=message,
+        )
+        session.commit()
+        return {"status": "skipped", "message": message}
+    except Exception as exc:
+        session.rollback()
+        message = concise_error_message(exc)
+        logger.exception("J-Quants listed info collection failed: %s", message)
+        insert_api_fetch_log(
+            session,
+            provider="jquants",
+            endpoint="/v2/listed/info",
+            status="error",
+            asset_symbol=None,
+            fetched_at=datetime.now(UTC),
+            latency_ms=None,
+            message=message,
+        )
+        session.commit()
+        return {"status": "error", "message": message}
+
+
+def collect_jquants_daily_batch(
+    session: Session,
+    date: str,
+    codes: list[str] | None = None,
+    limit: int | None = None,
+    asset_types: list[str] | None = None,
+) -> dict:
+    target_names: dict[str, str] = {}
+    if codes:
+        target_codes = codes[:limit] if limit else codes
+    else:
+        assets = list_assets_by_source(session, "jquants", asset_types=asset_types or ["stock", "etf"], limit=limit)
+        target_codes = [asset.symbol for asset in assets]
+        target_names = {asset.symbol: asset.name for asset in assets}
+
+    client = JQuantsClient()
+    result: dict[str, dict] = {}
+    for index, code in enumerate(target_codes):
+        try:
+            item_result = collect_jquants_daily_bars(session, code=code, date=date, name=target_names.get(code))
+            result[code] = item_result
+        finally:
+            if index < len(target_codes) - 1:
+                client.respect_free_plan_rate_limit()
+    success_count = sum(1 for item in result.values() if item.get("status") == "success")
+    skipped_count = sum(1 for item in result.values() if item.get("status") == "skipped")
+    error_count = sum(1 for item in result.values() if item.get("status") == "error")
+    if not target_codes:
+        overall_status = "skipped"
+    elif error_count and not success_count:
+        overall_status = "error"
+    elif error_count or skipped_count:
+        overall_status = "partial"
+    else:
+        overall_status = "success"
+    return {
+        "status": overall_status,
+        "requested": len(target_codes),
+        "success": success_count,
+        "skipped": skipped_count,
+        "error": error_count,
+        "details": result,
+    }
 
 
 def record_job(session: Session, name: str, status: str, started_at: datetime, details: dict) -> None:

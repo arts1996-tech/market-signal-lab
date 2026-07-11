@@ -141,6 +141,20 @@ def latest_fetch_logs(session: Session, limit: int = 20) -> list[ApiFetchLog]:
     return list(session.scalars(select(ApiFetchLog).order_by(ApiFetchLog.fetched_at.desc()).limit(limit)))
 
 
+def list_assets_by_source(
+    session: Session,
+    source: str,
+    asset_types: list[str] | None = None,
+    limit: int | None = None,
+) -> list[Asset]:
+    query = select(Asset).where(Asset.source == source).order_by(Asset.symbol)
+    if asset_types:
+        query = query.where(Asset.asset_type.in_(asset_types))
+    if limit:
+        query = query.limit(limit)
+    return list(session.scalars(query))
+
+
 def upsert_correlation_results(session: Session, rows: Iterable[dict]) -> int:
     payload = list(rows)
     if not payload:

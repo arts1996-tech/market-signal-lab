@@ -54,6 +54,29 @@ class JQuantsClient:
         latency_ms = int((perf_counter() - started) * 1000)
         return parse_daily_bars_response(code, response.json()), latency_ms
 
+    @retry(
+        retry=retry_if_exception_type(httpx.TransportError),
+        wait=wait_exponential(multiplier=1, min=1, max=8),
+        stop=stop_after_attempt(3),
+        reraise=True,
+    )
+    def fetch_listed_info(self, date: str | None = None) -> tuple[list[dict[str, Any]], int]:
+        params: dict[str, Any] = {}
+        if date:
+            params["date"] = date
+
+        started = perf_counter()
+        with httpx.Client(timeout=self.settings.api_timeout_seconds) as client:
+            response = client.get(
+                f"{self.settings.jquants_base_url}/v2/listed/info",
+                params=params,
+                headers=self._headers(),
+            )
+            if response.status_code >= 400:
+                raise DataProviderError(build_http_error_message(response))
+        latency_ms = int((perf_counter() - started) * 1000)
+        return parse_listed_info_response(response.json()), latency_ms
+
     def respect_free_plan_rate_limit(self) -> None:
         if self.settings.jquants_min_request_interval_seconds:
             sleep(self.settings.jquants_min_request_interval_seconds)
@@ -129,6 +152,67 @@ def find_record_list(payload: dict[str, Any] | list[dict[str, Any]]) -> list[dic
         if isinstance(value, list):
             return value
     return None
+
+
+def parse_listed_info_response(payload: dict[str, Any] | list[dict[str, Any]]) -> list[dict[str, Any]]:
+    records = find_listed_info_records(payload)
+    if records is None:
+        raise DataProviderError("Unexpected J-Quants listed info response")
+
+    assets = []
+    for item in records:
+        if not isinstance(item, dict):
+            continue
+        code = pick_value(item, ["Code", "code", "LocalCode", "localCode"])
+        if not code:
+            continue
+        name = pick_value(item, ["CompanyName", "companyName", "Name", "name", "IssueName", "issueName"])
+        market = pick_value(item, ["MarketCodeName", "marketCodeName", "MarketName", "marketName"])
+        sector_17 = pick_value(item, ["Sector17CodeName", "sector17CodeName"])
+        sector_33 = pick_value(item, ["Sector33CodeName", "sector33CodeName"])
+        assets.append(
+            {
+                "symbol": str(code),
+                "name": str(name or f"J-Quants {code}"),
+                "asset_type": classify_jquants_asset_type(item),
+                "currency": "JPY",
+                "exchange": "JPX",
+                "source": "jquants",
+                "metadata_json": {
+                    "market": market,
+                    "sector_17": sector_17,
+                    "sector_33": sector_33,
+                    "raw": item,
+                    "free_plan_note": "J-Quants Free plan data is delayed by 12 weeks.",
+                },
+            }
+        )
+    if not assets and records:
+        first_keys = sorted(records[0].keys()) if isinstance(records[0], dict) else []
+        raise DataProviderError(f"No parsable J-Quants listed info. first_record_keys={first_keys}")
+    return assets
+
+
+def find_listed_info_records(payload: dict[str, Any] | list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    if isinstance(payload, list):
+        return payload
+    for key in ["info", "listed_info", "listedInfo", "data", "items", "rows"]:
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+    return None
+
+
+def classify_jquants_asset_type(item: dict[str, Any]) -> str:
+    name_parts = [
+        str(pick_value(item, ["CompanyName", "companyName", "Name", "name", "IssueName", "issueName"]) or ""),
+        str(pick_value(item, ["Sector17CodeName", "sector17CodeName"]) or ""),
+        str(pick_value(item, ["Sector33CodeName", "sector33CodeName"]) or ""),
+    ]
+    text = " ".join(name_parts).lower()
+    if "etf" in text or "etn" in text or "投信" in text or "上場投資信託" in text:
+        return "etf"
+    return "stock"
 
 
 def pick_value(item: dict[str, Any], keys: list[str]) -> Any:

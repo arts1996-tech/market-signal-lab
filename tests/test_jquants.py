@@ -2,7 +2,12 @@ import pandas as pd
 import pytest
 import httpx
 
-from app.collectors.jquants import build_http_error_message, find_record_list, parse_daily_bars_response
+from app.collectors.jquants import (
+    build_http_error_message,
+    find_record_list,
+    parse_daily_bars_response,
+    parse_listed_info_response,
+)
 from app.core.exceptions import DataProviderError
 
 
@@ -117,3 +122,35 @@ def test_build_http_error_message_summarizes_bad_request():
     assert "J-Quants rejected request (400)" in message
     assert "code/date" in message
     assert "outside available range" in message
+
+
+def test_parse_listed_info_response_builds_assets():
+    payload = {
+        "info": [
+            {
+                "Code": "86970",
+                "CompanyName": "日本取引所グループ",
+                "MarketCodeName": "プライム",
+                "Sector17CodeName": "金融（除く銀行）",
+                "Sector33CodeName": "その他金融業",
+            },
+            {
+                "Code": "13060",
+                "CompanyName": "ＮＥＸＴ　ＦＵＮＤＳ　ＴＯＰＩＸ連動型上場投信",
+                "MarketCodeName": "ETF・ETN",
+            },
+        ]
+    }
+
+    assets = parse_listed_info_response(payload)
+
+    assert assets[0]["symbol"] == "86970"
+    assert assets[0]["name"] == "日本取引所グループ"
+    assert assets[0]["asset_type"] == "stock"
+    assert assets[0]["metadata_json"]["market"] == "プライム"
+    assert assets[1]["asset_type"] == "etf"
+
+
+def test_parse_listed_info_response_reports_unparsable_keys():
+    with pytest.raises(DataProviderError, match="No parsable J-Quants listed info"):
+        parse_listed_info_response({"info": [{"foo": "bar"}]})

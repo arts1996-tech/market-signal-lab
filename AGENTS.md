@@ -86,7 +86,9 @@ Market Signal Lab
 cp .env.example .env
 docker compose up --build
 docker compose exec app python jobs/collect_us_market.py
+docker compose exec app python jobs/collect_jquants_listed_info.py --limit 20
 docker compose exec app python jobs/collect_jquants_daily.py --code 86970 --date 20260401 --name "JPX" --asset-type stock
+docker compose exec app python jobs/collect_jquants_daily_batch.py --date 20260401 --limit 3
 docker compose exec app python jobs/seed_sample_data.py
 docker compose run --rm app pytest
 ```
