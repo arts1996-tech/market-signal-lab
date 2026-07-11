@@ -17,6 +17,13 @@ from app.database.repositories import (
 logger = logging.getLogger(__name__)
 
 
+def concise_error_message(exc: Exception) -> str:
+    message = str(exc).splitlines()[0]
+    if "[SQL:" in message:
+        message = message.split("[SQL:", 1)[0].strip()
+    return f"{exc.__class__.__name__}: {message}"
+
+
 def ensure_asset_master(session: Session) -> dict:
     assets = upsert_assets(session, ASSET_DEFINITIONS)
     session.commit()
@@ -86,7 +93,8 @@ def collect_fred_market_data(session: Session, observation_start: str | None = N
             )
         except DataProviderError as exc:
             logger.warning("FRED collection skipped for %s: %s", symbol, exc)
-            result[symbol] = {"status": "skipped", "message": str(exc)}
+            message = concise_error_message(exc)
+            result[symbol] = {"status": "skipped", "message": message}
             insert_api_fetch_log(
                 session,
                 provider="fred",
@@ -95,11 +103,13 @@ def collect_fred_market_data(session: Session, observation_start: str | None = N
                 asset_symbol=symbol,
                 fetched_at=datetime.now(UTC),
                 latency_ms=None,
-                message=str(exc),
+                message=message,
             )
         except Exception as exc:
-            logger.exception("FRED collection failed for %s", symbol)
-            result[symbol] = {"status": "error", "message": str(exc)}
+            session.rollback()
+            message = concise_error_message(exc)
+            logger.exception("FRED collection failed for %s: %s", symbol, message)
+            result[symbol] = {"status": "error", "message": message}
             insert_api_fetch_log(
                 session,
                 provider="fred",
@@ -108,7 +118,7 @@ def collect_fred_market_data(session: Session, observation_start: str | None = N
                 asset_symbol=symbol,
                 fetched_at=datetime.now(UTC),
                 latency_ms=None,
-                message=str(exc),
+                message=message,
             )
     session.commit()
     return result

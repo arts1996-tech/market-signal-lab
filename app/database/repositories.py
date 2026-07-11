@@ -53,6 +53,11 @@ ASSET_DEFINITIONS = [
 ]
 
 
+def chunked(items: list[dict], size: int) -> Iterable[list[dict]]:
+    for index in range(0, len(items), size):
+        yield items[index : index + size]
+
+
 def upsert_assets(session: Session, assets: Iterable[dict]) -> dict[str, Asset]:
     for item in assets:
         stmt = (
@@ -80,22 +85,23 @@ def upsert_market_prices(session: Session, rows: Iterable[dict]) -> int:
     if not payload:
         return 0
 
-    stmt = pg_insert(MarketPrice).values(payload)
-    update_columns = {
-        "open": stmt.excluded.open,
-        "high": stmt.excluded.high,
-        "low": stmt.excluded.low,
-        "close": stmt.excluded.close,
-        "adjusted_close": stmt.excluded.adjusted_close,
-        "volume": stmt.excluded.volume,
-        "fetched_at": stmt.excluded.fetched_at,
-    }
-    session.execute(
-        stmt.on_conflict_do_update(
-            constraint="uq_market_price",
-            set_=update_columns,
+    for batch in chunked(payload, 1_000):
+        stmt = pg_insert(MarketPrice).values(batch)
+        update_columns = {
+            "open": stmt.excluded.open,
+            "high": stmt.excluded.high,
+            "low": stmt.excluded.low,
+            "close": stmt.excluded.close,
+            "adjusted_close": stmt.excluded.adjusted_close,
+            "volume": stmt.excluded.volume,
+            "fetched_at": stmt.excluded.fetched_at,
+        }
+        session.execute(
+            stmt.on_conflict_do_update(
+                constraint="uq_market_price",
+                set_=update_columns,
+            )
         )
-    )
     return len(payload)
 
 
