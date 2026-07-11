@@ -4,7 +4,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from app.database.repositories import latest_fetch_logs, latest_job_runs
+from app.database.repositories import latest_correlation_results, latest_fetch_logs, latest_job_runs
 from app.database.session import SessionLocal
 from app.services.analysis_service import DEFAULT_SYMBOLS, load_market_analysis
 
@@ -111,6 +111,7 @@ with tab_system:
     with SessionLocal() as session:
         fetch_logs = latest_fetch_logs(session)
         job_runs = latest_job_runs(session)
+        correlation_logs = latest_correlation_results(session)
 
     st.subheader("API取得状況")
     st.dataframe(
@@ -139,6 +140,25 @@ with tab_system:
                 "details": job.details,
             }
             for job in job_runs
+        ],
+        use_container_width=True,
+    )
+
+    st.subheader("保存済み相関分析")
+    st.dataframe(
+        [
+            {
+                "analysis": row.analysis_name,
+                "base": row.base_symbol,
+                "target": row.target_symbol,
+                "window_days": row.window_days,
+                "correlation": None if row.correlation is None else float(row.correlation),
+                "sample_size": row.sample_size,
+                "period_end": format_jst(row.period_end),
+                "computed_at": format_jst(row.computed_at),
+                "lag_rule": row.lag_rule,
+            }
+            for row in correlation_logs
         ],
         use_container_width=True,
     )

@@ -19,6 +19,7 @@
 - 日次リターン、米国前営業日と日本当日の対応
 - 20日、60日、120日、250日相関
 - 60日ローリング相関
+- 米国株指数と日本株指数の相関結果をDBへ蓄積し、後続分析で再利用できる構成
 - 指数比較チャート、相関グラフ、取得ログ、ジョブ履歴
 - pytestによる主要ロジックのテスト
 
@@ -69,12 +70,17 @@ FRED APIキーを設定したあと、以下を実行するとDBに実データ�
 docker compose exec app python jobs/collect_us_market.py
 ```
 
+相関分析結果をDBへ蓄積する場合は、以下を実行します。米国前営業日リターンと日本当日リターンの対応で、ペア別相関、米国指数群と日本指数群の平均リターン同士の相関、ペア別相関の平均サマリーを `correlation_results` に保存します。
+
+```bash
+docker compose exec app python jobs/run_short_term_analysis.py
+```
+
 個別の入口は以下です。
 
 ```bash
 docker compose exec app python jobs/collect_japan_market.py
 docker compose exec app python jobs/collect_fx.py
-docker compose exec app python jobs/run_short_term_analysis.py
 docker compose exec app python jobs/run_mid_term_analysis.py
 docker compose exec app python jobs/run_backtest.py
 ```

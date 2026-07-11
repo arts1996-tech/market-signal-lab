@@ -6,7 +6,7 @@ from sqlalchemy import Select, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from app.database.models import ApiFetchLog, Asset, JobRun, MarketPrice
+from app.database.models import ApiFetchLog, Asset, CorrelationResult, JobRun, MarketPrice
 
 
 ASSET_DEFINITIONS = [
@@ -133,6 +133,38 @@ def insert_api_fetch_log(session: Session, **values) -> None:
 
 def latest_fetch_logs(session: Session, limit: int = 20) -> list[ApiFetchLog]:
     return list(session.scalars(select(ApiFetchLog).order_by(ApiFetchLog.fetched_at.desc()).limit(limit)))
+
+
+def upsert_correlation_results(session: Session, rows: Iterable[dict]) -> int:
+    payload = list(rows)
+    if not payload:
+        return 0
+
+    stmt = pg_insert(CorrelationResult).values(payload)
+    session.execute(
+        stmt.on_conflict_do_update(
+            constraint="uq_correlation_result",
+            set_={
+                "correlation": stmt.excluded.correlation,
+                "sample_size": stmt.excluded.sample_size,
+                "period_start": stmt.excluded.period_start,
+                "computed_at": stmt.excluded.computed_at,
+                "source": stmt.excluded.source,
+                "details": stmt.excluded.details,
+            },
+        )
+    )
+    return len(payload)
+
+
+def latest_correlation_results(session: Session, limit: int = 50) -> list[CorrelationResult]:
+    return list(
+        session.scalars(
+            select(CorrelationResult)
+            .order_by(CorrelationResult.period_end.desc(), CorrelationResult.window_days.asc())
+            .limit(limit)
+        )
+    )
 
 
 def insert_job_run(session: Session, **values) -> None:

@@ -7,6 +7,7 @@ from app.analysis.correlation import (
     rolling_correlation,
     us_japan_pair_frame,
 )
+from app.services.analysis_service import build_us_japan_correlation_records
 
 
 def _prices():
@@ -59,3 +60,31 @@ def test_horizon_and_rolling_correlation():
 
     assert corr.loc[0, "sample_size"] == 3
     assert len(rolling) == 2
+
+
+def test_build_us_japan_correlation_records_include_pair_and_average_rows():
+    wide = close_wide(_prices())
+
+    records = build_us_japan_correlation_records(
+        wide,
+        us_symbols=["NASDAQCOM"],
+        japan_symbols=["NIKKEI225"],
+    )
+
+    pair_rows = [row for row in records if row["analysis_name"] == "us_japan_index_correlation"]
+    average_rows = [
+        row for row in records if row["analysis_name"] == "us_japan_index_correlation_average"
+    ]
+    group_mean_rows = [
+        row
+        for row in records
+        if row["analysis_name"] == "us_japan_index_group_average_correlation"
+    ]
+    assert pair_rows
+    assert average_rows
+    assert group_mean_rows
+    assert {row["window_days"] for row in pair_rows} == {20, 60, 120, 250}
+    assert average_rows[0]["base_symbol"] == "US_INDEX_AVERAGE"
+    assert average_rows[0]["target_symbol"] == "JP_INDEX_AVERAGE"
+    assert group_mean_rows[0]["method"] == "pearson_on_group_mean_returns"
+    assert average_rows[0]["lag_rule"] == "us_previous_trading_day_to_japan_current_day"
