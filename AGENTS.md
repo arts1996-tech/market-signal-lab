@@ -39,6 +39,7 @@ Market Signal Lab
 ├── docker/             # cron例など運用補助
 ├── jobs/               # cron/systemd timerから呼べる独立コマンド
 ├── tests/              # pytest
+├── .github/            # Issue/PRテンプレート
 ├── alembic.ini
 ├── docker-compose.yml
 ├── Dockerfile
@@ -90,6 +91,15 @@ python3.12 -m venv .venv312
 .venv312/bin/python -m pip install -e ".[dev]"
 .venv312/bin/python -m pytest
 ```
+
+## GitHub運用
+
+- リポジトリURLは `https://github.com/arts1996-tech/market-signal-lab`。
+- 作業は小さなIssue単位に分ける。
+- Issueは `feature`、`bug`、`data`、`analysis`、`ops`、`docs` の分類を基本にする。
+- Pull Requestを作る場合は、目的、変更内容、確認結果、無料利用方針への影響を明記する。
+- コミット前に `pytest` を実行する。DockerやDBに関わる変更では、可能なら `docker compose up --build` も確認する。
+- APIキー、`.env`、ログ、バックアップ、DBデータはGitに含めない。
 
 ## 初期版の完了条件
 

@@ -4,6 +4,8 @@
 
 このアプリは自動売買を行いません。「必ず上がる」「買うべき」といった断定も行わず、統計的な傾向と根拠を表示するための土台です。
 
+GitHub: https://github.com/arts1996-tech/market-signal-lab
+
 ## 開発方針
 
 本システムは原則として無料で利用できる技術、サービス、API、ライブラリで開発します。有料サービス、有料API、有料プランが必要な機能、無料枠の条件が不明なもの、将来的な課金リスクを判断しきれないものは、導入前に必ず確認します。
@@ -95,6 +97,36 @@ docker compose run --rm app pytest
 
 ```bash
 pip install -e ".[dev]"
+pytest
+```
+
+## GitHub運用
+
+作業は小さな単位でIssue化し、1つのIssueにつき1つの目的に絞ります。無料で使えるGitHub標準機能だけを前提にし、有料機能や判断がつかない外部サービスは導入前に確認します。
+
+Issueの基本分類:
+
+- `feature`: 新機能
+- `bug`: 不具合
+- `data`: データ取得・保存・品質
+- `analysis`: 分析ロジック
+- `ops`: Docker、Raspberry Pi、バックアップ、運用
+- `docs`: READMEや手順書
+
+推奨フロー:
+
+```bash
+git status
+git pull
+# 実装、テスト
+git add <changed-files>
+git commit -m "<短い変更内容>"
+git push
+```
+
+変更前後の最低確認:
+
+```bash
 pytest
 ```
 
