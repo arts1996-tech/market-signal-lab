@@ -74,7 +74,7 @@ def parse_daily_bars_response(code: str, payload: dict[str, Any] | list[dict[str
         date_value = pick_value(item, ["Date", "date", "LocalCodeDate", "localCodeDate", "baseDate", "base_date"])
         close_value = pick_value(
             item,
-            ["Close", "close", "AdjustmentClose", "adjustmentClose", "adjustment_close"],
+            ["Close", "close", "C", "AdjustmentClose", "adjustmentClose", "adjustment_close", "AdjC"],
         )
         if not date_value or close_value in (None, ""):
             continue
@@ -84,19 +84,33 @@ def parse_daily_bars_response(code: str, payload: dict[str, Any] | list[dict[str
                 "symbol": code,
                 "price_time": price_time,
                 "open": to_float_or_none(
-                    pick_value(item, ["Open", "open", "AdjustmentOpen", "adjustmentOpen", "adjustment_open"])
+                    pick_value(
+                        item,
+                        ["Open", "open", "O", "AdjustmentOpen", "adjustmentOpen", "adjustment_open", "AdjO"],
+                    )
                 ),
                 "high": to_float_or_none(
-                    pick_value(item, ["High", "high", "AdjustmentHigh", "adjustmentHigh", "adjustment_high"])
+                    pick_value(
+                        item,
+                        ["High", "high", "H", "AdjustmentHigh", "adjustmentHigh", "adjustment_high", "AdjH"],
+                    )
                 ),
                 "low": to_float_or_none(
-                    pick_value(item, ["Low", "low", "AdjustmentLow", "adjustmentLow", "adjustment_low"])
+                    pick_value(
+                        item,
+                        ["Low", "low", "L", "AdjustmentLow", "adjustmentLow", "adjustment_low", "AdjL"],
+                    )
                 ),
                 "close": float(close_value),
                 "adjusted_close": to_float_or_none(
-                    pick_value(item, ["AdjustmentClose", "adjustmentClose", "adjustment_close", "Close", "close"])
+                    pick_value(
+                        item,
+                        ["AdjustmentClose", "adjustmentClose", "adjustment_close", "AdjC", "Close", "close", "C"],
+                    )
                 ),
-                "volume": to_float_or_none(pick_value(item, ["Volume", "volume", "AdjustmentVolume", "adjustmentVolume"])),
+                "volume": to_float_or_none(
+                    pick_value(item, ["Volume", "volume", "Vo", "AdjustmentVolume", "adjustmentVolume", "AdjVo"])
+                ),
                 "source": "jquants",
                 "fetched_at": fetched_at,
             }

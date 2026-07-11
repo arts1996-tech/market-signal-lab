@@ -52,6 +52,37 @@ def test_parse_daily_bars_response_handles_daily_bars_snake_case_payload():
     assert frame.loc[0, "adjusted_close"] == 1082
 
 
+def test_parse_daily_bars_response_handles_jquants_abbreviated_payload():
+    payload = {
+        "daily_bars": [
+            {
+                "Code": "86970",
+                "Date": "2026-04-01",
+                "O": 1600,
+                "H": 1660,
+                "L": 1585,
+                "C": 1620,
+                "Vo": 1200000,
+                "AdjO": 1600,
+                "AdjH": 1660,
+                "AdjL": 1585,
+                "AdjC": 1620,
+                "AdjVo": 1200000,
+            }
+        ]
+    }
+
+    frame = parse_daily_bars_response("86970", payload)
+
+    assert len(frame) == 1
+    assert frame.loc[0, "open"] == 1600
+    assert frame.loc[0, "high"] == 1660
+    assert frame.loc[0, "low"] == 1585
+    assert frame.loc[0, "close"] == 1620
+    assert frame.loc[0, "adjusted_close"] == 1620
+    assert frame.loc[0, "volume"] == 1200000
+
+
 def test_parse_daily_bars_response_returns_empty_frame_for_empty_records():
     frame = parse_daily_bars_response("86970", {"daily_bars": []})
 
