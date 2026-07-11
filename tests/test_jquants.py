@@ -158,5 +158,11 @@ def test_parse_listed_info_response_reports_unparsable_keys():
 
 
 def test_listed_info_endpoint_candidates_try_equities_path_first():
-    assert JQuantsClient.listed_info_endpoints[0] == "/v2/equities/listed/info"
+    assert JQuantsClient.listed_info_endpoints[0] == "/v2/equities/master"
     assert "/v2/listed/info" in JQuantsClient.listed_info_endpoints
+
+
+def test_parse_listed_info_response_accepts_master_key():
+    assets = parse_listed_info_response({"master": [{"Code": "86970", "CompanyName": "日本取引所グループ"}]})
+
+    assert assets[0]["symbol"] == "86970"

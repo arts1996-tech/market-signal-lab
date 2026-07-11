@@ -7,7 +7,12 @@ import streamlit as st
 
 from app.database.repositories import latest_correlation_results, latest_fetch_logs, latest_job_runs
 from app.database.session import SessionLocal
-from app.services.analysis_service import DEFAULT_SYMBOLS, load_market_analysis, load_short_term_analysis
+from app.services.analysis_service import (
+    DEFAULT_SYMBOLS,
+    load_market_analysis,
+    load_movement_and_virtual_trade_analysis,
+    load_short_term_analysis,
+)
 
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -20,6 +25,12 @@ def format_percent(value) -> str:
     if pd.isna(value):
         return "-"
     return f"{value:.2%}"
+
+
+def format_reason_list(value) -> str:
+    if not value:
+        return "-"
+    return " / ".join(str(item) for item in value)
 
 
 def format_jst(value) -> str:
@@ -40,11 +51,21 @@ def load_short_data(symbol: str) -> dict:
         return load_short_term_analysis(session, symbol)
 
 
+@st.cache_data(ttl=300)
+def load_movement_data(score_threshold: int, holding_days: int) -> dict:
+    with SessionLocal() as session:
+        return load_movement_and_virtual_trade_analysis(
+            session,
+            score_threshold=score_threshold,
+            holding_days=holding_days,
+        )
+
+
 st.title("Market Signal Lab")
 st.caption("短期取引と中期投資の判断材料を整理する分析アプリです。自動売買や投資助言は行いません。")
 
-tab_market, tab_short, tab_correlation, tab_system = st.tabs(
-    ["市場ダッシュボード", "短期分析", "市場連動性", "システム管理"]
+tab_market, tab_short, tab_candidates, tab_virtual, tab_correlation, tab_system = st.tabs(
+    ["市場ダッシュボード", "短期分析", "変動候補", "仮想投資評価", "市場連動性", "システム管理"]
 )
 
 analysis = load_data()
@@ -159,6 +180,112 @@ with tab_short:
             "FRED由来の指数データは高値、安値、出来高を含まないため、ローソク足、出来高、ATRは今後のデータソース追加後に表示します。"
         )
         st.caption(f"データソース: {short.get('source', '-')} / 最終取得: {format_jst(short.get('fetched_at'))}")
+
+with tab_candidates:
+    st.subheader("大きく動きそうな日本株・ETF候補")
+    st.caption(
+        "米国指数と日経平均の相関、市場の直近変動、個別銘柄の短期指標、過去の仮想投資フィードバックから候補を抽出します。投資助言ではありません。"
+    )
+    movement_data = load_movement_data(score_threshold=70, holding_days=5)
+    movement = movement_data["movement"]
+    us_signal = movement["us_signal"]
+    cols = st.columns(3)
+    cols[0].metric("米国指数の直近方向", us_signal["direction"])
+    cols[1].metric("米国指数平均騰落率", format_percent(us_signal["average_return"]))
+    cols[2].metric(
+        "米国・日本指数の平均相関",
+        "-" if pd.isna(movement["average_correlation"]) else f"{movement['average_correlation']:.3f}",
+    )
+
+    with st.expander("市場背景の根拠"):
+        st.write(us_signal["reasons"] or ["米国指数データが不足しています"])
+        if movement["pair_summaries"]:
+            st.dataframe(movement["pair_summaries"], use_container_width=True)
+
+    candidates = movement["candidates"]
+    if candidates.empty:
+        st.warning("候補抽出に必要な日本株・ETFの履歴データが不足しています。J-Quantsの日次データを複数日分取得してください。")
+    else:
+        view = candidates.copy()
+        for column in ["return_1d", "return_5d", "return_20d", "volatility_20d"]:
+            view[column] = view[column].map(format_percent)
+        view["rsi_14"] = view["rsi_14"].map(lambda value: "-" if pd.isna(value) else f"{value:.1f}")
+        view["reasons"] = view["reasons"].map(format_reason_list)
+        st.dataframe(
+            view[
+                [
+                    "symbol",
+                    "name",
+                    "score",
+                    "direction",
+                    "latest_close",
+                    "return_5d",
+                    "volatility_20d",
+                    "rsi_14",
+                    "feedback_score",
+                    "reasons",
+                    "observations",
+                ]
+            ],
+            use_container_width=True,
+        )
+
+    insufficient = movement["insufficient"]
+    if not insufficient.empty:
+        with st.expander("データ不足で評価できない銘柄"):
+            st.dataframe(insufficient, use_container_width=True)
+
+with tab_virtual:
+    st.subheader("仮想投資評価")
+    st.caption("実際の投資や注文は行いません。過去時点で候補に出たと仮定し、一定営業日後の損益と理由を検証します。")
+    threshold = st.slider("仮想エントリーの最低スコア", min_value=50, max_value=90, value=70, step=5)
+    holding_days = st.selectbox("仮想保有期間", [1, 5, 10, 20], index=1)
+    virtual_data = load_movement_data(score_threshold=threshold, holding_days=holding_days)
+    trades = virtual_data["virtual_trades"]
+    feedback = virtual_data["virtual_feedback"]
+    st.caption("仮想投資の成績は銘柄別に集計され、変動候補画面のフィードバック指標として次回の抽出に反映されます。")
+    if trades.empty:
+        st.warning("仮想投資評価に必要な履歴データが不足しています。30営業日以上の日本株・ETFデータが必要です。")
+    else:
+        summary_cols = st.columns(4)
+        summary_cols[0].metric("仮想件数", len(trades))
+        summary_cols[1].metric("平均損益", format_percent(trades["return"].mean()))
+        summary_cols[2].metric("勝率", format_percent((trades["return"] > 0).mean()))
+        summary_cols[3].metric("最大損益", format_percent(trades["return"].max()))
+
+        view = trades.copy()
+        view["signal_date"] = view["signal_date"].map(lambda value: pd.to_datetime(value).strftime("%Y-%m-%d"))
+        view["exit_date"] = view["exit_date"].map(lambda value: pd.to_datetime(value).strftime("%Y-%m-%d"))
+        view["return"] = view["return"].map(format_percent)
+        view["entry_reasons"] = view["entry_reasons"].map(format_reason_list)
+        view["outcome_reasons"] = view["outcome_reasons"].map(format_reason_list)
+        st.dataframe(
+            view[
+                [
+                    "signal_date",
+                    "exit_date",
+                    "symbol",
+                    "name",
+                    "score",
+                    "direction",
+                    "return",
+                    "outcome",
+                    "entry_reasons",
+                    "outcome_reasons",
+                ]
+            ],
+            use_container_width=True,
+        )
+
+        if feedback:
+            with st.expander("候補抽出に戻すフィードバック集計"):
+                feedback_view = pd.DataFrame(
+                    [{"symbol": symbol, **values} for symbol, values in feedback.items()]
+                )
+                feedback_view["win_rate"] = feedback_view["win_rate"].map(format_percent)
+                feedback_view["average_return"] = feedback_view["average_return"].map(format_percent)
+                feedback_view["large_move_rate"] = feedback_view["large_move_rate"].map(format_percent)
+                st.dataframe(feedback_view, use_container_width=True)
 
 with tab_correlation:
     st.subheader("NASDAQ Composite 前営業日と日経平均 当日の対応")

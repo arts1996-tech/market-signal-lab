@@ -12,8 +12,10 @@ from app.analysis.correlation import (
     rolling_correlation,
     us_japan_pair_frame,
 )
+from app.analysis.movement_candidates import build_movement_candidates
 from app.analysis.technical import short_term_indicator_frame, short_term_signal_snapshot
-from app.database.repositories import market_prices_frame, upsert_correlation_results
+from app.analysis.virtual_trading import build_virtual_trades, summarize_virtual_trade_feedback
+from app.database.repositories import list_assets_by_source, market_prices_frame, upsert_correlation_results
 
 
 DEFAULT_SYMBOLS = ["NASDAQCOM", "DJIA", "SP500", "NIKKEI225", "DEXJPUS"]
@@ -184,4 +186,36 @@ def load_short_term_analysis(session: Session, symbol: str) -> dict:
         "snapshot": short_term_signal_snapshot(indicators),
         "source": frame["source"].dropna().iloc[-1] if not frame["source"].dropna().empty else "-",
         "fetched_at": frame["fetched_at"].dropna().iloc[-1] if not frame["fetched_at"].dropna().empty else None,
+    }
+
+
+def load_movement_and_virtual_trade_analysis(
+    session: Session,
+    candidate_limit: int = 20,
+    virtual_trade_limit: int = 50,
+    score_threshold: int = 70,
+    holding_days: int = 5,
+) -> dict:
+    index_prices = market_prices_frame(session, DEFAULT_SYMBOLS)
+    jquants_assets = list_assets_by_source(session, "jquants", asset_types=["stock", "etf"])
+    japan_symbols = [asset.symbol for asset in jquants_assets]
+    japan_prices = market_prices_frame(session, japan_symbols) if japan_symbols else pd.DataFrame()
+    virtual_trades = build_virtual_trades(
+        index_prices,
+        japan_prices,
+        score_threshold=score_threshold,
+        holding_days=holding_days,
+        max_trades=virtual_trade_limit,
+    )
+    feedback = summarize_virtual_trade_feedback(virtual_trades)
+    candidates = build_movement_candidates(index_prices, japan_prices, limit=candidate_limit, feedback_by_symbol=feedback)
+    return {
+        "index_prices": index_prices,
+        "japan_prices": japan_prices,
+        "asset_count": len(japan_symbols),
+        "movement": candidates,
+        "virtual_trades": virtual_trades,
+        "virtual_feedback": feedback,
+        "score_threshold": score_threshold,
+        "holding_days": holding_days,
     }

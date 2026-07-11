@@ -13,7 +13,7 @@ from app.core.exceptions import DataProviderError
 class JQuantsClient:
     provider = "jquants"
     listed_info_endpoints = (
-        "/v2/equities/listed/info",
+        "/v2/equities/master",
         "/v2/listed/info",
         "/v1/listed/info",
     )
@@ -206,7 +206,7 @@ def parse_listed_info_response(payload: dict[str, Any] | list[dict[str, Any]]) -
 def find_listed_info_records(payload: dict[str, Any] | list[dict[str, Any]]) -> list[dict[str, Any]] | None:
     if isinstance(payload, list):
         return payload
-    for key in ["info", "listed_info", "listedInfo", "data", "items", "rows"]:
+    for key in ["master", "info", "listed_info", "listedInfo", "data", "items", "rows"]:
         value = payload.get(key)
         if isinstance(value, list):
             return value
