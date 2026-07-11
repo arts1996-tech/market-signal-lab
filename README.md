@@ -88,12 +88,12 @@ docker compose exec app python jobs/run_short_term_analysis.py
 ```bash
 docker compose exec app python jobs/collect_japan_market.py
 docker compose exec app python jobs/collect_fx.py
-docker compose exec app python jobs/collect_jquants_daily.py --code 86970 --date 20240104 --name "JPX" --asset-type stock
+docker compose exec app python jobs/collect_jquants_daily.py --code 86970 --date 20260401 --name "JPX" --asset-type stock
 docker compose exec app python jobs/run_mid_term_analysis.py
 docker compose exec app python jobs/run_backtest.py
 ```
 
-J-Quants Free planはAPI制限が5件/分のため、複数銘柄の連続取得では余裕を持って15秒以上の間隔を空けます。
+J-Quants Free planはAPI制限が5件/分のため、複数銘柄の連続取得では余裕を持って15秒以上の間隔を空けます。日付を指定する場合は、直近12週間を避け、かつFree planの取得範囲内になる過去2年程度の日付を指定します。
 
 ## 短期分析
 

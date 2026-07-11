@@ -1,7 +1,8 @@
 import pandas as pd
 import pytest
+import httpx
 
-from app.collectors.jquants import find_record_list, parse_daily_bars_response
+from app.collectors.jquants import build_http_error_message, find_record_list, parse_daily_bars_response
 from app.core.exceptions import DataProviderError
 
 
@@ -71,3 +72,17 @@ def test_find_record_list_accepts_common_keys():
     assert find_record_list({"bars": [{"Close": 1}]}) == [{"Close": 1}]
     assert find_record_list({"daily_bars": [{"Close": 1}]}) == [{"Close": 1}]
     assert find_record_list({"data": [{"Close": 1}]}) == [{"Close": 1}]
+
+
+def test_build_http_error_message_summarizes_bad_request():
+    response = httpx.Response(
+        400,
+        text='{"message":"date is outside available range"}',
+        request=httpx.Request("GET", "https://api.jquants.com/v2/equities/bars/daily"),
+    )
+
+    message = build_http_error_message(response)
+
+    assert "J-Quants rejected request (400)" in message
+    assert "code/date" in message
+    assert "outside available range" in message

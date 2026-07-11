@@ -22,7 +22,7 @@ class JQuantsClient:
         return {"x-api-key": self.settings.jquants_api_key}
 
     @retry(
-        retry=retry_if_exception_type((httpx.HTTPError, DataProviderError)),
+        retry=retry_if_exception_type(httpx.TransportError),
         wait=wait_exponential(multiplier=1, min=1, max=8),
         stop=stop_after_attempt(3),
         reraise=True,
@@ -49,7 +49,8 @@ class JQuantsClient:
                 params=params,
                 headers=self._headers(),
             )
-            response.raise_for_status()
+            if response.status_code >= 400:
+                raise DataProviderError(build_http_error_message(response))
         latency_ms = int((perf_counter() - started) * 1000)
         return parse_daily_bars_response(code, response.json()), latency_ms
 
@@ -127,3 +128,15 @@ def to_float_or_none(value: Any) -> float | None:
     if value in (None, ""):
         return None
     return float(value)
+
+
+def build_http_error_message(response: httpx.Response) -> str:
+    body = response.text.strip().replace("\n", " ")
+    if len(body) > 240:
+        body = f"{body[:240]}..."
+    message = f"J-Quants rejected request ({response.status_code})"
+    if response.status_code == 400:
+        message += ". Check that code/date are valid for the Free plan range"
+    if body:
+        message += f": {body}"
+    return message
