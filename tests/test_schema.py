@@ -1,5 +1,6 @@
 from app.database.models import CorrelationResult, MarketPrice
 from app.database.repositories import chunked
+from app.core.config import Settings
 
 
 def test_market_price_has_duplicate_prevention_constraint():
@@ -20,3 +21,10 @@ def test_chunked_splits_large_payloads():
     chunks = list(chunked(payload, 1000))
 
     assert [len(chunk) for chunk in chunks] == [1000, 1000, 501]
+
+
+def test_settings_include_jquants_defaults():
+    settings = Settings()
+
+    assert settings.jquants_base_url == "https://api.jquants.com"
+    assert settings.jquants_min_request_interval_seconds == 15

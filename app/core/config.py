@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://market:market_password@localhost:5432/market_signal_lab"
     fred_api_key: str = ""
     fred_base_url: str = "https://api.stlouisfed.org/fred"
+    jquants_api_key: str = ""
+    jquants_base_url: str = "https://api.jquants.com"
+    jquants_min_request_interval_seconds: int = Field(default=15, ge=0)
     api_timeout_seconds: int = 20
     backup_dir: str = "/backups"
     backup_retention_days: int = Field(default=14, ge=1)
@@ -20,4 +23,3 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-

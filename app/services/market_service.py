@@ -4,6 +4,7 @@ import logging
 from sqlalchemy.orm import Session
 
 from app.collectors.fred import FRED_INDEX_SERIES, FredClient
+from app.collectors.jquants import JQuantsClient
 from app.collectors.sample_data import generate_sample_market_data
 from app.core.exceptions import DataProviderError
 from app.database.repositories import (
@@ -122,6 +123,95 @@ def collect_fred_market_data(session: Session, observation_start: str | None = N
             )
     session.commit()
     return result
+
+
+def collect_jquants_daily_bars(
+    session: Session,
+    code: str,
+    from_date: str | None = None,
+    to_date: str | None = None,
+    name: str | None = None,
+    asset_type: str = "stock",
+) -> dict:
+    assets = upsert_assets(
+        session,
+        [
+            {
+                "symbol": code,
+                "name": name or f"J-Quants {code}",
+                "asset_type": asset_type,
+                "currency": "JPY",
+                "exchange": "JPX",
+                "source": "jquants",
+                "metadata_json": {"free_plan_note": "J-Quants Free plan data is delayed by 12 weeks."},
+            }
+        ],
+    )
+    session.commit()
+    client = JQuantsClient()
+    try:
+        frame, latency_ms = client.fetch_daily_bars(code, from_date=from_date, to_date=to_date)
+        asset = assets[code]
+        payload = []
+        for row in frame.to_dict(orient="records"):
+            payload.append(
+                {
+                    "asset_id": asset.id,
+                    "timeframe": "1d",
+                    "price_time": row["price_time"],
+                    "open": row.get("open"),
+                    "high": row.get("high"),
+                    "low": row.get("low"),
+                    "close": row["close"],
+                    "adjusted_close": row.get("adjusted_close"),
+                    "volume": row.get("volume"),
+                    "source": row["source"],
+                    "fetched_at": row["fetched_at"],
+                }
+            )
+        saved_rows = upsert_market_prices(session, payload)
+        insert_api_fetch_log(
+            session,
+            provider="jquants",
+            endpoint="/v2/equities/bars/daily",
+            status="success",
+            asset_symbol=code,
+            fetched_at=datetime.now(UTC),
+            latency_ms=latency_ms,
+            message=f"Saved {saved_rows} delayed Free plan observations",
+        )
+        session.commit()
+        return {"status": "success", "saved_rows": saved_rows, "latency_ms": latency_ms}
+    except DataProviderError as exc:
+        message = concise_error_message(exc)
+        insert_api_fetch_log(
+            session,
+            provider="jquants",
+            endpoint="/v2/equities/bars/daily",
+            status="skipped",
+            asset_symbol=code,
+            fetched_at=datetime.now(UTC),
+            latency_ms=None,
+            message=message,
+        )
+        session.commit()
+        return {"status": "skipped", "message": message}
+    except Exception as exc:
+        session.rollback()
+        message = concise_error_message(exc)
+        logger.exception("J-Quants collection failed for %s: %s", code, message)
+        insert_api_fetch_log(
+            session,
+            provider="jquants",
+            endpoint="/v2/equities/bars/daily",
+            status="error",
+            asset_symbol=code,
+            fetched_at=datetime.now(UTC),
+            latency_ms=None,
+            message=message,
+        )
+        session.commit()
+        return {"status": "error", "message": message}
 
 
 def record_job(session: Session, name: str, status: str, started_at: datetime, details: dict) -> None:

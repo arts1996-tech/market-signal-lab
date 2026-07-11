@@ -1,0 +1,110 @@
+from datetime import UTC, datetime
+from time import perf_counter, sleep
+from typing import Any
+
+import httpx
+import pandas as pd
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+
+from app.core.config import get_settings
+from app.core.exceptions import DataProviderError
+
+
+class JQuantsClient:
+    provider = "jquants"
+
+    def __init__(self) -> None:
+        self.settings = get_settings()
+
+    def _headers(self) -> dict[str, str]:
+        if not self.settings.jquants_api_key:
+            raise DataProviderError("JQUANTS_API_KEY is not set")
+        return {"x-api-key": self.settings.jquants_api_key}
+
+    @retry(
+        retry=retry_if_exception_type((httpx.HTTPError, DataProviderError)),
+        wait=wait_exponential(multiplier=1, min=1, max=8),
+        stop=stop_after_attempt(3),
+        reraise=True,
+    )
+    def fetch_daily_bars(
+        self,
+        code: str,
+        from_date: str | None = None,
+        to_date: str | None = None,
+    ) -> tuple[pd.DataFrame, int]:
+        params: dict[str, Any] = {"code": code}
+        if from_date:
+            params["from"] = from_date
+        if to_date:
+            params["to"] = to_date
+
+        started = perf_counter()
+        with httpx.Client(timeout=self.settings.api_timeout_seconds) as client:
+            response = client.get(
+                f"{self.settings.jquants_base_url}/v2/equities/bars/daily",
+                params=params,
+                headers=self._headers(),
+            )
+            response.raise_for_status()
+        latency_ms = int((perf_counter() - started) * 1000)
+        return parse_daily_bars_response(code, response.json()), latency_ms
+
+    def respect_free_plan_rate_limit(self) -> None:
+        if self.settings.jquants_min_request_interval_seconds:
+            sleep(self.settings.jquants_min_request_interval_seconds)
+
+
+def parse_daily_bars_response(code: str, payload: dict[str, Any]) -> pd.DataFrame:
+    records = find_record_list(payload)
+    if records is None:
+        raise DataProviderError("Unexpected J-Quants daily bars response")
+
+    rows = []
+    fetched_at = datetime.now(UTC)
+    for item in records:
+        date_value = pick_value(item, ["Date", "date", "LocalCodeDate"])
+        close_value = pick_value(item, ["Close", "close", "AdjustmentClose", "adjustment_close"])
+        if not date_value or close_value in (None, ""):
+            continue
+        price_time = pd.to_datetime(date_value).to_pydatetime().replace(tzinfo=UTC)
+        rows.append(
+            {
+                "symbol": code,
+                "price_time": price_time,
+                "open": to_float_or_none(pick_value(item, ["Open", "open", "AdjustmentOpen"])),
+                "high": to_float_or_none(pick_value(item, ["High", "high", "AdjustmentHigh"])),
+                "low": to_float_or_none(pick_value(item, ["Low", "low", "AdjustmentLow"])),
+                "close": float(close_value),
+                "adjusted_close": to_float_or_none(
+                    pick_value(item, ["AdjustmentClose", "adjustment_close", "Close", "close"])
+                ),
+                "volume": to_float_or_none(pick_value(item, ["Volume", "volume"])),
+                "source": "jquants",
+                "fetched_at": fetched_at,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def find_record_list(payload: dict[str, Any]) -> list[dict[str, Any]] | None:
+    for key in ["daily_quotes", "bars", "data", "items", "rows"]:
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+    if isinstance(payload, list):
+        return payload
+    return None
+
+
+def pick_value(item: dict[str, Any], keys: list[str]) -> Any:
+    for key in keys:
+        if key in item:
+            return item[key]
+    return None
+
+
+def to_float_or_none(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    return float(value)

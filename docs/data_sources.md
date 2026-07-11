@@ -34,7 +34,7 @@ Market Signal Labは原則無料で利用できるデータソースを優先し
 
 1. J-Quants APIキーは `.env` で管理する。
 2. APIクライアントは `app/collectors/jquants.py` に分離する。
-3. 無料プランの5件/分制限を守るため、ジョブ側で待機、キャッシュ、差分取得を行う。
+3. 無料プランの5件/分制限を守るため、ジョブ側で15秒以上の待機、キャッシュ、差分取得を行う。
 4. 日本株・ETFの短期分析では、無料版データが遅延していることを画面に明記する。
 5. 最新性が必要な分析には、FREDなど既存データ、手入力、またはユーザー確認済みの別データソースだけを使う。
 6. 有料プランが必要な機能は実装前に止めて確認する。
@@ -49,3 +49,12 @@ J-Quants Free planを使う場合、次は以下の順で実装します。
 4. 国内ETFと日本株のFree plan範囲の四本値保存
 5. 画面上に「J-Quants Free planデータは12週間遅延」と表示
 
+## J-Quants Free Planの実行例
+
+APIキーを `.env` の `JQUANTS_API_KEY` に設定したあと、1銘柄ずつ取得します。
+
+```bash
+docker compose exec app python jobs/collect_jquants_daily.py --code 86970 --name "JPX" --asset-type stock
+```
+
+複数銘柄を取得する場合は、Free planの5件/分制限に対して余裕を持ち、15秒以上の間隔を空けます。

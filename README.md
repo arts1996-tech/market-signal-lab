@@ -53,6 +53,8 @@ cp .env.example .env
 
 2. FRED APIキーを使う場合は `.env` の `FRED_API_KEY` に設定します。未設定でもサンプルデータで画面確認できます。
 
+J-Quants Free planを使う場合は `.env` の `JQUANTS_API_KEY` に設定します。J-Quants Free planの株価は12週間遅延です。
+
 3. Docker Composeで起動します。
 
 ```bash
@@ -86,9 +88,12 @@ docker compose exec app python jobs/run_short_term_analysis.py
 ```bash
 docker compose exec app python jobs/collect_japan_market.py
 docker compose exec app python jobs/collect_fx.py
+docker compose exec app python jobs/collect_jquants_daily.py --code 86970 --name "JPX" --asset-type stock
 docker compose exec app python jobs/run_mid_term_analysis.py
 docker compose exec app python jobs/run_backtest.py
 ```
+
+J-Quants Free planはAPI制限が5件/分のため、複数銘柄の連続取得では余裕を持って15秒以上の間隔を空けます。
 
 ## 短期分析
 
