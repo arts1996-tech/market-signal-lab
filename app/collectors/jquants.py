@@ -30,10 +30,13 @@ class JQuantsClient:
     def fetch_daily_bars(
         self,
         code: str,
+        date: str | None = None,
         from_date: str | None = None,
         to_date: str | None = None,
     ) -> tuple[pd.DataFrame, int]:
         params: dict[str, Any] = {"code": code}
+        if date:
+            params["date"] = date
         if from_date:
             params["from"] = from_date
         if to_date:
@@ -55,16 +58,23 @@ class JQuantsClient:
             sleep(self.settings.jquants_min_request_interval_seconds)
 
 
-def parse_daily_bars_response(code: str, payload: dict[str, Any]) -> pd.DataFrame:
+def parse_daily_bars_response(code: str, payload: dict[str, Any] | list[dict[str, Any]]) -> pd.DataFrame:
     records = find_record_list(payload)
     if records is None:
         raise DataProviderError("Unexpected J-Quants daily bars response")
+    if not records:
+        return pd.DataFrame()
 
     rows = []
     fetched_at = datetime.now(UTC)
     for item in records:
-        date_value = pick_value(item, ["Date", "date", "LocalCodeDate"])
-        close_value = pick_value(item, ["Close", "close", "AdjustmentClose", "adjustment_close"])
+        if not isinstance(item, dict):
+            continue
+        date_value = pick_value(item, ["Date", "date", "LocalCodeDate", "localCodeDate", "baseDate", "base_date"])
+        close_value = pick_value(
+            item,
+            ["Close", "close", "AdjustmentClose", "adjustmentClose", "adjustment_close"],
+        )
         if not date_value or close_value in (None, ""):
             continue
         price_time = pd.to_datetime(date_value).to_pydatetime().replace(tzinfo=UTC)
@@ -72,28 +82,37 @@ def parse_daily_bars_response(code: str, payload: dict[str, Any]) -> pd.DataFram
             {
                 "symbol": code,
                 "price_time": price_time,
-                "open": to_float_or_none(pick_value(item, ["Open", "open", "AdjustmentOpen"])),
-                "high": to_float_or_none(pick_value(item, ["High", "high", "AdjustmentHigh"])),
-                "low": to_float_or_none(pick_value(item, ["Low", "low", "AdjustmentLow"])),
+                "open": to_float_or_none(
+                    pick_value(item, ["Open", "open", "AdjustmentOpen", "adjustmentOpen", "adjustment_open"])
+                ),
+                "high": to_float_or_none(
+                    pick_value(item, ["High", "high", "AdjustmentHigh", "adjustmentHigh", "adjustment_high"])
+                ),
+                "low": to_float_or_none(
+                    pick_value(item, ["Low", "low", "AdjustmentLow", "adjustmentLow", "adjustment_low"])
+                ),
                 "close": float(close_value),
                 "adjusted_close": to_float_or_none(
-                    pick_value(item, ["AdjustmentClose", "adjustment_close", "Close", "close"])
+                    pick_value(item, ["AdjustmentClose", "adjustmentClose", "adjustment_close", "Close", "close"])
                 ),
-                "volume": to_float_or_none(pick_value(item, ["Volume", "volume"])),
+                "volume": to_float_or_none(pick_value(item, ["Volume", "volume", "AdjustmentVolume", "adjustmentVolume"])),
                 "source": "jquants",
                 "fetched_at": fetched_at,
             }
         )
+    if not rows:
+        first_keys = sorted(records[0].keys()) if isinstance(records[0], dict) else []
+        raise DataProviderError(f"No parsable J-Quants daily bars. first_record_keys={first_keys}")
     return pd.DataFrame(rows)
 
 
-def find_record_list(payload: dict[str, Any]) -> list[dict[str, Any]] | None:
-    for key in ["daily_quotes", "bars", "data", "items", "rows"]:
+def find_record_list(payload: dict[str, Any] | list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    if isinstance(payload, list):
+        return payload
+    for key in ["daily_quotes", "daily_bars", "dailyBars", "bars", "quotes", "data", "items", "rows"]:
         value = payload.get(key)
         if isinstance(value, list):
             return value
-    if isinstance(payload, list):
-        return payload
     return None
 
 

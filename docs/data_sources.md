@@ -54,7 +54,7 @@ J-Quants Free planを使う場合、次は以下の順で実装します。
 APIキーを `.env` の `JQUANTS_API_KEY` に設定したあと、1銘柄ずつ取得します。
 
 ```bash
-docker compose exec app python jobs/collect_jquants_daily.py --code 86970 --name "JPX" --asset-type stock
+docker compose exec app python jobs/collect_jquants_daily.py --code 86970 --date 20240104 --name "JPX" --asset-type stock
 ```
 
 複数銘柄を取得する場合は、Free planの5件/分制限に対して余裕を持ち、15秒以上の間隔を空けます。

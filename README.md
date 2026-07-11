@@ -88,7 +88,7 @@ docker compose exec app python jobs/run_short_term_analysis.py
 ```bash
 docker compose exec app python jobs/collect_japan_market.py
 docker compose exec app python jobs/collect_fx.py
-docker compose exec app python jobs/collect_jquants_daily.py --code 86970 --name "JPX" --asset-type stock
+docker compose exec app python jobs/collect_jquants_daily.py --code 86970 --date 20240104 --name "JPX" --asset-type stock
 docker compose exec app python jobs/run_mid_term_analysis.py
 docker compose exec app python jobs/run_backtest.py
 ```

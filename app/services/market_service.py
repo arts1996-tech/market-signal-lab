@@ -128,6 +128,7 @@ def collect_fred_market_data(session: Session, observation_start: str | None = N
 def collect_jquants_daily_bars(
     session: Session,
     code: str,
+    date: str | None = None,
     from_date: str | None = None,
     to_date: str | None = None,
     name: str | None = None,
@@ -150,7 +151,24 @@ def collect_jquants_daily_bars(
     session.commit()
     client = JQuantsClient()
     try:
-        frame, latency_ms = client.fetch_daily_bars(code, from_date=from_date, to_date=to_date)
+        frame, latency_ms = client.fetch_daily_bars(code, date=date, from_date=from_date, to_date=to_date)
+        if frame.empty:
+            message = (
+                "J-Quants returned no delayed Free plan observations. "
+                "Try a past trading date outside the 12-week delay window."
+            )
+            insert_api_fetch_log(
+                session,
+                provider="jquants",
+                endpoint="/v2/equities/bars/daily",
+                status="skipped",
+                asset_symbol=code,
+                fetched_at=datetime.now(UTC),
+                latency_ms=latency_ms,
+                message=message,
+            )
+            session.commit()
+            return {"status": "skipped", "saved_rows": 0, "latency_ms": latency_ms, "message": message}
         asset = assets[code]
         payload = []
         for row in frame.to_dict(orient="records"):

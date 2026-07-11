@@ -10,6 +10,7 @@ from app.services.market_service import collect_jquants_daily_bars, record_job
 def main() -> None:
     parser = argparse.ArgumentParser(description="Collect delayed daily bars from J-Quants Free plan.")
     parser.add_argument("--code", required=True, help="J-Quants security code, e.g. 86970")
+    parser.add_argument("--date", help="Single trading date in YYYYMMDD or YYYY-MM-DD")
     parser.add_argument("--from-date", dest="from_date", help="Start date in YYYYMMDD or YYYY-MM-DD")
     parser.add_argument("--to-date", dest="to_date", help="End date in YYYYMMDD or YYYY-MM-DD")
     parser.add_argument("--name", help="Asset display name")
@@ -22,6 +23,7 @@ def main() -> None:
         result = collect_jquants_daily_bars(
             session,
             code=args.code,
+            date=args.date,
             from_date=args.from_date,
             to_date=args.to_date,
             name=args.name,
