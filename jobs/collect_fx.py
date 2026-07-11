@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+import json
 
 from app.core.logging import configure_logging
 from app.database.session import SessionLocal
@@ -10,10 +11,11 @@ def main() -> None:
     started_at = datetime.now(UTC)
     with SessionLocal() as session:
         result = collect_fred_market_data(session)
-        record_job(session, "collect_fx", "success" if result else "skipped", started_at, result)
-    print(f"FX collection result: {result}")
+        status = "success" if any(item["status"] == "success" for item in result.values()) else "skipped"
+        record_job(session, "collect_fx", status, started_at, result)
+    print("FX collection result:")
+    print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
     main()
-

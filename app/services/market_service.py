@@ -65,14 +65,15 @@ def seed_sample_data(session: Session) -> int:
     return count
 
 
-def collect_fred_market_data(session: Session, observation_start: str | None = None) -> dict[str, int]:
+def collect_fred_market_data(session: Session, observation_start: str | None = None) -> dict[str, dict]:
     ensure_asset_master(session)
     client = FredClient()
-    result: dict[str, int] = {}
+    result: dict[str, dict] = {}
     for symbol in FRED_INDEX_SERIES:
         try:
             frame, latency_ms = client.fetch_series(symbol, observation_start=observation_start)
-            result[symbol] = save_price_frame(session, frame)
+            saved_rows = save_price_frame(session, frame)
+            result[symbol] = {"status": "success", "saved_rows": saved_rows, "latency_ms": latency_ms}
             insert_api_fetch_log(
                 session,
                 provider="fred",
@@ -81,10 +82,11 @@ def collect_fred_market_data(session: Session, observation_start: str | None = N
                 asset_symbol=symbol,
                 fetched_at=datetime.now(UTC),
                 latency_ms=latency_ms,
-                message=f"Saved {result[symbol]} observations",
+                message=f"Saved {saved_rows} observations",
             )
         except DataProviderError as exc:
             logger.warning("FRED collection skipped for %s: %s", symbol, exc)
+            result[symbol] = {"status": "skipped", "message": str(exc)}
             insert_api_fetch_log(
                 session,
                 provider="fred",
@@ -97,6 +99,7 @@ def collect_fred_market_data(session: Session, observation_start: str | None = N
             )
         except Exception as exc:
             logger.exception("FRED collection failed for %s", symbol)
+            result[symbol] = {"status": "error", "message": str(exc)}
             insert_api_fetch_log(
                 session,
                 provider="fred",
@@ -121,4 +124,3 @@ def record_job(session: Session, name: str, status: str, started_at: datetime, d
         details=details,
     )
     session.commit()
-
