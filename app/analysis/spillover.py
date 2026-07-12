@@ -110,7 +110,7 @@ def us_japan_spillover_frame(
 
 def spillover_conditional_stats(frame: pd.DataFrame, target_metric: str) -> pd.DataFrame:
     """Summarize observed Japan returns by preceding US return bucket."""
-    columns = ["us_return_condition", "sample_size", "mean_return", "median_return", "positive_rate"]
+    columns = ["us_return_condition", "sample_size", "mean_return", "median_return", "positive_rate", "direction_match_rate", "continuation_rate", "reversal_rate", "max_return", "min_return", "mean_return_ci95_low", "mean_return_ci95_high"]
     if frame.empty or target_metric not in TARGET_METRICS:
         return pd.DataFrame(columns=columns)
     data = frame[["us_return", target_metric]].dropna().copy()
@@ -121,13 +121,31 @@ def spillover_conditional_stats(frame: pd.DataFrame, target_metric: str) -> pd.D
     data["us_return_condition"] = pd.cut(data["us_return"], bins=bins, labels=labels, include_lowest=True)
     summary = (
         data.groupby("us_return_condition", observed=False)[target_metric]
-        .agg(sample_size="count", mean_return="mean", median_return="median")
+        .agg(sample_size="count", mean_return="mean", median_return="median", max_return="max", min_return="min")
         .reset_index()
     )
+    grouped = data.groupby("us_return_condition", observed=False)[target_metric]
+    ci = grouped.agg(["mean", "std", "count"]).reset_index()
+    ci["mean_return_ci95_low"] = ci["mean"] - 1.96 * ci["std"] / ci["count"].pow(0.5)
+    ci["mean_return_ci95_high"] = ci["mean"] + 1.96 * ci["std"] / ci["count"].pow(0.5)
     positive_rate = (
         data.assign(positive=data[target_metric] > 0)
         .groupby("us_return_condition", observed=False)["positive"]
         .mean()
         .reset_index(name="positive_rate")
     )
-    return summary.merge(positive_rate, on="us_return_condition")
+    direction_match = (
+        data.assign(direction_match=data["us_return"] * data[target_metric] > 0)
+        .groupby("us_return_condition", observed=False)["direction_match"]
+        .mean()
+        .reset_index(name="direction_match_rate")
+    )
+    reversal = (
+        data.assign(reversal=data["us_return"] * data[target_metric] < 0)
+        .groupby("us_return_condition", observed=False)["reversal"]
+        .mean()
+        .reset_index(name="reversal_rate")
+    )
+    result = summary.merge(positive_rate, on="us_return_condition").merge(direction_match, on="us_return_condition").merge(reversal, on="us_return_condition").merge(ci[["us_return_condition", "mean_return_ci95_low", "mean_return_ci95_high"]], on="us_return_condition")
+    result["continuation_rate"] = result["direction_match_rate"]
+    return result

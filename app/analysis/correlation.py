@@ -1,3 +1,5 @@
+import math
+
 import pandas as pd
 
 from app.analysis.market_calendar import align_us_previous_to_japan
@@ -66,12 +68,25 @@ def conditional_next_day_stats(pair_frame: pd.DataFrame, threshold: float = 0.01
         "US -1%以下": pair_frame["us_return"] <= -threshold,
     }.items():
         sample = pair_frame[mask]
+        direction_match = (sample["us_return"] * sample["japan_return"] > 0).mean() if not sample.empty else pd.NA
+        if len(sample) >= 2:
+            standard_error = sample["japan_return"].std(ddof=1) / math.sqrt(len(sample))
+            mean_ci = [sample["japan_return"].mean() - 1.96 * standard_error, sample["japan_return"].mean() + 1.96 * standard_error]
+        else:
+            mean_ci = [pd.NA, pd.NA]
         rows.append(
             {
                 "condition": label,
                 "count": len(sample),
                 "japan_avg_return": sample["japan_return"].mean() if not sample.empty else pd.NA,
                 "japan_up_rate": (sample["japan_return"] > 0).mean() if not sample.empty else pd.NA,
+                "direction_match_rate": direction_match,
+                "continuation_rate": direction_match,
+                "reversal_rate": (sample["us_return"] * sample["japan_return"] < 0).mean() if not sample.empty else pd.NA,
+                "max_return": sample["japan_return"].max() if not sample.empty else pd.NA,
+                "min_return": sample["japan_return"].min() if not sample.empty else pd.NA,
+                "mean_return_ci95_low": mean_ci[0],
+                "mean_return_ci95_high": mean_ci[1],
             }
         )
     return pd.DataFrame(rows)

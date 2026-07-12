@@ -3,7 +3,7 @@ import pytest
 import numpy as np
 
 from app.analysis.backtest import forward_returns
-from app.analysis.regression import rolling_ols, run_granger_test, run_ols
+from app.analysis.regression import rolling_ols, run_granger_test, run_ols, walk_forward_ols
 from app.analysis.scoring import score_mid_term, score_short_term
 
 
@@ -43,6 +43,19 @@ def test_granger_test_reports_predictive_precedence_without_causality_claim():
     assert result["status"] == "ok"
     assert result["sample_size"] == 40
     assert set(result["lag_results"]) == {1, 2, 3}
+    assert all("adjusted_p_value" in row for row in result["lag_results"].values())
+
+
+def test_walk_forward_ols_never_uses_the_forecast_row_in_training():
+    index = pd.date_range("2024-01-01", periods=20, tz="UTC")
+    features = pd.DataFrame({"x": range(20)}, index=index)
+    target = pd.Series([value * 2 + 1 for value in range(20)], index=index)
+
+    result = walk_forward_ols(features, target, min_train_size=10)
+
+    assert len(result) == 10
+    assert result.iloc[0]["train_size"] == 10
+    assert result.iloc[0]["period_end"] == index[10]
 
 
 def test_short_and_mid_scores_are_bounded_and_versioned():

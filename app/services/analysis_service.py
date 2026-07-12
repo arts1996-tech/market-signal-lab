@@ -15,7 +15,7 @@ from app.analysis.correlation import (
     us_japan_pair_frame,
 )
 from app.analysis.movement_candidates import build_movement_candidates
-from app.analysis.regression import rolling_ols, run_granger_test, run_ols
+from app.analysis.regression import rolling_ols, run_granger_test, run_ols, walk_forward_ols
 from app.analysis.spillover import TARGET_METRICS, spillover_conditional_stats, us_japan_spillover_frame
 from app.analysis.technical import short_term_indicator_frame, short_term_signal_snapshot
 from app.analysis.virtual_trading import build_virtual_trades, summarize_virtual_trade_feedback
@@ -425,6 +425,7 @@ def build_spillover_regression_summary(
             "full": {"status": "insufficient_data", "sample_size": 0},
             "windows": [],
             "rolling": {},
+            "walk_forward": pd.DataFrame(),
             "granger": {"status": "insufficient_data", "sample_size": 0, "max_lag": 5},
         }
     data = frame.set_index("japan_date")
@@ -442,6 +443,7 @@ def build_spillover_regression_summary(
         "full": run_ols(features, target),
         "windows": summaries,
         "rolling": rolling,
+        "walk_forward": walk_forward_ols(features, target, min_train_size=max(20, len(features.columns) + 9)),
         "granger": run_granger_test(features["us_return"], target),
     }
 
@@ -495,6 +497,8 @@ def build_us_japan_spillover_model_records(
                         "sample_size": int(last["sample_size"]),
                         "r_squared": float(last["r_squared"]),
                         "coefficients": {"us_return": float(last["us_return"])},
+                        "covariance_type": "HAC",
+                        "hac_lags": 3,
                     },
                     computed_at,
                     provenance_fields,
@@ -523,6 +527,7 @@ def build_us_japan_spillover_model_records(
                         "max_lag": granger["max_lag"],
                         "lag_results": granger["lag_results"],
                         "minimum_p_value": granger["minimum_p_value"],
+                        "multiple_comparison_method": "bonferroni_by_tested_lags",
                         "note": "Granger testing indicates predictive precedence only; it does not prove causation or provide investment advice.",
                         "input_provenance": provenance_fields["input_provenance"],
                     },
@@ -562,6 +567,8 @@ def _spillover_model_record(
             "coefficients": result.get("coefficients", {}),
             "p_values": result.get("p_values", {}),
             "confidence_intervals_95": result.get("confidence_intervals_95", {}),
+            "covariance_type": result.get("covariance_type"),
+            "hac_lags": result.get("hac_lags"),
             "note": "This is a statistical association, not proof of causation or an investment recommendation.",
             "input_provenance": provenance_fields["input_provenance"],
         },

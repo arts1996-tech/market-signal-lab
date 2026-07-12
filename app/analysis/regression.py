@@ -5,12 +5,12 @@ import warnings
 from statsmodels.tsa.stattools import grangercausalitytests
 
 
-def run_ols(features: pd.DataFrame, target: pd.Series) -> dict:
+def run_ols(features: pd.DataFrame, target: pd.Series, hac_lags: int = 3) -> dict:
     data = pd.concat([features, target.rename("target")], axis=1).dropna()
     if len(data) < max(10, len(features.columns) + 2):
         return {"status": "insufficient_data", "sample_size": len(data)}
     x = sm.add_constant(data[features.columns])
-    model = sm.OLS(data["target"], x).fit()
+    model = sm.OLS(data["target"], x).fit(cov_type="HAC", cov_kwds={"maxlags": hac_lags})
     confidence_intervals = model.conf_int()
     return {
         "status": "ok",
@@ -23,6 +23,8 @@ def run_ols(features: pd.DataFrame, target: pd.Series) -> dict:
             key: [float(bounds.iloc[0]), float(bounds.iloc[1])]
             for key, bounds in confidence_intervals.iterrows()
         },
+        "covariance_type": "HAC",
+        "hac_lags": hac_lags,
     }
 
 
@@ -52,6 +54,34 @@ def rolling_ols(features: pd.DataFrame, target: pd.Series, window: int) -> pd.Da
     return pd.DataFrame(rows, columns=columns)
 
 
+def walk_forward_ols(
+    features: pd.DataFrame, target: pd.Series, min_train_size: int, horizon: int = 1
+) -> pd.DataFrame:
+    """Evaluate one-step forecasts using only observations available before each forecast."""
+    data = pd.concat([features, target.rename("target")], axis=1).dropna().sort_index()
+    columns = ["period_end", "train_size", "actual", "predicted", "error"]
+    if min_train_size < max(10, len(features.columns) + 2) or horizon < 1 or len(data) <= min_train_size:
+        return pd.DataFrame(columns=columns)
+    rows = []
+    for end in range(min_train_size, len(data) - horizon + 1):
+        train = data.iloc[:end]
+        test = data.iloc[end : end + horizon]
+        result = run_ols(train[features.columns], train["target"])
+        if result["status"] != "ok":
+            continue
+        x_test = sm.add_constant(test[features.columns], has_constant="add")
+        predicted = float(x_test.iloc[0].dot(pd.Series(result["coefficients"])))
+        actual = float(test["target"].iloc[0])
+        rows.append({
+            "period_end": test.index[0],
+            "train_size": len(train),
+            "actual": actual,
+            "predicted": predicted,
+            "error": actual - predicted,
+        })
+    return pd.DataFrame(rows, columns=columns)
+
+
 def run_granger_test(feature: pd.Series, target: pd.Series, max_lag: int = 5) -> dict:
     """Test predictive precedence only; this does not establish causality."""
     data = pd.concat([target.rename("target"), feature.rename("feature")], axis=1).dropna()
@@ -68,6 +98,7 @@ def run_granger_test(feature: pd.Series, target: pd.Series, max_lag: int = 5) ->
         lag: {
             "ssr_ftest_p_value": float(values[0]["ssr_ftest"][1]),
             "ssr_ftest_statistic": float(values[0]["ssr_ftest"][0]),
+            "adjusted_p_value": float(min(values[0]["ssr_ftest"][1] * max_lag, 1.0)),
         }
         for lag, values in results.items()
     }

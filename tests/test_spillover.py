@@ -130,8 +130,10 @@ def test_spillover_regression_builds_lagged_and_trailing_results():
     assert summary["full"]["status"] == "ok"
     assert summary["full"]["coefficients"]["us_return"] == pytest.approx(0.5)
     assert not summary["rolling"][20].empty
+    assert not summary["walk_forward"].empty
     assert {record["analysis_name"] for record in records} == {
         "us_japan_spillover_lag_ols",
         "us_japan_spillover_rolling_ols",
     }
     assert all(record["model_version"] == "ols_us_return_v1" for record in records)
+    assert all(record["details"]["covariance_type"] == "HAC" for record in records)

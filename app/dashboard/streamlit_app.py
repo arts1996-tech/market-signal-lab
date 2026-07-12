@@ -462,6 +462,10 @@ with tab_spillover:
                                 labels={"period_end": "日本市場日", "us_return": "20日ローリング回帰係数"},
                             )
                             st.plotly_chart(rolling_figure, use_container_width=True)
+                        walk_forward = regression.get("walk_forward", pd.DataFrame())
+                        if not walk_forward.empty:
+                            st.caption("ウォークフォワード検証（予測時点より前の観測だけで学習）")
+                            st.dataframe(walk_forward.tail(20), use_container_width=True)
                     granger = regression["granger"]
                     st.markdown("予測上の先行性（Granger検定）")
                     if granger["status"] != "ok":
@@ -472,6 +476,7 @@ with tab_spillover:
                                 "lag": lag,
                                 "F統計量": values["ssr_ftest_statistic"],
                                 "p値": values["ssr_ftest_p_value"],
+                                "補正後p値": values.get("adjusted_p_value"),
                             }
                             for lag, values in granger["lag_results"].items()
                         ]
