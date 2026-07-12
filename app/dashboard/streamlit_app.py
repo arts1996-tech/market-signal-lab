@@ -21,6 +21,7 @@ from app.services.analysis_service import (
     load_short_term_analysis,
     load_us_japan_spillover_analysis,
     load_sector_sensitivity_analysis,
+    load_asset_screening_analysis,
 )
 
 
@@ -82,15 +83,22 @@ def load_sensitivity_data(base_symbol: str) -> dict:
         return load_sector_sensitivity_analysis(session, base_symbol=base_symbol)
 
 
+@st.cache_data(ttl=600)
+def load_screening_data() -> dict:
+    with SessionLocal() as session:
+        return load_asset_screening_analysis(session)
+
+
 st.title("Market Signal Lab")
 st.caption("短期取引と中期投資の判断材料を整理する分析アプリです。自動売買や投資助言は行いません。")
 if get_settings().market_data_mode == "demo":
     st.warning("デモモード: 合成データのみを表示しています。投資判断には使用できません。")
 
-tab_market, tab_short, tab_candidates, tab_virtual, tab_correlation, tab_spillover, tab_system = st.tabs(
+tab_market, tab_short, tab_screening, tab_candidates, tab_virtual, tab_correlation, tab_spillover, tab_system = st.tabs(
     [
         "市場ダッシュボード",
         "短期分析",
+        "銘柄・ETF分析",
         "変動候補",
         "仮想投資評価",
         "市場連動性",
@@ -252,6 +260,21 @@ with tab_short:
             "FRED由来の指数データは高値、安値、出来高を含まないため、ローソク足、出来高、ATRは今後のデータソース追加後に表示します。"
         )
         st.caption(f"データソース: {short.get('source', '-')} / 最終取得: {format_jst(short.get('fetched_at'))}")
+
+with tab_screening:
+    st.subheader("銘柄・ETFスクリーニング")
+    st.caption("観測済みの価格データから技術指標を比較します。財務値や将来価格は推測せず、投資推奨は行いません。")
+    screening = load_screening_data()["screening"]
+    if screening.empty:
+        st.warning("スクリーニングには、銘柄マスターと50営業日以上のJ-Quants価格履歴が必要です。")
+    else:
+        asset_type = st.multiselect("対象区分", ["stock", "etf"], default=["stock", "etf"])
+        view = screening[screening["asset_type"].isin(asset_type)].copy()
+        view["return_20d"] = view["return_20d"].map(format_percent)
+        view["volatility_20d"] = view["volatility_20d"].map(format_percent)
+        view["rsi_14"] = view["rsi_14"].round(1)
+        st.dataframe(view, use_container_width=True)
+        st.caption("対象は先頭200銘柄に限定しています。標本数、価格基準、source、最終取得時刻はシステム管理タブでも確認してください。")
 
 with tab_candidates:
     st.subheader("大きく動きそうな日本株・ETF候補")

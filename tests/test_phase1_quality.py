@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pandas as pd
 
-from app.analysis.market_calendar import calendar_gap_report
+from app.analysis.market_calendar import calendar_gap_report, next_exchange_session
 from app.providers.fred import FredMarketProvider
 from app.services.analysis_service import build_data_quality_warnings
 
@@ -60,3 +60,7 @@ def test_calendar_gap_report_detects_jpx_holiday_as_missing_session_only_when_ex
 
     assert report["missing_sessions"] == []
     assert report["unexpected_sessions"] == []
+
+
+def test_calendar_out_of_bounds_date_is_skipped():
+    assert next_exchange_session(pd.Timestamp("1971-02-08", tz="UTC"), "XTKS") is None

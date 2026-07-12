@@ -10,7 +10,10 @@ def exchange_calendar(name: str):
 
 
 def is_exchange_session(value: pd.Timestamp, calendar_name: str) -> bool:
-    return exchange_calendar(calendar_name).is_session(_calendar_date(value))
+    try:
+        return exchange_calendar(calendar_name).is_session(_calendar_date(value))
+    except (ValueError, xcals.errors.DateOutOfBounds):
+        return False
 
 
 def is_next_exchange_session(previous: pd.Timestamp, current: pd.Timestamp, calendar_name: str) -> bool:
@@ -19,13 +22,19 @@ def is_next_exchange_session(previous: pd.Timestamp, current: pd.Timestamp, cale
     current = _calendar_date(current)
     if not calendar.is_session(previous) or not calendar.is_session(current):
         return False
-    sessions = calendar.sessions_in_range(previous, current)
+    try:
+        sessions = calendar.sessions_in_range(previous, current)
+    except (ValueError, xcals.errors.DateOutOfBounds):
+        return False
     return len(sessions) == 2 and sessions[0] == previous and sessions[-1] == current
 
 
-def next_exchange_session(value: pd.Timestamp, calendar_name: str) -> pd.Timestamp:
+def next_exchange_session(value: pd.Timestamp, calendar_name: str) -> pd.Timestamp | None:
     calendar = exchange_calendar(calendar_name)
-    return calendar.date_to_session(_calendar_date(value) + pd.Timedelta(days=1), direction="next")
+    try:
+        return calendar.date_to_session(_calendar_date(value) + pd.Timedelta(days=1), direction="next")
+    except (ValueError, xcals.errors.DateOutOfBounds):
+        return None
 
 
 def _calendar_date(value: pd.Timestamp) -> pd.Timestamp:
@@ -97,7 +106,7 @@ def align_us_previous_to_japan(
         us_date = us_dates[cursor - 1]
         if us_calendar and japan_calendar:
             expected_jp_date = next_exchange_session(us_date, japan_calendar)
-            if _calendar_date(jp_date) != expected_jp_date or not is_exchange_session(us_date, us_calendar):
+            if expected_jp_date is None or _calendar_date(jp_date) != expected_jp_date or not is_exchange_session(us_date, us_calendar):
                 continue
             component_dates = [
                 candidate for candidate in us_dates

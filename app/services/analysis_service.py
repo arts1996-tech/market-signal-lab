@@ -18,6 +18,7 @@ from app.analysis.movement_candidates import build_movement_candidates
 from app.analysis.regression import rolling_ols, run_granger_test, run_ols, walk_forward_ols
 from app.analysis.spillover import TARGET_METRICS, spillover_conditional_stats, us_japan_spillover_frame
 from app.analysis.sensitivity import sector_sensitivity
+from app.analysis.screening import screen_assets
 from app.analysis.technical import short_term_indicator_frame, short_term_signal_snapshot
 from app.analysis.virtual_trading import build_virtual_trades, summarize_virtual_trade_feedback
 from app.database.repositories import (
@@ -407,6 +408,27 @@ def load_sector_sensitivity_analysis(session: Session, base_symbol: str = "NASDA
         rows.append(frame.assign(symbol=symbol, sector=sector_by_symbol.get(symbol, "未分類"))[ ["symbol", "sector", "us_return", "daily_return"] ].rename(columns={"daily_return": "target_return"}))
     data = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
     return {"data": data, "sensitivity": sector_sensitivity(data)}
+
+
+def load_asset_screening_analysis(session: Session, limit: int = 200) -> dict:
+    """Load a bounded, source-policy-selected stock/ETF technical screen."""
+    assets = list_assets_by_source(session, "jquants", asset_types=["stock", "etf"], limit=limit)
+    if not assets:
+        return {"assets": pd.DataFrame(), "prices": pd.DataFrame(), "screening": pd.DataFrame()}
+    symbols = [asset.symbol for asset in assets]
+    prices = market_prices_frame(session, symbols, source_policy=market_price_source_policy())
+    asset_rows = pd.DataFrame(
+        [
+            {
+                "symbol": asset.symbol,
+                "name": asset.name,
+                "asset_type": asset.asset_type,
+                "metadata_json": asset.metadata_json or {},
+            }
+            for asset in assets
+        ]
+    )
+    return {"assets": asset_rows, "prices": prices, "screening": screen_assets(prices, asset_rows)}
 
 
 def build_spillover_warnings(
