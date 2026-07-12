@@ -20,6 +20,7 @@ from app.services.analysis_service import (
     load_movement_and_virtual_trade_analysis,
     load_short_term_analysis,
     load_us_japan_spillover_analysis,
+    load_sector_sensitivity_analysis,
 )
 
 
@@ -73,6 +74,12 @@ def load_movement_data(score_threshold: int, holding_days: int) -> dict:
 def load_spillover_data(base_symbol: str, target_symbol: str) -> dict:
     with SessionLocal() as session:
         return load_us_japan_spillover_analysis(session, base_symbol, target_symbol)
+
+
+@st.cache_data(ttl=600)
+def load_sensitivity_data(base_symbol: str) -> dict:
+    with SessionLocal() as session:
+        return load_sector_sensitivity_analysis(session, base_symbol=base_symbol)
 
 
 st.title("Market Signal Lab")
@@ -504,6 +511,14 @@ with tab_spillover:
                     st.caption(
                         "回帰は統計的な関連を示すだけで、因果関係、将来の値動き、利益を保証するものではありません。"
                     )
+            sensitivity = load_sensitivity_data(base_symbol)
+            st.subheader("業種・銘柄感応度（観測値）")
+            st.caption("過去の対応セッションにおける統計的な関連を示します。予測や推奨ではありません。標本数が少ない業種・銘柄は除外しています。")
+            sector_view = sensitivity["sensitivity"]["sector"]
+            if sector_view.empty:
+                st.info("業種感応度に必要な対応セッションが不足しています。")
+            else:
+                st.dataframe(sector_view, use_container_width=True)
             st.caption(
                 "保存するには `python jobs/run_spillover_analysis.py --jp-symbol <銘柄コード>` を実行します。欠損値は補完せず、始値・終値がある観測日のみ利用します。"
             )

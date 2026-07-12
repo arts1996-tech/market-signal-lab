@@ -17,6 +17,7 @@ from app.analysis.correlation import (
 from app.analysis.movement_candidates import build_movement_candidates
 from app.analysis.regression import rolling_ols, run_granger_test, run_ols, walk_forward_ols
 from app.analysis.spillover import TARGET_METRICS, spillover_conditional_stats, us_japan_spillover_frame
+from app.analysis.sensitivity import sector_sensitivity
 from app.analysis.technical import short_term_indicator_frame, short_term_signal_snapshot
 from app.analysis.virtual_trading import build_virtual_trades, summarize_virtual_trade_feedback
 from app.database.repositories import (
@@ -380,6 +381,32 @@ def load_us_japan_spillover_analysis(session: Session, base_symbol: str, target_
         "warnings": build_spillover_warnings(prices, base_symbol, target_symbol, frame),
         "input_provenance": build_analysis_input_provenance(prices),
     }
+
+
+def load_sector_sensitivity_analysis(session: Session, base_symbol: str = "NASDAQCOM", limit: int = 200) -> dict:
+    """Summarize observed spillover sensitivity by J-Quants sector and symbol."""
+    assets = list_assets_by_source(session, "jquants", asset_types=["stock", "etf"], limit=limit)
+    if not assets:
+        return {"data": pd.DataFrame(), "sensitivity": {"sector": pd.DataFrame(), "symbol": pd.DataFrame()}}
+    symbols = [asset.symbol for asset in assets]
+    prices = market_prices_frame(session, [base_symbol, *symbols], source_policy=market_price_source_policy())
+    base = prices[prices["symbol"] == base_symbol].copy()
+    if base.empty:
+        return {"data": pd.DataFrame(), "sensitivity": {"sector": pd.DataFrame(), "symbol": pd.DataFrame()}}
+    base_close = base.sort_values("price_time").drop_duplicates("price_time").set_index("price_time")["close"]
+    sector_by_symbol = {
+        asset.symbol: (asset.metadata_json or {}).get("sector_33") or (asset.metadata_json or {}).get("sector_17") or "未分類"
+        for asset in assets
+    }
+    rows = []
+    for symbol in symbols:
+        target = prices[prices["symbol"] == symbol]
+        frame = us_japan_spillover_frame(base_close, target, calendar_aware=True)
+        if frame.empty:
+            continue
+        rows.append(frame.assign(symbol=symbol, sector=sector_by_symbol.get(symbol, "未分類"))[ ["symbol", "sector", "us_return", "daily_return"] ].rename(columns={"daily_return": "target_return"}))
+    data = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
+    return {"data": data, "sensitivity": sector_sensitivity(data)}
 
 
 def build_spillover_warnings(
