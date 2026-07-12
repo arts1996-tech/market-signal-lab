@@ -59,6 +59,7 @@ GitHub: https://github.com/arts1996-tech/market-signal-lab
 - 指数比較チャート、相関グラフ、取得ログ、ジョブ履歴
 - pytestによる主要ロジックのテスト
 - 画面上部の通常／デモ、データ時点、取得元、価格基準、対象期間、品質警告の共通表示
+- 銘柄・ETFの技術指標スクリーニング基盤（少数履歴は除外、財務値は推測しない）
 
 ## 段階的な開発方針
 
@@ -188,6 +189,12 @@ FRED APIキーを設定したあと、以下を実行するとDBに実データ�
 
 ```bash
 docker compose exec app python jobs/collect_us_market.py
+```
+
+Raspberry Piのディスク、価格件数、最終取得時刻、直近24時間の失敗／再試行ジョブを読み取り専用で確認するには、次を実行します。
+
+```bash
+docker compose exec app python jobs/check_operations.py
 ```
 
 J-Quantsの期間取得方式を小規模に実測する場合は、DBへ書き込まない専用コマンドを使います。Free planのレート制限を守るため、短い期間・1銘柄で確認してください。
