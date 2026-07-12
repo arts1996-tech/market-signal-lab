@@ -186,7 +186,7 @@ def run_once(session, args, today: date | None = None) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Collect all J-Quants Free plan daily prices incrementally.")
     parser.add_argument("--lag-days", type=int, default=91)
-    parser.add_argument("--history-days", type=int, default=730)
+    parser.add_argument("--history-days", type=int, default=720)
     parser.add_argument("--limit", type=int, default=5, help="Maximum price requests for one run")
     parser.add_argument("--master-refresh-days", type=int, default=7)
     parser.add_argument("--continuous", action="store_true", help="Run continuously with a safe request interval")

@@ -340,7 +340,7 @@ crontab docker/raspberry-pi.crontab
 crontab -l
 docker compose exec app python jobs/collect_us_market.py
 docker compose logs -f jquants-collector
-docker compose exec app python jobs/collect_jquants_all_prices.py --limit 5 --lag-days 91 --history-days 730
+docker compose exec app python jobs/collect_jquants_all_prices.py --limit 5 --lag-days 91 --history-days 720
 ```
 
 J-Quants APIキー未設定、またはFree planで取得可能な日次データがない場合、ジョブはデータを作らず、取得ログとジョブ履歴にスキップ理由を残します。

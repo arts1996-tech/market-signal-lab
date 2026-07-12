@@ -71,7 +71,7 @@ services:
       - .:/app
       - ./logs:/app/logs
     command: >
-      python jobs/collect_jquants_all_prices.py --continuous --limit 1 --lag-days 91 --history-days 730
+      python jobs/collect_jquants_all_prices.py --continuous --limit 1 --lag-days 91 --history-days 720
 
 volumes:
   postgres_data:
