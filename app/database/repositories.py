@@ -206,8 +206,9 @@ def resolve_market_price_sources(prices: pd.DataFrame, source_policy: str = "rea
         if raw_column in selected and adjusted_column in selected:
             usable = adjusted & selected[adjusted_column].notna()
             selected[raw_column] = pd.to_numeric(selected[raw_column], errors="coerce").astype(float)
+            adjusted_values = pd.to_numeric(selected[adjusted_column], errors="coerce").astype(float)
             selected.loc[usable, f"raw_{raw_column}"] = selected.loc[usable, raw_column]
-            selected.loc[usable, raw_column] = selected.loc[usable, adjusted_column]
+            selected.loc[usable, raw_column] = adjusted_values.loc[usable]
     internal_columns = ["price_id", "asset_id", "asset_type", "currency", "timeframe", "source_priority"]
     return selected.drop(columns=[column for column in internal_columns if column in selected], errors="ignore")
 
