@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from app.analysis.technical import (
     atr,
@@ -10,6 +11,10 @@ from app.analysis.technical import (
     rsi,
     simple_moving_average,
 )
+from app.analysis.market_calendar import (
+    is_next_exchange_session,
+    next_exchange_session,
+)
 
 
 def test_daily_returns_does_not_forward_fill_missing_values():
@@ -18,6 +23,18 @@ def test_daily_returns_does_not_forward_fill_missing_values():
     result = daily_returns(close)
 
     assert result.empty
+
+
+def test_daily_returns_excludes_unverified_weekday_gaps_but_keeps_weekends():
+    friday_to_monday = pd.Series(
+        [100.0, 110.0], index=pd.to_datetime(["2024-01-05", "2024-01-08"])
+    )
+    friday_to_tuesday = pd.Series(
+        [100.0, 110.0], index=pd.to_datetime(["2024-01-05", "2024-01-09"])
+    )
+
+    assert daily_returns(friday_to_monday).iloc[0] == pytest.approx(0.1)
+    assert daily_returns(friday_to_tuesday).empty
 
 
 def test_rsi_bounds():
@@ -70,3 +87,16 @@ def test_short_term_indicator_frame_and_snapshot():
     assert "macd" in indicators.columns
     assert 0 <= snapshot["score"] <= 100
     assert snapshot["label"]
+
+
+def test_short_term_signal_snapshot_handles_an_empty_frame_without_close_column():
+    snapshot = short_term_signal_snapshot(pd.DataFrame())
+
+    assert snapshot["label"] == "データ不足"
+    assert snapshot["negative_reasons"] == ["価格データが不足しています"]
+
+
+def test_exchange_calendar_handles_nyse_holiday_and_jpx_next_session():
+    assert is_next_exchange_session("2026-04-02", "2026-04-06", "XNYS")  # Good Friday
+    assert is_next_exchange_session("2026-04-02", "2026-04-03", "XTKS")
+    assert next_exchange_session("2026-05-01", "XTKS") == pd.Timestamp("2026-05-07")

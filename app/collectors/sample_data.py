@@ -38,15 +38,24 @@ def generate_sample_market_data(periods: int = 320) -> pd.DataFrame:
                 {
                     "symbol": symbol,
                     "price_time": price_time.to_pydatetime(),
+                    "session_date": price_time.date(),
                     "open": None,
                     "high": None,
                     "low": None,
                     "close": float(close),
                     "adjusted_close": float(close),
+                    "adjusted_open": None,
+                    "adjusted_high": None,
+                    "adjusted_low": None,
+                    "adjusted_volume": None,
+                    "adjustment_factor": None,
                     "volume": None,
                     "source": "sample",
+                    "source_symbol": symbol,
                     "fetched_at": fetched_at,
+                    "available_at": fetched_at,
+                    "data_quality_status": "synthetic_close_only",
+                    "price_basis": "synthetic_close_only",
                 }
             )
     return pd.DataFrame(rows)
-

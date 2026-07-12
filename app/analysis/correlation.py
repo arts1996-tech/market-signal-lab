@@ -27,11 +27,17 @@ def return_wide(wide: pd.DataFrame) -> pd.DataFrame:
     return wide.apply(daily_returns).dropna(how="all")
 
 
-def us_japan_pair_frame(wide: pd.DataFrame, us_symbol: str, japan_symbol: str) -> pd.DataFrame:
+def us_japan_pair_frame(
+    wide: pd.DataFrame, us_symbol: str, japan_symbol: str, calendar_aware: bool = False
+) -> pd.DataFrame:
     returns = return_wide(wide)
     if us_symbol not in returns or japan_symbol not in returns:
         return pd.DataFrame()
-    return align_us_previous_to_japan(returns[us_symbol], returns[japan_symbol])
+    return align_us_previous_to_japan(
+        returns[us_symbol], returns[japan_symbol],
+        us_calendar="XNYS" if calendar_aware else None,
+        japan_calendar="XTKS" if calendar_aware else None,
+    )
 
 
 def rolling_correlation(pair_frame: pd.DataFrame, window: int = 60) -> pd.Series:
@@ -69,4 +75,3 @@ def conditional_next_day_stats(pair_frame: pd.DataFrame, threshold: float = 0.01
             }
         )
     return pd.DataFrame(rows)
-

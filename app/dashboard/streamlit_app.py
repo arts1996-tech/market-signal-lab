@@ -5,13 +5,20 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from app.database.repositories import latest_correlation_results, latest_fetch_logs, latest_job_runs
+from app.database.repositories import (
+    latest_correlation_results,
+    latest_fetch_logs,
+    latest_job_runs,
+    list_assets_by_source,
+)
 from app.database.session import SessionLocal
+from app.core.config import get_settings
 from app.services.analysis_service import (
     DEFAULT_SYMBOLS,
     load_market_analysis,
     load_movement_and_virtual_trade_analysis,
     load_short_term_analysis,
+    load_us_japan_spillover_analysis,
 )
 
 
@@ -61,22 +68,43 @@ def load_movement_data(score_threshold: int, holding_days: int) -> dict:
         )
 
 
+@st.cache_data(ttl=300)
+def load_spillover_data(base_symbol: str, target_symbol: str) -> dict:
+    with SessionLocal() as session:
+        return load_us_japan_spillover_analysis(session, base_symbol, target_symbol)
+
+
 st.title("Market Signal Lab")
 st.caption("短期取引と中期投資の判断材料を整理する分析アプリです。自動売買や投資助言は行いません。")
+if get_settings().market_data_mode == "demo":
+    st.warning("デモモード: 合成データのみを表示しています。投資判断には使用できません。")
 
-tab_market, tab_short, tab_candidates, tab_virtual, tab_correlation, tab_system = st.tabs(
-    ["市場ダッシュボード", "短期分析", "変動候補", "仮想投資評価", "市場連動性", "システム管理"]
+tab_market, tab_short, tab_candidates, tab_virtual, tab_correlation, tab_spillover, tab_system = st.tabs(
+    [
+        "市場ダッシュボード",
+        "短期分析",
+        "変動候補",
+        "仮想投資評価",
+        "市場連動性",
+        "日米波及分析",
+        "システム管理",
+    ]
 )
 
 analysis = load_data()
 wide = analysis["wide"]
 normalized = analysis["normalized"]
 prices = analysis["prices"]
+data_quality_warnings = analysis["data_quality_warnings"]
 
 with tab_market:
     if wide.empty:
-        st.warning("まだ価格データがありません。`python jobs/seed_sample_data.py` を実行してください。")
+        st.warning("実データがありません。FREDまたはJ-Quantsの収集ジョブを実行してください。")
     else:
+        if data_quality_warnings:
+            for warning in data_quality_warnings:
+                st.warning(warning["message"])
+
         latest = wide.tail(1).T.reset_index()
         latest.columns = ["symbol", "latest_close"]
         latest["daily_return"] = wide.pct_change(fill_method=None).tail(1).T.iloc[:, 0].to_numpy()
@@ -90,15 +118,35 @@ with tab_market:
         fig = px.line(chart_data, x="price_time", y="index", color="symbol", labels={"index": "開始日=100"})
         st.plotly_chart(fig, use_container_width=True)
 
+        provenance = analysis["input_provenance"]
         st.info("欠損日は前方補完せず、取得できた観測値だけで計算しています。相関は因果関係を示すものではありません。")
+        st.caption(
+            f"分析入力: source方針 {provenance['source_policy_version']} / 入力版 {provenance['input_data_version'][:12]}… / "
+            f"価格基準 {provenance['input_provenance']['price_basis']}"
+        )
 
         source_view = (
             prices.sort_values("fetched_at")
             .groupby("symbol")
-            .tail(1)[["symbol", "source", "fetched_at"]]
+            .tail(1)[
+                ["symbol", "source", "source_symbol", "price_time", "fetched_at", "data_quality_status"]
+            ]
+            .assign(data_as_of_jst=lambda df: df["price_time"].map(format_jst))
             .assign(fetched_at_jst=lambda df: df["fetched_at"].map(format_jst))
         )
-        st.dataframe(source_view[["symbol", "source", "fetched_at_jst"]], use_container_width=True)
+        st.dataframe(
+            source_view[
+                [
+                    "symbol",
+                    "source",
+                    "source_symbol",
+                    "data_as_of_jst",
+                    "fetched_at_jst",
+                    "data_quality_status",
+                ]
+            ],
+            use_container_width=True,
+        )
 
 with tab_short:
     st.subheader("短期分析")
@@ -324,11 +372,125 @@ with tab_correlation:
         st.dataframe(analysis["conditional_stats"], use_container_width=True)
         st.caption("統計的傾向の表示であり、将来の値動きや利益を保証するものではありません。")
 
+with tab_spillover:
+    st.subheader("米国前営業日から日本当日への波及")
+    st.caption(
+        "米国指数は前営業日の終値リターン、日本株・ETFは実際の始値・終値から算出した寄り付きギャップ・場中・日次リターンを対応させます。因果関係や将来の値動きを示すものではありません。"
+    )
+    with SessionLocal() as session:
+        jquants_assets = list_assets_by_source(session, "jquants", asset_types=["stock", "etf"])
+    if not jquants_assets:
+        st.warning("J-Quantsの銘柄マスターが未取得です。銘柄と日次OHLCを取得後に分析できます。")
+    else:
+        target_symbols = [asset.symbol for asset in jquants_assets]
+        base_symbol = st.selectbox("米国指数", ["NASDAQCOM", "DJIA", "SP500"], key="spillover_us")
+        target_symbol = st.selectbox("日本株・ETF", target_symbols, key="spillover_jp")
+        spillover = load_spillover_data(base_symbol, target_symbol)
+        provenance = spillover["input_provenance"]
+        st.caption(
+            f"分析入力: source方針 {provenance['source_policy_version']} / 入力版 {provenance['input_data_version'][:12]}… / "
+            f"価格基準 {provenance['input_provenance']['price_basis']}"
+        )
+        for warning in spillover["warnings"]:
+            st.warning(warning)
+        frame = spillover["frame"]
+        if not frame.empty:
+            metrics = st.columns(4)
+            metrics[0].metric("対応セッション数", len(frame))
+            metrics[1].metric("平均寄り付きギャップ", format_percent(frame["gap_return"].mean()))
+            metrics[2].metric("平均場中リターン", format_percent(frame["intraday_return"].mean()))
+            metrics[3].metric("平均日次リターン", format_percent(frame["daily_return"].mean()))
+
+            plot_data = frame.copy()
+            plot_data["us_return_pct"] = plot_data["us_return"] * 100
+            plot_data["gap_return_pct"] = plot_data["gap_return"] * 100
+            figure = px.scatter(
+                plot_data.dropna(subset=["gap_return_pct"]),
+                x="us_return_pct",
+                y="gap_return_pct",
+                labels={"us_return_pct": "米国前営業日リターン(%)", "gap_return_pct": "日本当日寄り付きギャップ(%)"},
+            )
+            st.plotly_chart(figure, use_container_width=True)
+
+            for metric, label in [
+                ("gap_return", "寄り付きギャップ"),
+                ("intraday_return", "場中リターン"),
+                ("daily_return", "日次リターン"),
+            ]:
+                with st.expander(f"米国前営業日リターン別の {label}"):
+                    stats = spillover["conditional_stats"][metric].copy()
+                    for column in ["mean_return", "median_return", "positive_rate"]:
+                        stats[column] = stats[column].map(format_percent)
+                    st.dataframe(stats, use_container_width=True)
+                with st.expander(f"{label} のラグ回帰・ローリング検証"):
+                    regression = spillover["regression"][metric]
+                    full = regression["full"]
+                    if full["status"] != "ok":
+                        st.info("回帰には少なくとも10件の対応セッションが必要です。")
+                    else:
+                        coefficient = full["coefficients"].get("us_return")
+                        p_value = full["p_values"].get("us_return")
+                        confidence = full["confidence_intervals_95"].get("us_return", [None, None])
+                        regression_metrics = st.columns(4)
+                        regression_metrics[0].metric("サンプル数", full["sample_size"])
+                        regression_metrics[1].metric("決定係数 R²", f"{full['r_squared']:.3f}")
+                        regression_metrics[2].metric("米国リターン係数", f"{coefficient:.3f}")
+                        regression_metrics[3].metric("p値", f"{p_value:.3f}")
+                        st.caption(
+                            f"係数の95%信頼区間: [{confidence[0]:.3f}, {confidence[1]:.3f}]。"
+                        )
+                        window_rows = []
+                        for row in regression["windows"]:
+                            if row["status"] == "ok":
+                                window_rows.append(
+                                    {
+                                        "window_days": row["window_days"],
+                                        "sample_size": row["sample_size"],
+                                        "r_squared": row["r_squared"],
+                                        "us_return_coefficient": row["coefficients"].get("us_return"),
+                                        "p_value": row["p_values"].get("us_return"),
+                                    }
+                                )
+                        if window_rows:
+                            st.dataframe(pd.DataFrame(window_rows), use_container_width=True)
+                        rolling = regression["rolling"].get(20, pd.DataFrame())
+                        if not rolling.empty:
+                            rolling_figure = px.line(
+                                rolling,
+                                x="period_end",
+                                y="us_return",
+                                labels={"period_end": "日本市場日", "us_return": "20日ローリング回帰係数"},
+                            )
+                            st.plotly_chart(rolling_figure, use_container_width=True)
+                    granger = regression["granger"]
+                    st.markdown("予測上の先行性（Granger検定）")
+                    if granger["status"] != "ok":
+                        st.info("Granger検定には少なくとも30件の対応セッションが必要です。")
+                    else:
+                        granger_rows = [
+                            {
+                                "lag": lag,
+                                "F統計量": values["ssr_ftest_statistic"],
+                                "p値": values["ssr_ftest_p_value"],
+                            }
+                            for lag, values in granger["lag_results"].items()
+                        ]
+                        st.dataframe(pd.DataFrame(granger_rows), use_container_width=True)
+                        st.caption(
+                            "Granger検定は予測上の先行性の確認であり、因果関係を証明するものではありません。"
+                        )
+                    st.caption(
+                        "回帰は統計的な関連を示すだけで、因果関係、将来の値動き、利益を保証するものではありません。"
+                    )
+            st.caption(
+                "保存するには `python jobs/run_spillover_analysis.py --jp-symbol <銘柄コード>` を実行します。欠損値は補完せず、始値・終値がある観測日のみ利用します。"
+            )
+
 with tab_system:
     with SessionLocal() as session:
         fetch_logs = latest_fetch_logs(session)
         job_runs = latest_job_runs(session)
-        correlation_logs = latest_correlation_results(session)
+        correlation_logs = latest_correlation_results(session, analysis_status=None)
 
     st.subheader("API取得状況")
     st.dataframe(
@@ -362,6 +524,8 @@ with tab_system:
     )
 
     st.subheader("保存済み相関分析")
+    if any(row.analysis_status == "requires_recalculation" for row in correlation_logs):
+        st.warning("入力sourceを復元できない旧結果があります。`requires_recalculation` の行は判断材料に使わないでください。")
     st.dataframe(
         [
             {
@@ -374,6 +538,9 @@ with tab_system:
                 "period_end": format_jst(row.period_end),
                 "computed_at": format_jst(row.computed_at),
                 "lag_rule": row.lag_rule,
+                "analysis_status": row.analysis_status,
+                "source_policy_version": row.source_policy_version,
+                "input_data_version": row.input_data_version,
             }
             for row in correlation_logs
         ],

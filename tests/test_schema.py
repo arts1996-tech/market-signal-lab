@@ -1,4 +1,4 @@
-from app.database.models import CorrelationResult, MarketPrice
+from app.database.models import CorrelationResult, MarketPrice, SpilloverFeature, SpilloverModelResult
 from app.database.repositories import chunked
 from app.core.config import Settings
 
@@ -7,12 +7,36 @@ def test_market_price_has_duplicate_prevention_constraint():
     constraints = {constraint.name for constraint in MarketPrice.__table__.constraints}
 
     assert "uq_market_price" in constraints
+    assert {
+        "session_date",
+        "source_symbol",
+        "available_at",
+        "data_quality_status",
+        "price_basis",
+        "adjusted_open",
+        "adjusted_high",
+        "adjusted_low",
+        "adjusted_volume",
+        "adjustment_factor",
+    }.issubset(MarketPrice.__table__.columns.keys())
 
 
 def test_correlation_result_has_duplicate_prevention_constraint():
     constraints = {constraint.name for constraint in CorrelationResult.__table__.constraints}
 
-    assert "uq_correlation_result" in constraints
+    assert "uq_correlation_result_input" in constraints
+
+
+def test_spillover_feature_has_duplicate_prevention_constraint():
+    constraints = {constraint.name for constraint in SpilloverFeature.__table__.constraints}
+
+    assert "uq_spillover_feature_input" in constraints
+
+
+def test_spillover_model_result_has_duplicate_prevention_constraint():
+    constraints = {constraint.name for constraint in SpilloverModelResult.__table__.constraints}
+
+    assert "uq_spillover_model_result_input" in constraints
 
 
 def test_chunked_splits_large_payloads():
@@ -28,3 +52,4 @@ def test_settings_include_jquants_defaults():
 
     assert settings.jquants_base_url == "https://api.jquants.com"
     assert settings.jquants_min_request_interval_seconds == 15
+    assert settings.data_stale_after_days == 7

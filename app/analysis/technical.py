@@ -1,8 +1,10 @@
 import pandas as pd
 
+from app.analysis.market_calendar import consecutive_weekday_returns
+
 
 def daily_returns(close: pd.Series) -> pd.Series:
-    return close.sort_index().pct_change(fill_method=None).dropna()
+    return consecutive_weekday_returns(close)
 
 
 def simple_moving_average(close: pd.Series, window: int) -> pd.Series:
@@ -69,7 +71,7 @@ def short_term_indicator_frame(close: pd.Series) -> pd.DataFrame:
     frame["rsi_14"] = rsi(ordered, 14)
     frame = frame.join(macd(ordered))
     frame = frame.join(bollinger_bands(ordered, 20, 2.0))
-    frame["return_1d"] = ordered.pct_change(fill_method=None)
+    frame["return_1d"] = consecutive_weekday_returns(ordered).reindex(ordered.index)
     frame["return_5d"] = ordered.pct_change(5, fill_method=None)
     frame["return_20d"] = ordered.pct_change(20, fill_method=None)
     frame["volatility_20d"] = frame["return_1d"].rolling(20, min_periods=20).std()
@@ -78,6 +80,14 @@ def short_term_indicator_frame(close: pd.Series) -> pd.DataFrame:
 
 
 def short_term_signal_snapshot(indicators: pd.DataFrame) -> dict:
+    if "close" not in indicators.columns:
+        return {
+            "score": 50,
+            "label": "データ不足",
+            "positive_reasons": [],
+            "negative_reasons": ["価格データが不足しています"],
+        }
+
     latest = indicators.dropna(subset=["close"]).tail(1)
     if latest.empty:
         return {

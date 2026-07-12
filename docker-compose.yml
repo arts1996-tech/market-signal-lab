@@ -28,11 +28,13 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://market:market_password@db:5432/market_signal_lab}
       APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Tokyo}
+      MARKET_DATA_MODE: ${MARKET_DATA_MODE:-live}
       FRED_API_KEY: ${FRED_API_KEY:-}
       FRED_BASE_URL: ${FRED_BASE_URL:-https://api.stlouisfed.org/fred}
       JQUANTS_API_KEY: ${JQUANTS_API_KEY:-}
       JQUANTS_BASE_URL: ${JQUANTS_BASE_URL:-https://api.jquants.com}
       JQUANTS_MIN_REQUEST_INTERVAL_SECONDS: ${JQUANTS_MIN_REQUEST_INTERVAL_SECONDS:-15}
+      DATA_STALE_AFTER_DAYS: ${DATA_STALE_AFTER_DAYS:-7}
       BACKUP_DIR: ${BACKUP_DIR:-/backups}
       PYTHONPATH: /app
     depends_on:
@@ -45,9 +47,31 @@ services:
       - ./logs:/app/logs
       - ./backups:/backups
     command: >
-      sh -c "alembic upgrade head &&
-             python jobs/seed_sample_data.py &&
-             streamlit run app/dashboard/streamlit_app.py --server.address=0.0.0.0 --server.port=8501"
+      streamlit run app/dashboard/streamlit_app.py --server.address=0.0.0.0 --server.port=8501
+
+  jquants-collector:
+    build:
+      context: .
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://market:market_password@db:5432/market_signal_lab}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Tokyo}
+      JQUANTS_API_KEY: ${JQUANTS_API_KEY:-}
+      JQUANTS_BASE_URL: ${JQUANTS_BASE_URL:-https://api.jquants.com}
+      JQUANTS_MIN_REQUEST_INTERVAL_SECONDS: ${JQUANTS_MIN_REQUEST_INTERVAL_SECONDS:-15}
+      API_TIMEOUT_SECONDS: ${API_TIMEOUT_SECONDS:-20}
+      PYTHONPATH: /app
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - .:/app
+      - ./logs:/app/logs
+    command: >
+      python jobs/collect_jquants_all_prices.py --continuous --limit 1 --lag-days 91 --history-days 730
 
 volumes:
   postgres_data:

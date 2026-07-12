@@ -48,16 +48,28 @@ class JQuantsClient:
             params["to"] = to_date
 
         started = perf_counter()
+        frames = []
         with httpx.Client(timeout=self.settings.api_timeout_seconds) as client:
-            response = client.get(
-                f"{self.settings.jquants_base_url}/v2/equities/bars/daily",
-                params=params,
-                headers=self._headers(),
-            )
-            if response.status_code >= 400:
-                raise DataProviderError(build_http_error_message(response))
+            while True:
+                response = client.get(
+                    f"{self.settings.jquants_base_url}/v2/equities/bars/daily",
+                    params=params,
+                    headers=self._headers(),
+                )
+                if response.status_code >= 400:
+                    raise DataProviderError(
+                        build_http_error_message(response),
+                        category=jquants_error_category(response.status_code),
+                        retryable=response.status_code == 429 or response.status_code >= 500,
+                    )
+                payload = response.json()
+                frames.append(parse_daily_bars_response(code, payload))
+                pagination_key = payload.get("pagination_key") or payload.get("paginationKey")
+                if not pagination_key:
+                    break
+                params = {**params, "pagination_key": pagination_key}
         latency_ms = int((perf_counter() - started) * 1000)
-        return parse_daily_bars_response(code, response.json()), latency_ms
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(), latency_ms
 
     @retry(
         retry=retry_if_exception_type(httpx.TransportError),
@@ -105,10 +117,20 @@ def parse_daily_bars_response(code: str, payload: dict[str, Any] | list[dict[str
         if not isinstance(item, dict):
             continue
         date_value = pick_value(item, ["Date", "date", "LocalCodeDate", "localCodeDate", "baseDate", "base_date"])
-        close_value = pick_value(
-            item,
-            ["Close", "close", "C", "AdjustmentClose", "adjustmentClose", "adjustment_close", "AdjC"],
-        )
+        adjusted_values = {
+            "open": pick_value(item, ["AdjustmentOpen", "adjustmentOpen", "adjustment_open", "AdjO"]),
+            "high": pick_value(item, ["AdjustmentHigh", "adjustmentHigh", "adjustment_high", "AdjH"]),
+            "low": pick_value(item, ["AdjustmentLow", "adjustmentLow", "adjustment_low", "AdjL"]),
+            "close": pick_value(item, ["AdjustmentClose", "adjustmentClose", "adjustment_close", "AdjC"]),
+        }
+        raw_values = {
+            "open": pick_value(item, ["Open", "open", "O"]),
+            "high": pick_value(item, ["High", "high", "H"]),
+            "low": pick_value(item, ["Low", "low", "L"]),
+            "close": pick_value(item, ["Close", "close", "C"]),
+        }
+        use_adjusted = all(value not in (None, "") for value in adjusted_values.values())
+        close_value = raw_values["close"]
         if not date_value or close_value in (None, ""):
             continue
         price_time = pd.to_datetime(date_value).to_pydatetime().replace(tzinfo=UTC)
@@ -116,42 +138,53 @@ def parse_daily_bars_response(code: str, payload: dict[str, Any] | list[dict[str
             {
                 "symbol": code,
                 "price_time": price_time,
-                "open": to_float_or_none(
-                    pick_value(
-                        item,
-                        ["Open", "open", "O", "AdjustmentOpen", "adjustmentOpen", "adjustment_open", "AdjO"],
-                    )
-                ),
-                "high": to_float_or_none(
-                    pick_value(
-                        item,
-                        ["High", "high", "H", "AdjustmentHigh", "adjustmentHigh", "adjustment_high", "AdjH"],
-                    )
-                ),
-                "low": to_float_or_none(
-                    pick_value(
-                        item,
-                        ["Low", "low", "L", "AdjustmentLow", "adjustmentLow", "adjustment_low", "AdjL"],
-                    )
-                ),
+                "session_date": price_time.date(),
+                "open": to_float_or_none(raw_values["open"]),
+                "high": to_float_or_none(raw_values["high"]),
+                "low": to_float_or_none(raw_values["low"]),
                 "close": float(close_value),
-                "adjusted_close": to_float_or_none(
-                    pick_value(
-                        item,
-                        ["AdjustmentClose", "adjustmentClose", "adjustment_close", "AdjC", "Close", "close", "C"],
-                    )
+                "adjusted_close": to_float_or_none(adjusted_values["close"]),
+                "adjusted_open": to_float_or_none(adjusted_values["open"]),
+                "adjusted_high": to_float_or_none(adjusted_values["high"]),
+                "adjusted_low": to_float_or_none(adjusted_values["low"]),
+                "adjusted_volume": to_float_or_none(
+                    pick_value(item, ["AdjustmentVolume", "adjustmentVolume", "adjustment_volume", "AdjVo"])
+                ),
+                "adjustment_factor": to_float_or_none(
+                    pick_value(item, ["AdjustmentFactor", "adjustmentFactor", "adjustment_factor", "AdjFactor"])
                 ),
                 "volume": to_float_or_none(
                     pick_value(item, ["Volume", "volume", "Vo", "AdjustmentVolume", "adjustmentVolume", "AdjVo"])
                 ),
                 "source": "jquants",
+                "source_symbol": code,
                 "fetched_at": fetched_at,
+                "available_at": fetched_at,
+                "data_quality_status": "complete_adjusted_ohlcv" if use_adjusted else "complete_raw_ohlcv",
+                "price_basis": "raw_ohlcv_with_adjusted" if use_adjusted else "provider_reported_ohlcv",
             }
         )
+    if not rows and all_records_are_null_price_observations(records):
+        return pd.DataFrame()
     if not rows:
         first_keys = sorted(records[0].keys()) if isinstance(records[0], dict) else []
         raise DataProviderError(f"No parsable J-Quants daily bars. first_record_keys={first_keys}")
     return pd.DataFrame(rows)
+
+
+def all_records_are_null_price_observations(records: list[dict[str, Any]]) -> bool:
+    """Recognize provider-reported no-trade rows without hiding malformed payloads."""
+    price_keys = [
+        "Close", "close", "C", "AdjustmentClose", "adjustmentClose", "adjustment_close", "AdjC"
+    ]
+    date_keys = ["Date", "date", "LocalCodeDate", "localCodeDate", "baseDate", "base_date"]
+    return bool(records) and all(
+        isinstance(record, dict)
+        and pick_value(record, date_keys)
+        and any(key in record for key in price_keys)
+        and pick_value(record, price_keys) in (None, "")
+        for record in records
+    )
 
 
 def find_record_list(payload: dict[str, Any] | list[dict[str, Any]]) -> list[dict[str, Any]] | None:
@@ -248,3 +281,15 @@ def build_http_error_message(response: httpx.Response) -> str:
     if body:
         message += f": {body}"
     return message
+
+
+def jquants_error_category(status_code: int) -> str:
+    if status_code in {401, 403}:
+        return "authentication_error"
+    if status_code == 429:
+        return "rate_limited"
+    if status_code >= 500:
+        return "provider_unavailable"
+    if status_code == 400:
+        return "invalid_request"
+    return "provider_rejected_request"

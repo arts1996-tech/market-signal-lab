@@ -11,11 +11,12 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends postgresql-client curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml ./
+COPY pyproject.toml requirements.lock ./
 RUN pip install --upgrade pip \
-    && pip install ".[dev]"
+    && pip install --requirement requirements.lock
 
 COPY . .
+RUN pip install . --no-deps
 
 EXPOSE 8501
 

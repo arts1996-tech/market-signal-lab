@@ -1,8 +1,8 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -45,14 +45,24 @@ class MarketPrice(Base):
     asset_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("assets.id"), nullable=False)
     timeframe: Mapped[str] = mapped_column(String(16), nullable=False, default="1d")
     price_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    session_date: Mapped[date] = mapped_column(Date, nullable=False)
     open: Mapped[float | None] = mapped_column(Numeric(18, 6))
     high: Mapped[float | None] = mapped_column(Numeric(18, 6))
     low: Mapped[float | None] = mapped_column(Numeric(18, 6))
     close: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
     adjusted_close: Mapped[float | None] = mapped_column(Numeric(18, 6))
+    adjusted_open: Mapped[float | None] = mapped_column(Numeric(18, 6))
+    adjusted_high: Mapped[float | None] = mapped_column(Numeric(18, 6))
+    adjusted_low: Mapped[float | None] = mapped_column(Numeric(18, 6))
+    adjusted_volume: Mapped[float | None] = mapped_column(Numeric(24, 2))
+    adjustment_factor: Mapped[float | None] = mapped_column(Numeric(18, 8))
     volume: Mapped[float | None] = mapped_column(Numeric(24, 2))
     source: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_symbol: Mapped[str] = mapped_column(String(64), nullable=False)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    data_quality_status: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
+    price_basis: Mapped[str] = mapped_column(String(64), nullable=False, default="legacy_unknown")
 
     asset: Mapped[Asset] = relationship(back_populates="prices")
 
@@ -80,7 +90,8 @@ class CorrelationResult(Base):
             "window_days",
             "period_end",
             "method",
-            name="uq_correlation_result",
+            "input_data_version",
+            name="uq_correlation_result_input",
         ),
         Index("ix_correlation_results_lookup", "analysis_name", "base_symbol", "target_symbol", "period_end"),
     )
@@ -98,6 +109,81 @@ class CorrelationResult(Base):
     period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     source: Mapped[str] = mapped_column(String(64), nullable=False, default="market_prices")
+    input_data_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    analysis_status: Mapped[str] = mapped_column(String(32), nullable=False, default="current")
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class SpilloverFeature(Base):
+    __tablename__ = "spillover_features"
+    __table_args__ = (
+        UniqueConstraint(
+            "base_symbol",
+            "target_symbol",
+            "japan_session_date",
+            "metric",
+            "input_data_version",
+            name="uq_spillover_feature_input",
+        ),
+        Index("ix_spillover_features_lookup", "base_symbol", "target_symbol", "japan_session_date"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    base_symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    japan_session_date: Mapped[date] = mapped_column(Date, nullable=False)
+    us_session_date: Mapped[date] = mapped_column(Date, nullable=False)
+    metric: Mapped[str] = mapped_column(String(32), nullable=False)
+    us_return: Mapped[float] = mapped_column(Numeric(12, 8), nullable=False)
+    target_return: Mapped[float] = mapped_column(Numeric(12, 8), nullable=False)
+    lag_rule: Mapped[str] = mapped_column(String(128), nullable=False)
+    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    input_data_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    analysis_status: Mapped[str] = mapped_column(String(32), nullable=False, default="current")
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class SpilloverModelResult(Base):
+    __tablename__ = "spillover_model_results"
+    __table_args__ = (
+        UniqueConstraint(
+            "analysis_name",
+            "base_symbol",
+            "target_symbol",
+            "target_metric",
+            "window_days",
+            "period_end",
+            "method",
+            "input_data_version",
+            name="uq_spillover_model_result_input",
+        ),
+        Index(
+            "ix_spillover_model_results_lookup",
+            "base_symbol",
+            "target_symbol",
+            "target_metric",
+            "period_end",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    analysis_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    base_symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_metric: Mapped[str] = mapped_column(String(32), nullable=False)
+    window_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    method: Mapped[str] = mapped_column(String(64), nullable=False)
+    sample_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    r_squared: Mapped[float | None] = mapped_column(Numeric(12, 8))
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    model_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    input_data_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    analysis_status: Mapped[str] = mapped_column(String(32), nullable=False, default="current")
     details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
 
@@ -109,4 +195,34 @@ class JobRun(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class PriceCollectionTarget(Base):
+    __tablename__ = "price_collection_targets"
+    __table_args__ = (UniqueConstraint("source", "session_date", name="uq_price_collection_target"),)
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    session_date: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class PriceCollectionItem(Base):
+    __tablename__ = "price_collection_items"
+    __table_args__ = (
+        UniqueConstraint(
+            "source", "asset_id", "session_date", name="uq_price_collection_item"
+        ),
+        Index("ix_price_collection_items_lookup", "source", "session_date", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    asset_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("assets.id"), nullable=False)
+    session_date: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)

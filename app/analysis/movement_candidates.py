@@ -40,7 +40,7 @@ def us_japan_market_context(index_prices: pd.DataFrame) -> dict:
     pair_summaries = []
     correlations = []
     for us_symbol in US_INDEX_SYMBOLS:
-        pair = us_japan_pair_frame(wide, us_symbol, JAPAN_INDEX_SYMBOL)
+        pair = us_japan_pair_frame(wide, us_symbol, JAPAN_INDEX_SYMBOL, calendar_aware=True)
         if pair.empty:
             continue
         horizons = horizon_correlations(pair, [20, 60])

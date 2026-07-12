@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -6,6 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     app_env: str = "local"
+    market_data_mode: Literal["live", "demo"] = "live"
     app_timezone: str = "Asia/Tokyo"
     database_url: str = "postgresql+psycopg://market:market_password@localhost:5432/market_signal_lab"
     fred_api_key: str = ""
@@ -14,6 +16,7 @@ class Settings(BaseSettings):
     jquants_base_url: str = "https://api.jquants.com"
     jquants_min_request_interval_seconds: int = Field(default=15, ge=0)
     api_timeout_seconds: int = 20
+    data_stale_after_days: int = Field(default=7, ge=1)
     backup_dir: str = "/backups"
     backup_retention_days: int = Field(default=14, ge=1)
 

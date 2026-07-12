@@ -60,19 +60,29 @@ class FredClient:
             if raw_value in (None, "."):
                 continue
             price_date = pd.to_datetime(item["date"]).to_pydatetime().replace(tzinfo=UTC)
+            fetched_at = datetime.now(UTC)
             rows.append(
                 {
                     "symbol": series_id,
                     "price_time": price_date,
+                    "session_date": price_date.date(),
                     "open": None,
                     "high": None,
                     "low": None,
                     "close": float(raw_value),
                     "adjusted_close": float(raw_value),
+                    "adjusted_open": None,
+                    "adjusted_high": None,
+                    "adjusted_low": None,
+                    "adjusted_volume": None,
+                    "adjustment_factor": None,
                     "volume": None,
                     "source": self.provider,
-                    "fetched_at": datetime.now(UTC),
+                    "source_symbol": series_id,
+                    "fetched_at": fetched_at,
+                    "available_at": fetched_at,
+                    "data_quality_status": "close_only",
+                    "price_basis": "provider_reported_close_only",
                 }
             )
         return pd.DataFrame(rows), latency_ms
-

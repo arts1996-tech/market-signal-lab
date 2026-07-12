@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from app.analysis.correlation import (
     close_wide,
@@ -51,6 +52,15 @@ def test_us_previous_day_alignment_avoids_same_day_us_close():
     assert first["us_date"] == pd.Timestamp("2024-01-03", tz="UTC")
 
 
+def test_us_japan_alignment_excludes_unverified_weekday_gaps():
+    dates = pd.to_datetime(["2024-01-05", "2024-01-09"], utc=True)
+    wide = pd.DataFrame({"NASDAQCOM": [100, 101], "NIKKEI225": [200, 202]}, index=dates)
+
+    pair = us_japan_pair_frame(wide, "NASDAQCOM", "NIKKEI225")
+
+    assert pair.empty
+
+
 def test_horizon_and_rolling_correlation():
     wide = close_wide(_prices())
     pair = us_japan_pair_frame(wide, "NASDAQCOM", "NIKKEI225")
@@ -88,3 +98,18 @@ def test_build_us_japan_correlation_records_include_pair_and_average_rows():
     assert average_rows[0]["target_symbol"] == "JP_INDEX_AVERAGE"
     assert group_mean_rows[0]["method"] == "pearson_on_group_mean_returns"
     assert average_rows[0]["lag_rule"] == "us_previous_trading_day_to_japan_current_day"
+    assert pair_rows[0]["analysis_status"] == "current"
+    assert pair_rows[0]["input_data_version"] == "untracked-direct-call"
+
+
+def test_calendar_aware_alignment_accumulates_us_sessions_during_japan_holiday():
+    dates = pd.to_datetime(["2026-05-01", "2026-05-04", "2026-05-05", "2026-05-06", "2026-05-07"], utc=True)
+    wide = pd.DataFrame(
+        {"NASDAQCOM": [100.0, 101.0, 102.01, 103.0301, 104.060401], "NIKKEI225": [200.0, 201.0, 202.0, 203.0, 204.0]},
+        index=dates,
+    )
+
+    pair = us_japan_pair_frame(wide, "NASDAQCOM", "NIKKEI225", calendar_aware=True)
+
+    assert pair.iloc[-1]["japan_date"] == pd.Timestamp("2026-05-07", tz="UTC")
+    assert pair.iloc[-1]["us_return"] == pytest.approx(0.030301)

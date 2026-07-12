@@ -3,7 +3,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from app.collectors.fred import FRED_INDEX_SERIES, FredClient
+from app.collectors.fred import FRED_INDEX_SERIES
 from app.collectors.jquants import JQuantsClient
 from app.collectors.sample_data import generate_sample_market_data
 from app.core.exceptions import DataProviderError
@@ -15,6 +15,8 @@ from app.database.repositories import (
     upsert_assets,
     upsert_market_prices,
 )
+from app.providers.base import DataProvider
+from app.providers.fred import FredMarketProvider
 
 logger = logging.getLogger(__name__)
 
@@ -42,14 +44,24 @@ def save_price_frame(session: Session, frame) -> int:
                 "asset_id": asset.id,
                 "timeframe": "1d",
                 "price_time": row["price_time"],
+                "session_date": row.get("session_date") or row["price_time"].date(),
                 "open": row.get("open"),
                 "high": row.get("high"),
                 "low": row.get("low"),
                 "close": row["close"],
                 "adjusted_close": row.get("adjusted_close"),
+                "adjusted_open": row.get("adjusted_open"),
+                "adjusted_high": row.get("adjusted_high"),
+                "adjusted_low": row.get("adjusted_low"),
+                "adjusted_volume": row.get("adjusted_volume"),
+                "adjustment_factor": row.get("adjustment_factor"),
                 "volume": row.get("volume"),
                 "source": row["source"],
+                "source_symbol": row.get("source_symbol") or row["symbol"],
                 "fetched_at": row["fetched_at"],
+                "available_at": row.get("available_at") or row["fetched_at"],
+                "data_quality_status": row.get("data_quality_status", "unknown"),
+                "price_basis": row.get("price_basis", "legacy_unknown"),
             }
         )
     count = upsert_market_prices(session, payload)
@@ -74,13 +86,18 @@ def seed_sample_data(session: Session) -> int:
     return count
 
 
-def collect_fred_market_data(session: Session, observation_start: str | None = None) -> dict[str, dict]:
-    ensure_asset_master(session)
-    client = FredClient()
+def collect_fred_market_data(
+    session: Session,
+    observation_start: str | None = None,
+    provider: DataProvider | None = None,
+) -> dict[str, dict]:
+    provider = provider or FredMarketProvider()
+    upsert_assets(session, provider.fetch_assets())
+    session.commit()
     result: dict[str, dict] = {}
     for symbol in FRED_INDEX_SERIES:
         try:
-            frame, latency_ms = client.fetch_series(symbol, observation_start=observation_start)
+            frame, latency_ms = provider.fetch_prices(symbol, observation_start=observation_start)
             saved_rows = save_price_frame(session, frame)
             result[symbol] = {"status": "success", "saved_rows": saved_rows, "latency_ms": latency_ms}
             insert_api_fetch_log(
@@ -169,7 +186,7 @@ def collect_jquants_daily_bars(
                 message=message,
             )
             session.commit()
-            return {"status": "skipped", "saved_rows": 0, "latency_ms": latency_ms, "message": message}
+            return {"status": "no_data", "saved_rows": 0, "latency_ms": latency_ms, "message": message}
         asset = assets[code]
         payload = []
         for row in frame.to_dict(orient="records"):
@@ -178,14 +195,24 @@ def collect_jquants_daily_bars(
                     "asset_id": asset.id,
                     "timeframe": "1d",
                     "price_time": row["price_time"],
+                    "session_date": row.get("session_date") or row["price_time"].date(),
                     "open": row.get("open"),
                     "high": row.get("high"),
                     "low": row.get("low"),
                     "close": row["close"],
                     "adjusted_close": row.get("adjusted_close"),
+                    "adjusted_open": row.get("adjusted_open"),
+                    "adjusted_high": row.get("adjusted_high"),
+                    "adjusted_low": row.get("adjusted_low"),
+                    "adjusted_volume": row.get("adjusted_volume"),
+                    "adjustment_factor": row.get("adjustment_factor"),
                     "volume": row.get("volume"),
                     "source": row["source"],
+                    "source_symbol": row.get("source_symbol") or code,
                     "fetched_at": row["fetched_at"],
+                    "available_at": row.get("available_at") or row["fetched_at"],
+                    "data_quality_status": row.get("data_quality_status", "complete_ohlcv"),
+                    "price_basis": row.get("price_basis", "legacy_unknown"),
                 }
             )
         saved_rows = upsert_market_prices(session, payload)
@@ -203,18 +230,19 @@ def collect_jquants_daily_bars(
         return {"status": "success", "saved_rows": saved_rows, "latency_ms": latency_ms}
     except DataProviderError as exc:
         message = concise_error_message(exc)
+        status = "retry_pending" if exc.retryable else "error"
         insert_api_fetch_log(
             session,
             provider="jquants",
             endpoint="/v2/equities/bars/daily",
-            status="skipped",
+            status=status,
             asset_symbol=code,
             fetched_at=datetime.now(UTC),
             latency_ms=None,
             message=message,
         )
         session.commit()
-        return {"status": "skipped", "message": message}
+        return {"status": status, "message": message, "error_category": exc.category}
     except Exception as exc:
         session.rollback()
         message = concise_error_message(exc)
@@ -308,13 +336,16 @@ def collect_jquants_daily_batch(
             if index < len(target_codes) - 1:
                 client.respect_free_plan_rate_limit()
     success_count = sum(1 for item in result.values() if item.get("status") == "success")
-    skipped_count = sum(1 for item in result.values() if item.get("status") == "skipped")
+    no_data_count = sum(1 for item in result.values() if item.get("status") == "no_data")
+    retry_pending_count = sum(1 for item in result.values() if item.get("status") == "retry_pending")
     error_count = sum(1 for item in result.values() if item.get("status") == "error")
     if not target_codes:
         overall_status = "skipped"
+    elif retry_pending_count and not success_count:
+        overall_status = "retry_pending"
     elif error_count and not success_count:
         overall_status = "error"
-    elif error_count or skipped_count:
+    elif error_count or retry_pending_count or no_data_count:
         overall_status = "partial"
     else:
         overall_status = "success"
@@ -322,7 +353,8 @@ def collect_jquants_daily_batch(
         "status": overall_status,
         "requested": len(target_codes),
         "success": success_count,
-        "skipped": skipped_count,
+        "no_data": no_data_count,
+        "retry_pending": retry_pending_count,
         "error": error_count,
         "details": result,
     }
