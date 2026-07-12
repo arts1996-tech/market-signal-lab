@@ -188,6 +188,14 @@ FRED APIキーを設定したあと、以下を実行するとDBに実データ�
 docker compose exec app python jobs/collect_us_market.py
 ```
 
+J-Quantsの期間取得方式を小規模に実測する場合は、DBへ書き込まない専用コマンドを使います。Free planのレート制限を守るため、短い期間・1銘柄で確認してください。
+
+```bash
+docker compose run --rm app python jobs/measure_jquants_period.py --code 86970 --from-date 20260401 --to-date 20260410
+```
+
+出力には取得行数、レイテンシ、測定時刻が含まれます。全銘柄取得の通常運用は、最新取得可能日を優先した常駐コレクターを使用します。
+
 相関分析結果をDBへ蓄積する場合は、以下を実行します。米国前営業日リターンと日本当日リターンの対応で、ペア別相関、米国指数群と日本指数群の平均リターン同士の相関、ペア別相関の平均サマリーを `correlation_results` に保存します。
 
 ```bash

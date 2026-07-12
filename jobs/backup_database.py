@@ -36,8 +36,9 @@ def main() -> None:
     backup_dir = Path(settings.backup_dir)
     backup_dir.mkdir(parents=True, exist_ok=True)
     output = backup_dir / f"market_signal_lab_{started_at:%Y%m%d_%H%M%S}.dump"
+    temporary_output = backup_dir / f".{output.name}.tmp"
 
-    command, password = pg_dump_command_without_password(settings.database_url, output)
+    command, password = pg_dump_command_without_password(settings.database_url, temporary_output)
     url = make_url(settings.database_url)
     with tempfile.NamedTemporaryFile(mode="w", prefix="market-signal-lab-pgpass-", delete=False) as handle:
         pgpass = Path(handle.name)
@@ -48,7 +49,14 @@ def main() -> None:
     try:
         environment = os.environ.copy()
         environment["PGPASSFILE"] = os.fspath(pgpass)
-        subprocess.run(command, check=True, env=environment)
+        try:
+            subprocess.run(command, check=True, env=environment)
+            os.replace(temporary_output, output)
+        except Exception as exc:
+            temporary_output.unlink(missing_ok=True)
+            with SessionLocal() as session:
+                record_job(session, "backup_database", "error", started_at, {"error": str(exc)})
+            raise
     finally:
         pgpass.unlink(missing_ok=True)
 

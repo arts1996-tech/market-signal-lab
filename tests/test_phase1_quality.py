@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 
 import pandas as pd
 
+from app.analysis.market_calendar import calendar_gap_report
 from app.providers.fred import FredMarketProvider
 from app.services.analysis_service import build_data_quality_warnings
 
@@ -50,3 +51,12 @@ def test_data_quality_warning_accepts_recent_price():
         stale_after_days=7,
         now=datetime(2026, 1, 10, tzinfo=UTC),
     )
+
+
+def test_calendar_gap_report_detects_jpx_holiday_as_missing_session_only_when_expected():
+    report = calendar_gap_report(
+        pd.to_datetime(["2024-01-04", "2024-01-05", "2024-01-09"], utc=True), "XTKS"
+    )
+
+    assert report["missing_sessions"] == []
+    assert report["unexpected_sessions"] == []

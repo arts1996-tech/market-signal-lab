@@ -16,6 +16,7 @@ from app.core.config import get_settings
 from app.services.analysis_service import (
     DEFAULT_SYMBOLS,
     load_market_analysis,
+    build_analysis_status,
     load_movement_and_virtual_trade_analysis,
     load_short_term_analysis,
     load_us_japan_spillover_analysis,
@@ -96,6 +97,22 @@ wide = analysis["wide"]
 normalized = analysis["normalized"]
 prices = analysis["prices"]
 data_quality_warnings = analysis["data_quality_warnings"]
+analysis_status = build_analysis_status(prices, data_quality_warnings)
+
+with st.expander("データ品質・分析の現在地", expanded=True):
+    status_cols = st.columns(4)
+    status_cols[0].metric("モード", "デモ" if analysis_status["mode"] == "demo" else "通常")
+    status_cols[1].metric("品質警告", analysis_status["warning_count"])
+    status_cols[2].metric("最終データ日", format_jst(analysis_status["period_end"]))
+    status_cols[3].metric("最終取得", format_jst(analysis_status["latest_fetched_at"]))
+    st.caption(
+        f"source方針: {analysis_status['source_policy']} / 価格基準: "
+        f"{', '.join(analysis_status['price_bases']) or '未取得'} / "
+        f"対象期間: {format_jst(analysis_status['period_start'])}〜{format_jst(analysis_status['period_end'])}"
+    )
+    if data_quality_warnings:
+        for warning in data_quality_warnings:
+            st.warning(warning["message"])
 
 with tab_market:
     if wide.empty:

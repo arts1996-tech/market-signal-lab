@@ -6,6 +6,7 @@ import json
 from time import sleep
 
 from app.core.logging import configure_logging
+from app.analysis.market_calendar import exchange_calendar
 from app.database.repositories import (
     collection_target_statuses,
     has_collected_price_for_date,
@@ -28,15 +29,11 @@ ASSET_TYPES = ["stock", "etf"]
 
 
 def candidate_dates(latest_date: date, history_days: int) -> list[date]:
-    """Return the latest date first, then historical weekdays oldest-first."""
+    """Return the latest JPX session first, then historical sessions oldest-first."""
     cutoff = latest_date - timedelta(days=history_days)
-    historical = []
-    cursor = cutoff
-    while cursor < latest_date:
-        if cursor.weekday() < 5:
-            historical.append(cursor)
-        cursor += timedelta(days=1)
-    return ([latest_date] if latest_date.weekday() < 5 else []) + historical
+    sessions = exchange_calendar("XTKS").sessions_in_range(cutoff, latest_date)
+    dates = [session.date() for session in sessions]
+    return ([latest_date] if dates and dates[-1] == latest_date else []) + [value for value in dates if value < latest_date]
 
 
 def select_next_work(session, today: date, lag_days: int, history_days: int, limit: int):

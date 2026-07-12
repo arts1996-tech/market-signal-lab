@@ -177,6 +177,33 @@ def build_data_quality_warnings(
     return warnings
 
 
+def build_analysis_status(prices: pd.DataFrame, warnings: list[dict], settings: Settings | None = None) -> dict:
+    """Create a display-safe summary of analysis mode, freshness, and quality."""
+    settings = settings or get_settings()
+    if prices.empty:
+        return {
+            "mode": settings.market_data_mode,
+            "source_policy": SOURCE_POLICY_VERSION,
+            "period_start": None,
+            "period_end": None,
+            "latest_fetched_at": None,
+            "price_bases": [],
+            "warning_count": len(warnings),
+        }
+    price_time = pd.to_datetime(prices["price_time"], utc=True, errors="coerce").dropna()
+    fetched = pd.to_datetime(prices.get("fetched_at"), utc=True, errors="coerce").dropna()
+    bases = sorted(str(value) for value in prices.get("price_basis", pd.Series(dtype=str)).dropna().unique())
+    return {
+        "mode": settings.market_data_mode,
+        "source_policy": SOURCE_POLICY_VERSION,
+        "period_start": price_time.min().to_pydatetime() if not price_time.empty else None,
+        "period_end": price_time.max().to_pydatetime() if not price_time.empty else None,
+        "latest_fetched_at": fetched.max().to_pydatetime() if not fetched.empty else None,
+        "price_bases": bases,
+        "warning_count": len(warnings),
+    }
+
+
 def build_us_japan_correlation_records(
     wide,
     computed_at: datetime | None = None,

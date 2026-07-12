@@ -59,6 +59,23 @@ def consecutive_weekday_returns(close: pd.Series) -> pd.Series:
     return values.where(valid).dropna()
 
 
+def calendar_gap_report(observed_dates, calendar_name: str) -> dict:
+    """Report missing and non-session dates against the pinned exchange calendar."""
+    observed = {_calendar_date(pd.Timestamp(value)) for value in observed_dates}
+    if not observed:
+        return {"calendar": calendar_name, "missing_sessions": [], "unexpected_sessions": []}
+    start, end = min(observed), max(observed)
+    expected = {
+        _calendar_date(value)
+        for value in exchange_calendar(calendar_name).sessions_in_range(start, end)
+    }
+    return {
+        "calendar": calendar_name,
+        "missing_sessions": sorted(expected - observed),
+        "unexpected_sessions": sorted(observed - expected),
+    }
+
+
 def align_us_previous_to_japan(
     us_returns: pd.Series,
     japan_returns: pd.Series,
