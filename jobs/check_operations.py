@@ -15,7 +15,17 @@ def main() -> None:
         prices = session.execute(text("SELECT count(*) FROM market_prices")).scalar_one()
         latest = session.execute(text("SELECT max(fetched_at) FROM market_prices")).scalar_one()
         failed_jobs = session.execute(text("SELECT count(*) FROM job_runs WHERE status IN ('error', 'retry_pending') AND started_at >= now() - interval '24 hours'" )).scalar_one()
+    status = "ok"
+    warnings = []
+    if usage.used / usage.total >= 0.85:
+        status = "warning"
+        warnings.append("disk_usage_over_85_percent")
+    if failed_jobs >= 100:
+        status = "warning"
+        warnings.append("too_many_failed_or_retry_jobs")
     print(json.dumps({
+        "status": status,
+        "warnings": warnings,
         "checked_at": datetime.now(UTC).isoformat(),
         "disk_total_bytes": usage.total,
         "disk_used_bytes": usage.used,
