@@ -709,7 +709,7 @@ def load_movement_and_virtual_trade_analysis(
     )
     # Candidate generation is an interactive dashboard view. Bound the work
     # while keeping the complete collection in PostgreSQL for batch analysis.
-    jquants_assets = list_assets_by_source(session, "jquants", asset_types=["stock", "etf"], limit=50)
+    jquants_assets = list_assets_by_source(session, "jquants", asset_types=["stock", "etf"], limit=20)
     japan_symbols = [asset.symbol for asset in jquants_assets]
     japan_prices = (
         market_prices_frame(session, japan_symbols, source_policy=market_price_source_policy())

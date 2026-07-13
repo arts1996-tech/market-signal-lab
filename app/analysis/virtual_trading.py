@@ -23,6 +23,7 @@ def build_virtual_trades(
     price_frame["close"] = pd.to_numeric(price_frame["close"])
 
     rows = []
+    context_cache = {}
     for symbol, group in price_frame.groupby("symbol"):
         ordered = group.drop_duplicates("price_time").set_index("price_time").sort_index()
         close = ordered["close"]
@@ -30,15 +31,19 @@ def build_virtual_trades(
             continue
         indicators = short_term_indicator_frame(close)
         name = group["name"].dropna().iloc[-1] if "name" in group and not group["name"].dropna().empty else symbol
-        for location in range(min_observations, len(close) - holding_days):
+        start_location = max(min_observations, len(close) - holding_days - 20)
+        for location in range(start_location, len(close) - holding_days):
             signal_date = close.index[location]
             row = indicators.loc[signal_date]
-            historical_index_prices = (
-                index_prices[pd.to_datetime(index_prices["price_time"], utc=True) <= signal_date]
-                if not index_prices.empty and "price_time" in index_prices
-                else pd.DataFrame()
-            )
-            context = us_japan_market_context(historical_index_prices)
+            cache_key = pd.Timestamp(signal_date)
+            if cache_key not in context_cache:
+                historical_index_prices = (
+                    index_prices[pd.to_datetime(index_prices["price_time"], utc=True) <= signal_date]
+                    if not index_prices.empty and "price_time" in index_prices
+                    else pd.DataFrame()
+                )
+                context_cache[cache_key] = us_japan_market_context(historical_index_prices)
+            context = context_cache[cache_key]
             score, direction, reasons = movement_score(row, context["average_correlation"], context["us_signal"])
             if score < score_threshold:
                 continue
