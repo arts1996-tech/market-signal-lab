@@ -14,6 +14,7 @@ FIELD_ALIASES = {
     "operating_profit": ["OperatingProfit", "operatingProfit", "OP", "operating_profit"],
     "net_income": ["NetIncome", "netIncome", "NP", "net_income"],
     "eps": ["EarningsPerShare", "earningsPerShare", "eps"],
+    "book_value_per_share": ["BookValuePerShare", "BPS", "book_value_per_share"],
     "equity": ["Equity", "Eq", "equity"],
     "total_assets": ["TotalAssets", "TA", "totalAssets", "total_assets"],
     "operating_cashflow": ["CashFlowsFromUsedInOperatingActivities", "CFO", "operating_cashflow"],
@@ -57,3 +58,34 @@ def normalize_financial_summary(rows: list[dict[str, Any]]) -> pd.DataFrame:
                 record[field] = _number(_value(row, aliases))
         normalized.append(record)
     return pd.DataFrame(normalized)
+
+
+def fundamentals_as_of(snapshot: pd.DataFrame, as_of: pd.Timestamp) -> pd.DataFrame:
+    """Keep only disclosures available at the historical analysis timestamp."""
+    if snapshot.empty:
+        return snapshot.copy()
+    cutoff = pd.Timestamp(as_of)
+    cutoff = cutoff.tz_localize("UTC") if cutoff.tzinfo is None else cutoff.tz_convert("UTC")
+    frame = snapshot.copy()
+    frame["disclosed_at"] = pd.to_datetime(frame["disclosed_at"], utc=True)
+    return frame[frame["disclosed_at"] <= cutoff].sort_values("disclosed_at")
+
+
+def derive_fundamental_metrics(snapshot: dict[str, Any], price: float | None = None) -> dict[str, float | None]:
+    """Calculate ratios only from provider-reported values and an observed price."""
+    def ratio(numerator, denominator):
+        if numerator is None or denominator in (None, 0) or pd.isna(numerator) or pd.isna(denominator):
+            return None
+        return float(numerator) / float(denominator)
+
+    eps = snapshot.get("eps")
+    equity = snapshot.get("equity")
+    net_income = snapshot.get("net_income")
+    sales = snapshot.get("sales")
+    return {
+        "per": ratio(price, eps),
+        # PBR needs book value per share; do not approximate it from total equity.
+        "pbr": ratio(price, snapshot.get("book_value_per_share")),
+        "roe": ratio(net_income, equity),
+        "operating_margin": ratio(snapshot.get("operating_profit"), sales),
+    }

@@ -3,6 +3,7 @@ from hashlib import sha256
 import json
 
 import pandas as pd
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.analysis.correlation import (
@@ -19,6 +20,7 @@ from app.analysis.regression import rolling_ols, run_granger_test, run_ols, walk
 from app.analysis.spillover import TARGET_METRICS, spillover_conditional_stats, us_japan_spillover_frame
 from app.analysis.sensitivity import sector_sensitivity
 from app.analysis.screening import screen_assets
+from app.analysis.fundamentals import fundamentals_as_of
 from app.analysis.technical import short_term_indicator_frame, short_term_signal_snapshot
 from app.analysis.virtual_trading import build_virtual_trades, summarize_virtual_trade_feedback
 from app.database.repositories import (
@@ -28,6 +30,7 @@ from app.database.repositories import (
     upsert_spillover_features,
     upsert_spillover_model_results,
 )
+from app.database.models import Asset, FundamentalSnapshot
 from app.core.config import Settings, get_settings
 from app.core.data_source_policy import SOURCE_POLICY_VERSION
 
@@ -440,6 +443,20 @@ def load_asset_screening_analysis(session: Session, limit: int = 200) -> dict:
         ]
     )
     return {"assets": asset_rows, "prices": prices, "screening": screen_assets(prices, asset_rows)}
+
+
+def load_fundamental_snapshots(session: Session, symbol: str, as_of=None) -> pd.DataFrame:
+    asset = session.scalar(select(Asset).where(Asset.symbol == symbol))
+    if asset is None:
+        return pd.DataFrame()
+    rows = session.execute(
+        select(FundamentalSnapshot).where(FundamentalSnapshot.asset_id == asset.id).order_by(FundamentalSnapshot.disclosed_at)
+    ).scalars().all()
+    frame = pd.DataFrame([
+        {column: getattr(row, column) for column in ["disclosed_at", "period_end", "sales", "operating_profit", "net_income", "eps", "equity", "total_assets", "operating_cashflow"]}
+        for row in rows
+    ])
+    return fundamentals_as_of(frame, as_of) if as_of is not None else frame
 
 
 def build_spillover_warnings(

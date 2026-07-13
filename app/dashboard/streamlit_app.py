@@ -22,6 +22,7 @@ from app.services.analysis_service import (
     load_us_japan_spillover_analysis,
     load_sector_sensitivity_analysis,
     load_asset_screening_analysis,
+    load_fundamental_snapshots,
 )
 
 
@@ -87,6 +88,12 @@ def load_sensitivity_data(base_symbol: str) -> dict:
 def load_screening_data() -> dict:
     with SessionLocal() as session:
         return load_asset_screening_analysis(session)
+
+
+@st.cache_data(ttl=600)
+def load_fundamentals_data(symbol: str) -> pd.DataFrame:
+    with SessionLocal() as session:
+        return load_fundamental_snapshots(session, symbol)
 
 
 st.title("Market Signal Lab")
@@ -275,6 +282,14 @@ with tab_screening:
         view["rsi_14"] = view["rsi_14"].round(1)
         st.dataframe(view, use_container_width=True)
         st.caption("対象は先頭200銘柄に限定しています。標本数、価格基準、source、最終取得時刻はシステム管理タブでも確認してください。")
+        selected_financial_symbol = st.selectbox("財務サマリーを表示", view["symbol"].tolist())
+        financials = load_fundamentals_data(selected_financial_symbol)
+        if financials.empty:
+            st.info("財務サマリーは未取得です。")
+        else:
+            st.subheader("開示済み財務サマリー")
+            st.caption("開示日時以前の情報だけを履歴分析へ使用します。未取得項目は推測しません。")
+            st.dataframe(financials, use_container_width=True)
 
 with tab_candidates:
     st.subheader("大きく動きそうな日本株・ETF候補")
