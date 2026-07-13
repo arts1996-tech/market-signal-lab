@@ -707,13 +707,23 @@ def load_movement_and_virtual_trade_analysis(
     index_prices = market_prices_frame(
         session, DEFAULT_SYMBOLS, source_policy=market_price_source_policy()
     )
-    jquants_assets = list_assets_by_source(session, "jquants", asset_types=["stock", "etf"])
+    # Candidate generation is an interactive dashboard view. Bound the work
+    # while keeping the complete collection in PostgreSQL for batch analysis.
+    jquants_assets = list_assets_by_source(session, "jquants", asset_types=["stock", "etf"], limit=50)
     japan_symbols = [asset.symbol for asset in jquants_assets]
     japan_prices = (
         market_prices_frame(session, japan_symbols, source_policy=market_price_source_policy())
         if japan_symbols
         else pd.DataFrame()
     )
+    if not japan_prices.empty:
+        japan_prices = (
+            japan_prices.sort_values(["symbol", "price_time"])
+            .groupby("symbol", group_keys=False)
+            .tail(400)
+            .sort_values("price_time")
+            .reset_index(drop=True)
+        )
     virtual_trades = build_virtual_trades(
         index_prices,
         japan_prices,
