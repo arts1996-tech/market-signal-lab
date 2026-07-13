@@ -29,6 +29,7 @@ def is_next_exchange_session(previous: pd.Timestamp, current: pd.Timestamp, cale
     return len(sessions) == 2 and sessions[0] == previous and sessions[-1] == current
 
 
+@lru_cache(maxsize=8192)
 def next_exchange_session(value: pd.Timestamp, calendar_name: str) -> pd.Timestamp | None:
     calendar = exchange_calendar(calendar_name)
     try:
@@ -96,6 +97,9 @@ def align_us_previous_to_japan(
     jp = japan_returns.dropna().sort_index()
     rows = []
     us_dates = list(us.index)
+    japan_calendar_start = None
+    if us_calendar and japan_calendar:
+        japan_calendar_start = _calendar_date(exchange_calendar(japan_calendar).first_session)
     cursor = 0
     previous_japan_date = None
     for jp_date, jp_return in jp.items():
@@ -105,6 +109,8 @@ def align_us_previous_to_japan(
             continue
         us_date = us_dates[cursor - 1]
         if us_calendar and japan_calendar:
+            if japan_calendar_start is not None and _calendar_date(us_date) < japan_calendar_start:
+                continue
             expected_jp_date = next_exchange_session(us_date, japan_calendar)
             if expected_jp_date is None or _calendar_date(jp_date) != expected_jp_date or not is_exchange_session(us_date, us_calendar):
                 continue
