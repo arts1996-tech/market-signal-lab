@@ -1,0 +1,32 @@
+# フェーズ3 データソース設計
+
+## 方針
+
+フェーズ3では、外部APIを分析ロジックや画面へ直接結合しない。取得元、取得時刻、対象期間、改訂時点、欠損、利用規約を保存し、無料条件が不明なサービスは導入しない。
+
+## 採用候補
+
+| 対象 | 第1候補 | 扱い | 制約・注意 |
+| --- | --- | --- | --- |
+| 日本株・日本ETFの財務サマリー | J-Quants Financial Summary/Statements | 既存J-Quants Free planの範囲を公式条件確認後に採用候補 | 株価同様の遅延・レート制限・再配布条件を表示する |
+| 日本ETFの銘柄属性 | J-Quants Listed Issue Information | 採用 | ETF区分、連動対象、名称など取得可能な項目だけ保存する |
+| 米国株・米国ETFの財務 | 未採用 | 保留 | 無料枠、利用規約、再配布条件を確認するまで導入しない |
+| マクロ・為替 | FRED | 既存採用 | 観測値・改訂・ヴィンテージを保持し、OHLCVに見せかけない |
+
+J-Quantsの公式資料ではFinancial Summary/Statements（BS/PL/CF）が提供項目として掲載されているが、料金・利用範囲は契約条件に依存するため、実装前にFree planの現行仕様を再確認する。FREDは公式APIで観測値、改訂時点、ヴィンテージ指定を提供するため、財務の代替としてではなくマクロ系列に限定する。
+
+## 実装順
+
+1. `FundamentalsProvider`と`EtfMetricsProvider`の交換可能な境界を追加する。
+2. サンプルJSONを使ったパーサー、型・範囲・単位・通貨・発表日時の検証を追加する。
+3. DB保存モデルと来歴をMac側で検証する。
+4. ユーザー承認と公式条件確認後にJ-Quants財務取得を実装する。
+5. 米国株・ETFデータは別途無料条件を確認し、同じ境界へ接続する。
+
+財務値、ETF経費率、NAV、構成銘柄が取得できない場合はNULLとし、価格や指標を推測しない。財務発表日時より前の分析へ将来値を混入させない。
+
+## 公式確認先
+
+- J-Quants情報一覧: https://pro.jpx-jquants.com/pdfs/appendix-1-1-information-list-en.pdf
+- J-Quants料金・利用表: https://pro.jpx-jquants.com/pdfs/appendix-1-2-pricing-and-usage-table-en.pdf
+- FRED API観測値: https://fred.stlouisfed.org/docs/api/fred/series/series_observations.html
