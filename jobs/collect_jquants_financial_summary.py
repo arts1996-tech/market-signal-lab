@@ -2,9 +2,13 @@ import argparse
 import json
 from datetime import UTC, datetime
 
+import pandas as pd
 from app.analysis.fundamentals import normalize_financial_summary
 from app.collectors.jquants import JQuantsClient
 from app.core.logging import configure_logging
+from app.database.models import Asset, FundamentalSnapshot
+from app.database.session import SessionLocal
+from sqlalchemy import select
 
 
 def main() -> None:
@@ -16,7 +20,27 @@ def main() -> None:
     configure_logging()
     rows, latency_ms = JQuantsClient().fetch_financial_summary(args.code, args.from_date, args.to_date)
     normalized = normalize_financial_summary(rows.to_dict("records"))
-    print(json.dumps({"code": args.code, "raw_rows": len(rows), "valid_rows": len(normalized), "latency_ms": latency_ms, "fetched_at": datetime.now(UTC).isoformat(), "writes_database": False}, ensure_ascii=False, indent=2))
+    fetched_at = datetime.now(UTC)
+    saved = 0
+    with SessionLocal() as session:
+        asset = session.scalar(select(Asset).where(Asset.symbol == args.code))
+        if asset is not None:
+            for row in normalized.to_dict("records"):
+                for key, value in list(row.items()):
+                    if pd.isna(value):
+                        row[key] = None
+                exists = session.scalar(select(FundamentalSnapshot).where(
+                    FundamentalSnapshot.asset_id == asset.id,
+                    FundamentalSnapshot.disclosed_at == row["disclosed_at"],
+                    FundamentalSnapshot.period_end == row["period_end"],
+                    FundamentalSnapshot.source == "jquants",
+                ))
+                if exists is None:
+                    values = {key: row.get(key) for key in ["sales", "operating_profit", "net_income", "eps", "equity", "total_assets", "operating_cashflow"]}
+                    session.add(FundamentalSnapshot(asset_id=asset.id, disclosed_at=row["disclosed_at"], period_end=row["period_end"], source="jquants", fetched_at=fetched_at, details={"provider": "jquants", **values}, **values))
+                    saved += 1
+            session.commit()
+    print(json.dumps({"code": args.code, "raw_rows": len(rows), "valid_rows": len(normalized), "saved_rows": saved, "latency_ms": latency_ms, "fetched_at": fetched_at.isoformat(), "writes_database": saved > 0}, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
