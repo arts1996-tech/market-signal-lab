@@ -25,6 +25,8 @@ J-Quantsの公式資料ではFinancial Summary/Statements（BS/PL/CF）が提供
 
 財務値、ETF経費率、NAV、構成銘柄が取得できない場合はNULLとし、価格や指標を推測しない。財務発表日時より前の分析へ将来値を混入させない。
 
+現時点では、`normalize_financial_summary`が銘柄コード・開示日時・期間末を必須検証し、既知の財務数値だけを数値化する。外部APIへの接続、DB保存、ETF固有値の推測はまだ行わない。
+
 ## 公式確認先
 
 - J-Quants情報一覧: https://pro.jpx-jquants.com/pdfs/appendix-1-1-information-list-en.pdf
