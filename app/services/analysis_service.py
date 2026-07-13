@@ -127,6 +127,17 @@ def load_market_analysis(session: Session, symbols: list[str] | None = None) -> 
     prices = market_prices_frame(
         session, symbols or DEFAULT_SYMBOLS, source_policy=market_price_source_policy()
     )
+    # The dashboard only needs the recent windows (up to 250 sessions). Keep
+    # the full history in PostgreSQL, but avoid recalculating calendar alignment
+    # over decades on every Streamlit rerun.
+    if not prices.empty:
+        prices = (
+            prices.sort_values(["symbol", "price_time"])
+            .groupby("symbol", group_keys=False)
+            .tail(400)
+            .sort_values("price_time")
+            .reset_index(drop=True)
+        )
     wide = close_wide(prices)
     pair = us_japan_pair_frame(wide, "NASDAQCOM", "NIKKEI225", calendar_aware=True)
     return {
