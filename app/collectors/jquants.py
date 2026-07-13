@@ -77,6 +77,38 @@ class JQuantsClient:
         stop=stop_after_attempt(3),
         reraise=True,
     )
+    def fetch_financial_summary(
+        self, code: str, disclosed_from: str | None = None, disclosed_to: str | None = None
+    ) -> tuple[pd.DataFrame, int]:
+        """Fetch provider-reported financial summary; no statement inference."""
+        params: dict[str, Any] = {"code": code}
+        if disclosed_from:
+            params["from"] = disclosed_from
+        if disclosed_to:
+            params["to"] = disclosed_to
+        started = perf_counter()
+        with httpx.Client(timeout=self.settings.api_timeout_seconds) as client:
+            response = client.get(
+                f"{self.settings.jquants_base_url}/v2/fins/summary",
+                params=params,
+                headers=self._headers(),
+            )
+            if response.status_code >= 400:
+                raise DataProviderError(
+                    build_http_error_message(response),
+                    category=jquants_error_category(response.status_code),
+                    retryable=response.status_code == 429 or response.status_code >= 500,
+                )
+            payload = response.json()
+        records = find_financial_summary_records(payload)
+        return pd.DataFrame(records), int((perf_counter() - started) * 1000)
+
+    @retry(
+        retry=retry_if_exception_type(httpx.TransportError),
+        wait=wait_exponential(multiplier=1, min=1, max=8),
+        stop=stop_after_attempt(3),
+        reraise=True,
+    )
     def fetch_listed_info(self, date: str | None = None) -> tuple[list[dict[str, Any]], int, str]:
         params: dict[str, Any] = {}
         if date:
@@ -244,6 +276,16 @@ def find_listed_info_records(payload: dict[str, Any] | list[dict[str, Any]]) -> 
         if isinstance(value, list):
             return value
     return None
+
+
+def find_financial_summary_records(payload: dict[str, Any] | list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return payload
+    for key in ["financial_summary", "financialSummary", "fins", "data", "items", "rows"]:
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+    raise DataProviderError("Unexpected J-Quants financial summary response")
 
 
 def classify_jquants_asset_type(item: dict[str, Any]) -> str:

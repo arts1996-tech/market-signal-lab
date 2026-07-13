@@ -67,6 +67,44 @@ class MarketPrice(Base):
     asset: Mapped[Asset] = relationship(back_populates="prices")
 
 
+class FundamentalSnapshot(Base):
+    __tablename__ = "fundamental_snapshots"
+    __table_args__ = (
+        UniqueConstraint("asset_id", "disclosed_at", "period_end", "source", name="uq_fundamental_snapshot"),
+        Index("ix_fundamental_snapshots_asset_period", "asset_id", "period_end"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    asset_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("assets.id"), nullable=False)
+    disclosed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    sales: Mapped[float | None] = mapped_column(Numeric(24, 6))
+    operating_profit: Mapped[float | None] = mapped_column(Numeric(24, 6))
+    net_income: Mapped[float | None] = mapped_column(Numeric(24, 6))
+    eps: Mapped[float | None] = mapped_column(Numeric(18, 8))
+    equity: Mapped[float | None] = mapped_column(Numeric(24, 6))
+    total_assets: Mapped[float | None] = mapped_column(Numeric(24, 6))
+    operating_cashflow: Mapped[float | None] = mapped_column(Numeric(24, 6))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class EtfMetricSnapshot(Base):
+    __tablename__ = "etf_metric_snapshots"
+    __table_args__ = (
+        UniqueConstraint("asset_id", "observed_at", "source", name="uq_etf_metric_snapshot"),
+        Index("ix_etf_metric_snapshots_asset_observed", "asset_id", "observed_at"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    asset_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("assets.id"), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class ApiFetchLog(Base):
     __tablename__ = "api_fetch_logs"
 

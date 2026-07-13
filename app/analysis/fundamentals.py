@@ -8,15 +8,15 @@ import pandas as pd
 
 FIELD_ALIASES = {
     "symbol": ["Code", "code", "LocalCode", "local_code"],
-    "disclosed_at": ["DisclosedDate", "disclosedDate", "disclosed_at"],
-    "period_end": ["CurrentPeriodEndDate", "currentPeriodEndDate", "period_end"],
+    "disclosed_at": ["DisclosedDate", "disclosedDate", "DiscDate", "disclosed_at"],
+    "period_end": ["CurrentPeriodEndDate", "currentPeriodEndDate", "CurPerEn", "period_end"],
     "sales": ["Sales", "sales", "Revenue", "revenue"],
-    "operating_profit": ["OperatingProfit", "operatingProfit", "operating_profit"],
-    "net_income": ["NetIncome", "netIncome", "net_income"],
+    "operating_profit": ["OperatingProfit", "operatingProfit", "OP", "operating_profit"],
+    "net_income": ["NetIncome", "netIncome", "NP", "net_income"],
     "eps": ["EarningsPerShare", "earningsPerShare", "eps"],
-    "equity": ["Equity", "equity"],
-    "total_assets": ["TotalAssets", "totalAssets", "total_assets"],
-    "operating_cashflow": ["CashFlowsFromUsedInOperatingActivities", "operating_cashflow"],
+    "equity": ["Equity", "Eq", "equity"],
+    "total_assets": ["TotalAssets", "TA", "totalAssets", "total_assets"],
+    "operating_cashflow": ["CashFlowsFromUsedInOperatingActivities", "CFO", "operating_cashflow"],
 }
 
 
