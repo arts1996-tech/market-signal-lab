@@ -1,6 +1,7 @@
 """Read-only resource and database health snapshot for Raspberry Pi operations."""
 
 import json
+import os
 import shutil
 from datetime import UTC, datetime
 
@@ -8,6 +9,23 @@ from sqlalchemy import text
 
 from app.database.session import SessionLocal
 from app.services.market_service import record_job
+
+
+def memory_snapshot() -> dict:
+    values = {}
+    try:
+        for line in open("/proc/meminfo", encoding="utf-8"):
+            key, value = line.split(":", 1)
+            values[key] = int(value.strip().split()[0]) * 1024
+    except (FileNotFoundError, OSError, ValueError):
+        return {}
+    total = values.get("MemTotal", 0)
+    available = values.get("MemAvailable", values.get("MemFree", 0))
+    return {
+        "memory_total_bytes": total,
+        "memory_available_bytes": available,
+        "memory_used_ratio": (total - available) / total if total else None,
+    }
 
 
 def main() -> None:
@@ -49,6 +67,9 @@ def main() -> None:
         "latest_fetched_at": latest.isoformat() if latest else None,
         "failed_or_retry_jobs_24h": failed_jobs,
         "recent_failures": recent_failures,
+        "cpu_count": os.cpu_count(),
+        "load_average_1m": os.getloadavg()[0] if hasattr(os, "getloadavg") else None,
+        **memory_snapshot(),
     }
     with SessionLocal() as session:
         record_job(session, "check_operations", status, started_at, details)

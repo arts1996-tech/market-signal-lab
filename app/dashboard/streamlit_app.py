@@ -568,6 +568,25 @@ with tab_system:
         use_container_width=True,
     )
 
+    operations_history = []
+    for job in job_runs:
+        if job.job_name != "check_operations" or not isinstance(job.details, dict):
+            continue
+        operations_history.append(
+            {
+                "checked_at": format_jst(job.started_at),
+                "status": job.status,
+                "disk_used_ratio": job.details.get("disk_used_ratio"),
+                "market_prices": job.details.get("market_prices"),
+                "latest_fetched_at": format_jst(job.details.get("latest_fetched_at")),
+                "failed_or_retry_jobs_24h": job.details.get("failed_or_retry_jobs_24h"),
+                "warnings": job.details.get("warnings", []),
+            }
+        )
+    if operations_history:
+        st.subheader("運用履歴（ディスク・DB・失敗ジョブ）")
+        st.dataframe(pd.DataFrame(operations_history), use_container_width=True)
+
     st.subheader("ジョブ実行状況")
     st.dataframe(
         [

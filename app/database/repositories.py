@@ -1,10 +1,10 @@
 from collections.abc import Iterable
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pandas as pd
-from sqlalchemy import Select, and_, func, select
+from sqlalchemy import Select, and_, case, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.database.models import (
     ApiFetchLog,
@@ -243,7 +243,9 @@ def list_assets_missing_price_for_date(
     limit: int,
 ) -> list[Asset]:
     terminal_item = PriceCollectionItem
+    retry_item = aliased(PriceCollectionItem)
     price = MarketPrice
+    retry_cooldown = datetime.now(UTC) - timedelta(minutes=5)
     query = (
         select(Asset)
         .outerjoin(
@@ -264,13 +266,30 @@ def list_assets_missing_price_for_date(
                 terminal_item.status == "no_data",
             ),
         )
+        .outerjoin(
+            retry_item,
+            and_(
+                retry_item.asset_id == Asset.id,
+                retry_item.source == source,
+                retry_item.session_date == session_date,
+            ),
+        )
         .where(
             Asset.source == source,
             Asset.asset_type.in_(asset_types),
             price.id.is_(None),
             terminal_item.id.is_(None),
+            or_(
+                retry_item.id.is_(None),
+                retry_item.status != "retry_pending",
+                retry_item.attempted_at < retry_cooldown,
+            ),
         )
-        .order_by(Asset.symbol)
+        .order_by(
+            case((retry_item.status == "retry_pending", 0), else_=1),
+            retry_item.attempted_at,
+            Asset.symbol,
+        )
         .limit(limit)
     )
     return list(session.scalars(query))
