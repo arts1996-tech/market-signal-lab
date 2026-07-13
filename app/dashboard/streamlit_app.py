@@ -5,6 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from app.analysis.fundamentals import derive_fundamental_metrics
 from app.database.repositories import (
     latest_correlation_results,
     latest_fetch_logs,
@@ -290,6 +291,31 @@ with tab_screening:
             st.subheader("開示済み財務サマリー")
             st.caption("開示日時以前の情報だけを履歴分析へ使用します。未取得項目は推測しません。")
             st.dataframe(financials, use_container_width=True)
+            latest_financial = financials.iloc[-1].to_dict()
+            latest_price = view.loc[view["symbol"] == selected_financial_symbol, "latest_close"]
+            derived = derive_fundamental_metrics(
+                latest_financial,
+                float(latest_price.iloc[0]) if not latest_price.empty else None,
+            )
+            metric_cols = st.columns(4)
+            for col, (label, key, suffix) in zip(
+                metric_cols,
+                [
+                    ("PER", "per", "倍"),
+                    ("PBR", "pbr", "倍"),
+                    ("ROE", "roe", "%"),
+                    ("営業利益率", "operating_margin", "%"),
+                ],
+            ):
+                value = derived.get(key)
+                if value is None:
+                    display = "-"
+                elif suffix == "%":
+                    display = f"{value:.2f}%"
+                else:
+                    display = f"{value:.2f}{suffix}"
+                col.metric(label, display)
+            st.caption("表示値は取得済みの開示情報と最新価格から決定論的に算出しています。未取得項目は推測しません。")
 
 with tab_candidates:
     st.subheader("大きく動きそうな日本株・ETF候補")

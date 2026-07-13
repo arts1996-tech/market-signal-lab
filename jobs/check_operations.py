@@ -34,6 +34,13 @@ def main() -> None:
     with SessionLocal() as session:
         prices = session.execute(text("SELECT count(*) FROM market_prices")).scalar_one()
         latest = session.execute(text("SELECT max(fetched_at) FROM market_prices")).scalar_one()
+        ready_symbols = session.execute(text("""
+            SELECT count(*) FROM (
+                SELECT asset_id FROM market_prices
+                WHERE source = 'jquants' AND price_basis = 'raw_ohlcv_with_adjusted'
+                GROUP BY asset_id HAVING count(*) >= 30
+            ) ready
+        """)).scalar_one()
         failed_jobs = session.execute(text("SELECT count(*) FROM job_runs WHERE status IN ('error', 'retry_pending') AND started_at >= now() - interval '24 hours'" )).scalar_one()
         recent_failures = [
             {
@@ -64,6 +71,7 @@ def main() -> None:
         "disk_free_bytes": usage.free,
         "disk_used_ratio": usage.used / usage.total,
         "market_prices": prices,
+        "adjusted_history_ready_symbols": ready_symbols,
         "latest_fetched_at": latest.isoformat() if latest else None,
         "failed_or_retry_jobs_24h": failed_jobs,
         "recent_failures": recent_failures,
