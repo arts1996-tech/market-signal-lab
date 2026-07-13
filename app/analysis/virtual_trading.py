@@ -31,7 +31,7 @@ def build_virtual_trades(
             continue
         indicators = short_term_indicator_frame(close)
         name = group["name"].dropna().iloc[-1] if "name" in group and not group["name"].dropna().empty else symbol
-        start_location = max(min_observations, len(close) - holding_days - 20)
+        start_location = max(min_observations, len(close) - holding_days - 10)
         for location in range(start_location, len(close) - holding_days):
             signal_date = close.index[location]
             row = indicators.loc[signal_date]
