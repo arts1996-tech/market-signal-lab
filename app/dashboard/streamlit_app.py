@@ -313,6 +313,12 @@ with tab_candidates:
             st.dataframe(movement["pair_summaries"], use_container_width=True)
 
     candidates = movement["candidates"]
+    valid_history_count = 0
+    if not movement_data["japan_prices"].empty:
+        valid_history_count = int(
+            (movement_data["japan_prices"].groupby("symbol").size() >= 30).sum()
+        )
+    st.caption(f"候補判定可能な有効履歴30日以上の銘柄数: {valid_history_count}")
     if candidates.empty:
         st.warning("候補はまだありません。候補判定には各銘柄30営業日以上の有効な調整済み価格履歴が必要です。legacy_unknownの価格は品質保護のため判定に使用しません。")
         insufficient = movement.get("insufficient", pd.DataFrame())
