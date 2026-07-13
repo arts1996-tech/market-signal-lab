@@ -314,7 +314,7 @@ with tab_candidates:
 
     candidates = movement["candidates"]
     if candidates.empty:
-        st.warning("候補はまだありません。候補判定には各銘柄30営業日以上の履歴が必要で、現在のMac側データでは条件を満たす銘柄がありません。")
+        st.warning("候補はまだありません。候補判定には各銘柄30営業日以上の有効な調整済み価格履歴が必要です。legacy_unknownの価格は品質保護のため判定に使用しません。")
         insufficient = movement.get("insufficient", pd.DataFrame())
         if not insufficient.empty:
             st.caption("現在の候補対象と履歴件数")

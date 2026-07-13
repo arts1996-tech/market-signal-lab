@@ -734,7 +734,7 @@ def load_movement_and_virtual_trade_analysis(
         )
     # Candidate generation is an interactive dashboard view. Bound the work
     # while keeping the complete collection in PostgreSQL for batch analysis.
-    jquants_assets = list_assets_by_source(session, "jquants", asset_types=["stock", "etf"], limit=10)
+    jquants_assets = list_assets_by_source(session, "jquants", asset_types=["stock", "etf"], limit=500)
     japan_symbols = [asset.symbol for asset in jquants_assets]
     japan_prices = (
         market_prices_frame(session, japan_symbols, source_policy=market_price_source_policy())
@@ -742,6 +742,12 @@ def load_movement_and_virtual_trade_analysis(
         else pd.DataFrame()
     )
     if not japan_prices.empty:
+        active_symbols = (
+            japan_prices.groupby("symbol").size().sort_values(ascending=False).head(10).index.tolist()
+        )
+        japan_prices = japan_prices[japan_prices["symbol"].isin(active_symbols)].copy()
+        jquants_assets = [asset for asset in jquants_assets if asset.symbol in active_symbols]
+        japan_symbols = active_symbols
         japan_prices = (
             japan_prices.sort_values(["symbol", "price_time"])
             .groupby("symbol", group_keys=False)
