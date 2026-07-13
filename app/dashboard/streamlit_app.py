@@ -314,7 +314,11 @@ with tab_candidates:
 
     candidates = movement["candidates"]
     if candidates.empty:
-        st.warning("候補抽出に必要な日本株・ETFの履歴データが不足しています。J-Quantsの日次データを複数日分取得してください。")
+        st.warning("候補はまだありません。候補判定には各銘柄30営業日以上の履歴が必要で、現在のMac側データでは条件を満たす銘柄がありません。")
+        insufficient = movement.get("insufficient", pd.DataFrame())
+        if not insufficient.empty:
+            st.caption("現在の候補対象と履歴件数")
+            st.dataframe(insufficient.head(20), use_container_width=True)
     else:
         view = candidates.copy()
         for column in ["return_1d", "return_5d", "return_20d", "volatility_20d"]:
