@@ -145,6 +145,14 @@ docker compose run --rm app python jobs/map_sec_cik.py \
   --symbol AAPL
 ```
 
+米国株を資産マスターへ追加する場合も、対象を明示した許可リストだけを処理します。ETFの自動判定や全銘柄一括登録は行いません。
+
+```bash
+docker compose run --rm app python jobs/import_sec_assets.py \
+  --json /path/to/company_tickers_exchange.json \
+  --symbols AAPL,MSFT
+```
+
 3. 初回起動またはマイグレーション変更時は、バックアップ確認後にDBマイグレーションを明示実行します。
 
 ```bash
