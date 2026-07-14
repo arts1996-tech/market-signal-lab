@@ -31,6 +31,58 @@ def test_sec_client_rejects_malformed_cik():
         SecClient().fetch_companyfacts("ABC")
 
 
+def test_sec_client_fetch_companyfacts_uses_user_agent(monkeypatch):
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return {"facts": {}}
+
+    class Client:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, headers):
+            assert url.endswith("/api/xbrl/companyfacts/CIK0000000001.json")
+            assert headers["User-Agent"] == "Market Signal Lab test@example.com"
+            return Response()
+
+    client = SecClient()
+    monkeypatch.setattr(client.settings, "sec_user_agent", "Market Signal Lab test@example.com")
+    monkeypatch.setattr("app.collectors.sec.httpx.Client", lambda timeout: Client())
+    payload, _ = client.fetch_companyfacts("1")
+    assert payload == {"facts": {}}
+
+
+def test_sec_client_marks_rate_limit_retryable(monkeypatch):
+    class Response:
+        status_code = 429
+
+        def json(self):
+            return {}
+
+    class Client:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, headers):
+            return Response()
+
+    client = SecClient()
+    monkeypatch.setattr(client.settings, "sec_user_agent", "Market Signal Lab test@example.com")
+    monkeypatch.setattr("app.collectors.sec.httpx.Client", lambda timeout: Client())
+    with pytest.raises(DataProviderError) as error:
+        client.fetch_companyfacts("1")
+    assert error.value.category == "rate_limited"
+    assert error.value.retryable is True
+
+
 def test_normalize_sec_companyfacts_preserves_filing_timing_and_known_values():
     payload = {
         "cik": "0000001",
