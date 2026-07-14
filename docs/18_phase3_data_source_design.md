@@ -32,3 +32,15 @@ J-Quantsの公式資料ではFinancial Summary/Statements（BS/PL/CF）が提供
 - J-Quants情報一覧: https://pro.jpx-jquants.com/pdfs/appendix-1-1-information-list-en.pdf
 - J-Quants料金・利用表: https://pro.jpx-jquants.com/pdfs/appendix-1-2-pricing-and-usage-table-en.pdf
 - FRED API観測値: https://fred.stlouisfed.org/docs/api/fred/series/series_observations.html
+
+## 2026-07-14 米国株・ETF候補の事前調査
+
+採用・APIキー設定は行わず、無料条件と利用範囲だけを比較した。
+
+| 候補 | 確認できた無料条件 | 判断 |
+| --- | --- | --- |
+| Alpha Vantage | 多くのエンドポイントは無料だが、標準利用上限は1日25リクエスト。リアルタイム／15分遅延の米国市場データは取引所ライセンス上の制約があり、無料前提の大量収集には不適。 | 全銘柄の日次収集候補から除外 |
+| Twelve Data Basic | 1分あたり8クレジット、1日800クレジット。米国株・ETFのリアルタイム、参照・テクニカル等は記載されているが、基本無料枠は個人の内部・非表示利用に限定され、深い履歴・高度なETF指標は上位プラン。 | 小規模な技術検証以外は保留。導入前に規約と表示可否を再確認 |
+| SEC EDGAR APIs | APIキー不要。提出書類・XBRL財務データを取得できるが、価格・ETFの市場データではない。自動アクセス時はFair AccessとUser-Agent等のポリシー遵守が必要。 | 米国株の財務データ候補。価格プロバイダーの代替にはしない |
+
+現時点の推奨は、米国株の財務情報をSEC EDGAR境界で追加検証し、価格・ETF指標は無料条件と再配布条件が明確な候補が見つかるまで採用しないこと。Twelve Dataや有料プランは、費用・規約についてユーザー承認を得るまで導入しない。
