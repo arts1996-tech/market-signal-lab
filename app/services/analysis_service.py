@@ -30,7 +30,7 @@ from app.database.repositories import (
     upsert_spillover_features,
     upsert_spillover_model_results,
 )
-from app.database.models import Asset, FundamentalSnapshot
+from app.database.models import Asset, EtfMetricSnapshot, FundamentalSnapshot
 from app.core.config import Settings, get_settings
 from app.core.data_source_policy import SOURCE_POLICY_VERSION
 
@@ -457,6 +457,28 @@ def load_fundamental_snapshots(session: Session, symbol: str, as_of=None) -> pd.
         for row in rows
     ])
     return fundamentals_as_of(frame, as_of) if as_of is not None else frame
+
+
+def load_etf_metric_snapshots(session: Session, symbol: str) -> pd.DataFrame:
+    """Load provider-reported ETF metrics without deriving missing values."""
+    asset = session.scalar(select(Asset).where(Asset.symbol == symbol, Asset.asset_type == "etf"))
+    if asset is None:
+        return pd.DataFrame()
+    rows = session.execute(
+        select(EtfMetricSnapshot)
+        .where(EtfMetricSnapshot.asset_id == asset.id)
+        .order_by(EtfMetricSnapshot.observed_at)
+    ).scalars().all()
+    return pd.DataFrame(
+        [
+            {
+                "observed_at": row.observed_at,
+                "source": row.source,
+                **(row.details or {}),
+            }
+            for row in rows
+        ]
+    )
 
 
 def build_spillover_warnings(

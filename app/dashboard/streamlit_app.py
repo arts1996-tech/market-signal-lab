@@ -24,6 +24,7 @@ from app.services.analysis_service import (
     load_sector_sensitivity_analysis,
     load_asset_screening_analysis,
     load_fundamental_snapshots,
+    load_etf_metric_snapshots,
 )
 
 
@@ -95,6 +96,12 @@ def load_screening_data() -> dict:
 def load_fundamentals_data(symbol: str) -> pd.DataFrame:
     with SessionLocal() as session:
         return load_fundamental_snapshots(session, symbol)
+
+
+@st.cache_data(ttl=600)
+def load_etf_metrics_data(symbol: str) -> pd.DataFrame:
+    with SessionLocal() as session:
+        return load_etf_metric_snapshots(session, symbol)
 
 
 st.title("Market Signal Lab")
@@ -316,6 +323,14 @@ with tab_screening:
                     display = f"{value:.2f}{suffix}"
                 col.metric(label, display)
             st.caption("表示値は取得済みの開示情報と最新価格から決定論的に算出しています。未取得項目は推測しません。")
+        if selected_financial_symbol in set(view.loc[view["asset_type"] == "etf", "symbol"]):
+            etf_metrics = load_etf_metrics_data(selected_financial_symbol)
+            st.subheader("ETF固有指標")
+            if etf_metrics.empty:
+                st.info("ETF固有指標は未取得です。取得元に存在しない項目は推測しません。")
+            else:
+                st.dataframe(etf_metrics, use_container_width=True)
+                st.caption("取得済みの提供元データのみ表示しています。")
 
 with tab_candidates:
     st.subheader("大きく動きそうな日本株・ETF候補")
