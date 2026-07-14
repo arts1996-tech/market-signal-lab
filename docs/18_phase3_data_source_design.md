@@ -25,7 +25,7 @@ J-Quantsの公式資料ではFinancial Summary/Statements（BS/PL/CF）が提供
 
 財務値、ETF経費率、NAV、構成銘柄が取得できない場合はNULLとし、価格や指標を推測しない。財務発表日時より前の分析へ将来値を混入させない。
 
-現時点では、`normalize_financial_summary`が銘柄コード・開示日時・期間末を必須検証し、既知の財務数値だけを数値化する。外部APIへの接続、DB保存、ETF固有値の推測はまだ行わない。
+現時点では、`normalize_financial_summary`が銘柄コード・開示日時・期間末を必須検証し、既知の財務数値だけを数値化する。J-Quants財務サマリーは既存の明示実行ジョブで保存する。SECについては、Company Facts JSONの正規化、User-Agent必須の読み取りクライアント、CIKマッピング、許可リスト式の米国資産登録、単銘柄の明示保存ジョブまでをMac側で実装・検証済みである。SECの自動収集、全銘柄登録、価格データ取得、ラズパイでのSECデータ収集はまだ行わない。
 
 ## 公式確認先
 
