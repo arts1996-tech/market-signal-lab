@@ -18,6 +18,30 @@ SEC_TAGS = {
 }
 
 
+def normalize_sec_ticker_directory(payload: dict[str, Any]) -> pd.DataFrame:
+    """Normalize SEC ticker/CIK directory JSON into a validated lookup frame."""
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        rows = []
+    normalized = []
+    for row in rows:
+        if not isinstance(row, (list, tuple)) or len(row) < 3:
+            continue
+        cik, name, ticker = row[0], row[1], row[2]
+        if cik in (None, "") or ticker in (None, ""):
+            continue
+        try:
+            cik_value = str(int(cik)).zfill(10)
+        except (TypeError, ValueError):
+            continue
+        normalized.append({
+            "cik": cik_value,
+            "symbol": str(ticker).upper().strip(),
+            "name": str(name or "").strip(),
+        })
+    return pd.DataFrame(normalized).drop_duplicates(subset=["symbol"], keep="first")
+
+
 def _timestamp(value: Any) -> pd.Timestamp | None:
     if not value:
         return None

@@ -1,6 +1,19 @@
 import pandas as pd
 
-from app.analysis.sec_fundamentals import normalize_sec_companyfacts
+from app.analysis.sec_fundamentals import normalize_sec_companyfacts, normalize_sec_ticker_directory
+
+
+def test_normalize_sec_ticker_directory_validates_cik_and_deduplicates_symbols():
+    result = normalize_sec_ticker_directory({
+        "data": [
+            ["1234", "Example Inc", "exm"],
+            ["1234", "Duplicate", "EXM"],
+            ["bad", "Invalid", "BAD"],
+            ["5678", "Other", "OTH"],
+        ]
+    })
+    assert result["symbol"].tolist() == ["EXM", "OTH"]
+    assert result.iloc[0]["cik"] == "0000001234"
 
 
 def test_normalize_sec_companyfacts_preserves_filing_timing_and_known_values():
