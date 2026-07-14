@@ -42,6 +42,16 @@ def normalize_sec_ticker_directory(payload: dict[str, Any]) -> pd.DataFrame:
     return pd.DataFrame(normalized).drop_duplicates(subset=["symbol"], keep="first")
 
 
+def find_sec_cik(directory: pd.DataFrame, symbol: str) -> str | None:
+    """Find one normalized CIK for an exact ticker match."""
+    if directory.empty or "symbol" not in directory or "cik" not in directory:
+        return None
+    matches = directory[directory["symbol"] == str(symbol).upper().strip()]
+    if len(matches) != 1:
+        return None
+    return str(matches.iloc[0]["cik"])
+
+
 def _timestamp(value: Any) -> pd.Timestamp | None:
     if not value:
         return None

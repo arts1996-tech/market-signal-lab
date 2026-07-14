@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from app.analysis.sec_fundamentals import normalize_sec_companyfacts, normalize_sec_ticker_directory
+from app.analysis.sec_fundamentals import find_sec_cik, normalize_sec_companyfacts, normalize_sec_ticker_directory
 from app.collectors.sec import SecClient
 from app.core.exceptions import DataProviderError
 
@@ -17,6 +17,8 @@ def test_normalize_sec_ticker_directory_validates_cik_and_deduplicates_symbols()
     })
     assert result["symbol"].tolist() == ["EXM", "OTH"]
     assert result.iloc[0]["cik"] == "0000001234"
+    assert find_sec_cik(result, "oth") == "0000005678"
+    assert find_sec_cik(result, "missing") is None
 
 
 def test_sec_client_requires_identifying_user_agent(monkeypatch):

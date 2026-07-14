@@ -137,6 +137,14 @@ SEC財務データを明示的に1銘柄取得する場合は、User-Agentを設
 docker compose run --rm app python jobs/collect_sec_fundamentals.py --cik 0000320193 --symbol AAPL
 ```
 
+CIKの資産マスター登録は、SEC公式の銘柄一覧JSONとUSD資産を明示指定して実行します。日本株・日本ETF、既存CIKとの重複はジョブが拒否します。
+
+```bash
+docker compose run --rm app python jobs/map_sec_cik.py \
+  --json /path/to/company_tickers_exchange.json \
+  --symbol AAPL
+```
+
 3. 初回起動またはマイグレーション変更時は、バックアップ確認後にDBマイグレーションを明示実行します。
 
 ```bash
