@@ -1,6 +1,6 @@
 import pandas as pd
 
-from app.analysis.fundamentals import fundamentals_as_of, normalize_financial_summary
+from app.analysis.fundamentals import derive_fundamental_metrics, fundamentals_as_of, normalize_financial_summary
 
 
 def test_normalize_financial_summary_requires_disclosure_and_converts_numbers():
@@ -22,3 +22,14 @@ def test_fundamentals_as_of_excludes_future_disclosures():
     ])
     result = fundamentals_as_of(frame, pd.Timestamp("2026-04-15", tz="UTC"))
     assert result["sales"].tolist() == [100]
+
+
+def test_derive_fundamental_metrics_does_not_approximate_missing_book_value():
+    result = derive_fundamental_metrics(
+        {"eps": 10, "net_income": 20, "equity": 100, "sales": 200, "operating_profit": 30},
+        price=150,
+    )
+    assert result["per"] == 15.0
+    assert result["pbr"] is None
+    assert result["roe"] == 0.2
+    assert result["operating_margin"] == 0.15

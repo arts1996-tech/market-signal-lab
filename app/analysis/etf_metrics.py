@@ -16,6 +16,16 @@ ALIASES = {
 }
 
 
+def _number(value: Any) -> float | None:
+    if value in (None, "", "-"):
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if pd.notna(result) else None
+
+
 def normalize_etf_metrics(rows: list[dict[str, Any]]) -> pd.DataFrame:
     normalized = []
     for row in rows:
@@ -34,8 +44,8 @@ def normalize_etf_metrics(rows: list[dict[str, Any]]) -> pd.DataFrame:
             "symbol": str(symbol),
             "observed_at": observed_at,
             "tracking_index": value("tracking_index"),
-            "expense_ratio": float(expense) if expense not in (None, "") else None,
-            "net_assets": float(net_assets) if net_assets not in (None, "") else None,
+            "expense_ratio": _number(expense),
+            "net_assets": _number(net_assets),
             "hedged": value("hedged"),
             "leverage_type": value("leverage_type"),
         })
