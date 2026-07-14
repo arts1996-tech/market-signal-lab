@@ -41,6 +41,22 @@ def main() -> None:
                 GROUP BY asset_id HAVING count(*) >= 30
             ) ready
         """)).scalar_one()
+        target_counts = session.execute(text("""
+            SELECT
+                count(*) AS total,
+                count(*) FILTER (WHERE status = 'complete') AS completed,
+                min(session_date) FILTER (WHERE status IN ('active', 'pending')) AS next_session_date
+            FROM price_collection_targets
+            WHERE source = 'jquants'
+        """)).mappings().one()
+        item_counts = session.execute(text("""
+            SELECT
+                count(*) FILTER (WHERE status IN ('success', 'no_data')) AS completed,
+                count(*) FILTER (WHERE status = 'retry_pending') AS retry_pending,
+                count(*) FILTER (WHERE status = 'error') AS errors
+            FROM price_collection_items
+            WHERE source = 'jquants'
+        """)).mappings().one()
         failed_jobs = session.execute(text("SELECT count(*) FROM job_runs WHERE status IN ('error', 'retry_pending') AND started_at >= now() - interval '24 hours'" )).scalar_one()
         recent_failures = [
             {
@@ -72,6 +88,17 @@ def main() -> None:
         "disk_used_ratio": usage.used / usage.total,
         "market_prices": prices,
         "adjusted_history_ready_symbols": ready_symbols,
+        "collection_targets_total": target_counts["total"],
+        "collection_targets_completed": target_counts["completed"],
+        "collection_targets_progress_ratio": (
+            target_counts["completed"] / target_counts["total"]
+            if target_counts["total"] else None
+        ),
+        "collection_next_session_date": str(target_counts["next_session_date"])
+        if target_counts["next_session_date"] else None,
+        "collection_items_completed": item_counts["completed"],
+        "collection_items_retry_pending": item_counts["retry_pending"],
+        "collection_items_errors": item_counts["errors"],
         "latest_fetched_at": latest.isoformat() if latest else None,
         "failed_or_retry_jobs_24h": failed_jobs,
         "recent_failures": recent_failures,
