@@ -129,7 +129,13 @@ cp .env.example .env
 
 J-Quants Free planを使う場合は `.env` の `JQUANTS_API_KEY` に設定します。J-Quants Free planの株価は12週間遅延です。
 
-米国株のSEC財務データを検証する場合は、`.env` の `SEC_USER_AGENT` にアプリ名と連絡先を設定してください。SECのFair Access要件に従うため、未設定のままSEC APIへ接続することはできません。現時点ではSEC APIの自動収集・DB保存は未導入です。
+米国株のSEC財務データを検証する場合は、`.env` の `SEC_USER_AGENT` にアプリ名と連絡先を設定してください。SECのFair Access要件に従うため、未設定のままSEC APIへ接続することはできません。現時点ではSEC APIの自動収集は未導入で、明示実行の単銘柄ジョブだけを提供しています。
+
+SEC財務データを明示的に1銘柄取得する場合は、User-Agentを設定したうえで次を実行します。対象銘柄が既存の`assets`にない場合、データは保存せず取得件数だけを表示します。
+
+```bash
+docker compose run --rm app python jobs/collect_sec_fundamentals.py --cik 0000320193 --symbol AAPL
+```
 
 3. 初回起動またはマイグレーション変更時は、バックアップ確認後にDBマイグレーションを明示実行します。
 
