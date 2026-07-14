@@ -65,6 +65,16 @@ def main() -> None:
             FROM price_collection_items
             WHERE source = 'jquants'
         """)).mappings().one()
+        basis_counts = dict(session.execute(text("""
+            SELECT coalesce(price_basis, 'NULL') AS basis, count(*) AS count
+            FROM market_prices GROUP BY price_basis
+        """)).all())
+        phase3_counts = session.execute(text("""
+            SELECT
+                (SELECT count(*) FROM fundamental_snapshots) AS fundamental_snapshots,
+                (SELECT count(*) FROM etf_metric_snapshots) AS etf_metric_snapshots,
+                (SELECT count(*) FROM assets WHERE sec_cik IS NOT NULL) AS assets_with_sec_cik
+        """)).mappings().one()
         failed_jobs = session.execute(text("SELECT count(*) FROM job_runs WHERE status IN ('error', 'retry_pending') AND started_at >= now() - interval '24 hours'" )).scalar_one()
         recent_failures = [
             {
@@ -115,6 +125,10 @@ def main() -> None:
         "collection_items_completed": item_counts["completed"],
         "collection_items_retry_pending": item_counts["retry_pending"],
         "collection_items_errors": item_counts["errors"],
+        "price_basis_counts": basis_counts,
+        "fundamental_snapshots": phase3_counts["fundamental_snapshots"],
+        "etf_metric_snapshots": phase3_counts["etf_metric_snapshots"],
+        "assets_with_sec_cik": phase3_counts["assets_with_sec_cik"],
         "latest_fetched_at": latest.isoformat() if latest else None,
         "failed_or_retry_jobs_24h": failed_jobs,
         "recent_failures": recent_failures,
