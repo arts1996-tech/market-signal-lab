@@ -459,6 +459,17 @@ def load_fundamental_snapshots(session: Session, symbol: str, as_of=None) -> pd.
     return fundamentals_as_of(frame, as_of) if as_of is not None else frame
 
 
+def list_fundamental_symbols(session: Session) -> list[str]:
+    """List symbols with persisted financial snapshots for screen-independent review."""
+    rows = session.execute(
+        select(Asset.symbol)
+        .join(FundamentalSnapshot, FundamentalSnapshot.asset_id == Asset.id)
+        .distinct()
+        .order_by(Asset.symbol)
+    ).scalars().all()
+    return list(rows)
+
+
 def load_etf_metric_snapshots(session: Session, symbol: str) -> pd.DataFrame:
     """Load provider-reported ETF metrics without deriving missing values."""
     asset = session.scalar(select(Asset).where(Asset.symbol == symbol, Asset.asset_type == "etf"))

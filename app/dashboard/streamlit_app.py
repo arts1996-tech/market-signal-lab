@@ -24,6 +24,7 @@ from app.services.analysis_service import (
     load_sector_sensitivity_analysis,
     load_asset_screening_analysis,
     load_fundamental_snapshots,
+    list_fundamental_symbols,
     load_etf_metric_snapshots,
 )
 
@@ -96,6 +97,12 @@ def load_screening_data() -> dict:
 def load_fundamentals_data(symbol: str) -> pd.DataFrame:
     with SessionLocal() as session:
         return load_fundamental_snapshots(session, symbol)
+
+
+@st.cache_data(ttl=600)
+def load_fundamental_symbol_options() -> list[str]:
+    with SessionLocal() as session:
+        return list_fundamental_symbols(session)
 
 
 @st.cache_data(ttl=600)
@@ -290,7 +297,8 @@ with tab_screening:
         view["rsi_14"] = view["rsi_14"].round(1)
         st.dataframe(view, use_container_width=True)
         st.caption("対象は先頭200銘柄に限定しています。標本数、価格基準、source、最終取得時刻はシステム管理タブでも確認してください。")
-        selected_financial_symbol = st.selectbox("財務サマリーを表示", view["symbol"].tolist())
+        financial_symbols = sorted(set(view["symbol"].tolist()) | set(load_fundamental_symbol_options()))
+        selected_financial_symbol = st.selectbox("財務サマリーを表示", financial_symbols)
         financials = load_fundamentals_data(selected_financial_symbol)
         if financials.empty:
             st.info("財務サマリーは未取得です。")
