@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     fred_base_url: str = "https://api.stlouisfed.org/fred"
     jquants_api_key: str = ""
     jquants_base_url: str = "https://api.jquants.com"
+    sec_base_url: str = "https://data.sec.gov"
+    sec_user_agent: str = ""
     jquants_min_request_interval_seconds: int = Field(default=15, ge=0)
     api_timeout_seconds: int = 20
     data_stale_after_days: int = Field(default=7, ge=1)

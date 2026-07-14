@@ -129,6 +129,8 @@ cp .env.example .env
 
 J-Quants Free planを使う場合は `.env` の `JQUANTS_API_KEY` に設定します。J-Quants Free planの株価は12週間遅延です。
 
+米国株のSEC財務データを検証する場合は、`.env` の `SEC_USER_AGENT` にアプリ名と連絡先を設定してください。SECのFair Access要件に従うため、未設定のままSEC APIへ接続することはできません。現時点ではSEC APIの自動収集・DB保存は未導入です。
+
 3. 初回起動またはマイグレーション変更時は、バックアップ確認後にDBマイグレーションを明示実行します。
 
 ```bash

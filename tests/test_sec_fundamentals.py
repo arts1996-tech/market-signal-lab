@@ -1,6 +1,9 @@
 import pandas as pd
+import pytest
 
 from app.analysis.sec_fundamentals import normalize_sec_companyfacts, normalize_sec_ticker_directory
+from app.collectors.sec import SecClient
+from app.core.exceptions import DataProviderError
 
 
 def test_normalize_sec_ticker_directory_validates_cik_and_deduplicates_symbols():
@@ -14,6 +17,18 @@ def test_normalize_sec_ticker_directory_validates_cik_and_deduplicates_symbols()
     })
     assert result["symbol"].tolist() == ["EXM", "OTH"]
     assert result.iloc[0]["cik"] == "0000001234"
+
+
+def test_sec_client_requires_identifying_user_agent(monkeypatch):
+    client = SecClient()
+    monkeypatch.setattr(client.settings, "sec_user_agent", "")
+    with pytest.raises(DataProviderError, match="SEC_USER_AGENT"):
+        client._headers()
+
+
+def test_sec_client_rejects_malformed_cik():
+    with pytest.raises(DataProviderError, match="10-digit"):
+        SecClient().fetch_companyfacts("ABC")
 
 
 def test_normalize_sec_companyfacts_preserves_filing_timing_and_known_values():
