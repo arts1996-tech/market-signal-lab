@@ -34,13 +34,21 @@ def main() -> None:
     with SessionLocal() as session:
         prices = session.execute(text("SELECT count(*) FROM market_prices")).scalar_one()
         latest = session.execute(text("SELECT max(fetched_at) FROM market_prices")).scalar_one()
-        ready_symbols = session.execute(text("""
-            SELECT count(*) FROM (
-                SELECT asset_id FROM market_prices
+        history_counts = session.execute(text("""
+            SELECT
+                count(*) FILTER (WHERE observations >= 1) AS ge_1,
+                count(*) FILTER (WHERE observations >= 5) AS ge_5,
+                count(*) FILTER (WHERE observations >= 10) AS ge_10,
+                count(*) FILTER (WHERE observations >= 20) AS ge_20,
+                count(*) FILTER (WHERE observations >= 30) AS ge_30,
+                coalesce(max(observations), 0) AS max_observations
+            FROM (
+                SELECT asset_id, count(*) AS observations
+                FROM market_prices
                 WHERE source = 'jquants' AND price_basis = 'raw_ohlcv_with_adjusted'
-                GROUP BY asset_id HAVING count(*) >= 30
-            ) ready
-        """)).scalar_one()
+                GROUP BY asset_id
+            ) counts
+        """)).mappings().one()
         target_counts = session.execute(text("""
             SELECT
                 count(*) AS total,
@@ -87,7 +95,15 @@ def main() -> None:
         "disk_free_bytes": usage.free,
         "disk_used_ratio": usage.used / usage.total,
         "market_prices": prices,
-        "adjusted_history_ready_symbols": ready_symbols,
+        "adjusted_history_ready_symbols": history_counts["ge_30"],
+        "adjusted_history_symbols_by_threshold": {
+            "1": history_counts["ge_1"],
+            "5": history_counts["ge_5"],
+            "10": history_counts["ge_10"],
+            "20": history_counts["ge_20"],
+            "30": history_counts["ge_30"],
+        },
+        "adjusted_history_max_observations": history_counts["max_observations"],
         "collection_targets_total": target_counts["total"],
         "collection_targets_completed": target_counts["completed"],
         "collection_targets_progress_ratio": (

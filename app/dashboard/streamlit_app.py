@@ -645,6 +645,8 @@ with tab_system:
                 "disk_used_ratio": job.details.get("disk_used_ratio"),
                 "market_prices": job.details.get("market_prices"),
                 "adjusted_history_ready_symbols": job.details.get("adjusted_history_ready_symbols"),
+                "adjusted_history_max_observations": job.details.get("adjusted_history_max_observations"),
+                "adjusted_history_symbols_by_threshold": job.details.get("adjusted_history_symbols_by_threshold"),
                 "collection_targets_progress_ratio": job.details.get("collection_targets_progress_ratio"),
                 "collection_next_session_date": job.details.get("collection_next_session_date"),
                 "collection_items_retry_pending": job.details.get("collection_items_retry_pending"),
