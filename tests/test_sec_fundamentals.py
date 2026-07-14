@@ -114,3 +114,27 @@ def test_normalize_sec_companyfacts_does_not_invent_missing_fields_or_accept_bad
     }
     result = normalize_sec_companyfacts(payload, symbol="TEST")
     assert result.empty
+
+
+def test_normalize_sec_companyfacts_does_not_mix_filing_dates():
+    payload = {
+        "facts": {"us-gaap": {
+            "Revenues": {"units": {"USD": [
+                {"val": 100, "end": "2025-12-31", "filed": "2026-02-15"},
+                {"val": 110, "end": "2025-12-31", "filed": "2026-03-01"},
+            ]}},
+            "Assets": {"units": {"USD": [
+                {"val": 500, "end": "2025-12-31", "filed": "2026-02-15"},
+            ]}},
+        }},
+    }
+
+    result = normalize_sec_companyfacts(payload, symbol="TEST")
+
+    assert len(result) == 2
+    first = result[result["disclosed_at"] == pd.Timestamp("2026-02-15", tz="UTC")].iloc[0]
+    second = result[result["disclosed_at"] == pd.Timestamp("2026-03-01", tz="UTC")].iloc[0]
+    assert first["sales"] == 100.0
+    assert first["total_assets"] == 500.0
+    assert second["sales"] == 110.0
+    assert pd.isna(second["total_assets"])
