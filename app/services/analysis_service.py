@@ -400,7 +400,8 @@ def load_us_japan_spillover_analysis(session: Session, base_symbol: str, target_
 
 def load_sector_sensitivity_analysis(session: Session, base_symbol: str = "NASDAQCOM", limit: int = 200) -> dict:
     """Summarize observed spillover sensitivity by J-Quants sector and symbol."""
-    assets = list_assets_by_source(session, "jquants", asset_types=["stock", "etf"], limit=limit)
+    asset_source = "sample" if market_price_source_policy() == "demo_only" else "jquants"
+    assets = list_assets_by_source(session, asset_source, asset_types=["stock", "etf"], limit=limit)
     if not assets:
         return {"data": pd.DataFrame(), "sensitivity": {"sector": pd.DataFrame(), "symbol": pd.DataFrame()}}
     symbols = [asset.symbol for asset in assets]
@@ -426,7 +427,8 @@ def load_sector_sensitivity_analysis(session: Session, base_symbol: str = "NASDA
 
 def load_asset_screening_analysis(session: Session, limit: int = 200) -> dict:
     """Load a bounded, source-policy-selected stock/ETF technical screen."""
-    assets = list_assets_by_source(session, "jquants", asset_types=["stock", "etf"], limit=limit)
+    asset_source = "sample" if market_price_source_policy() == "demo_only" else "jquants"
+    assets = list_assets_by_source(session, asset_source, asset_types=["stock", "etf"], limit=limit)
     if not assets:
         return {"assets": pd.DataFrame(), "prices": pd.DataFrame(), "screening": pd.DataFrame()}
     symbols = [asset.symbol for asset in assets]
@@ -767,7 +769,10 @@ def load_movement_and_virtual_trade_analysis(
         )
     # Candidate generation is an interactive dashboard view. Bound the work
     # while keeping the complete collection in PostgreSQL for batch analysis.
-    jquants_assets = list_assets_by_source(session, "jquants", asset_types=["stock", "etf"], limit=500)
+    # Demo mode uses explicitly seeded synthetic assets; live mode remains
+    # restricted to validated J-Quants assets.
+    asset_source = "sample" if market_price_source_policy() == "demo_only" else "jquants"
+    jquants_assets = list_assets_by_source(session, asset_source, asset_types=["stock", "etf"], limit=500)
     japan_symbols = [asset.symbol for asset in jquants_assets]
     japan_prices = (
         market_prices_frame(session, japan_symbols, source_policy=market_price_source_policy())

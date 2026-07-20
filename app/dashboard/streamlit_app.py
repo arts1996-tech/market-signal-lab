@@ -407,6 +407,10 @@ with tab_candidates:
 with tab_virtual:
     st.subheader("仮想投資評価")
     st.caption("実際の投資や注文は行いません。過去時点で候補に出たと仮定し、一定営業日後の損益と理由を検証します。")
+    if get_settings().market_data_mode == "demo":
+        st.warning("検証用デモ: 合成データで画面と計算処理を確認しています。実績・予測・投資判断には使用できません。")
+    else:
+        st.info("通常モードでは、各銘柄30営業日以上の有効な調整済み履歴がそろうまで仮想評価を生成しません。")
     threshold = st.slider("仮想エントリーの最低スコア", min_value=50, max_value=90, value=70, step=5)
     holding_days = st.selectbox("仮想保有期間", [1, 5, 10, 20], index=1)
     virtual_data = load_movement_data(score_threshold=threshold, holding_days=holding_days)

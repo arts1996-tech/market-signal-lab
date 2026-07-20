@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.collectors.fred import FRED_INDEX_SERIES
 from app.collectors.jquants import JQuantsClient
-from app.collectors.sample_data import generate_sample_market_data
+from app.collectors.sample_data import SAMPLE_ASSET_DEFINITIONS, generate_sample_market_data
 from app.core.exceptions import DataProviderError
 from app.database.repositories import (
     ASSET_DEFINITIONS,
@@ -28,14 +28,14 @@ def concise_error_message(exc: Exception) -> str:
     return f"{exc.__class__.__name__}: {message}"
 
 
-def ensure_asset_master(session: Session) -> dict:
-    assets = upsert_assets(session, ASSET_DEFINITIONS)
+def ensure_asset_master(session: Session, definitions: list[dict] | None = None) -> dict:
+    assets = upsert_assets(session, definitions or ASSET_DEFINITIONS)
     session.commit()
     return assets
 
 
-def save_price_frame(session: Session, frame) -> int:
-    assets = ensure_asset_master(session)
+def save_price_frame(session: Session, frame, asset_definitions: list[dict] | None = None) -> int:
+    assets = ensure_asset_master(session, asset_definitions)
     payload = []
     for row in frame.to_dict(orient="records"):
         asset = assets[row["symbol"]]
@@ -71,7 +71,7 @@ def save_price_frame(session: Session, frame) -> int:
 
 def seed_sample_data(session: Session) -> int:
     frame = generate_sample_market_data()
-    count = save_price_frame(session, frame)
+    count = save_price_frame(session, frame, ASSET_DEFINITIONS + SAMPLE_ASSET_DEFINITIONS)
     insert_api_fetch_log(
         session,
         provider="sample",

@@ -4,6 +4,31 @@ import numpy as np
 import pandas as pd
 
 
+# These assets exist only in the explicitly enabled demo mode.  They provide
+# a Japanese-stock-shaped series so the candidate and virtual-trading screens
+# can be exercised before real J-Quants history is available.
+SAMPLE_ASSET_DEFINITIONS = [
+    {
+        "symbol": "DEMOJP1",
+        "name": "Demo Japan Stock 1",
+        "asset_type": "stock",
+        "currency": "JPY",
+        "exchange": "DEMO",
+        "source": "sample",
+        "metadata_json": {"demo_only": True, "sector_33": "検証用"},
+    },
+    {
+        "symbol": "DEMOJP2",
+        "name": "Demo Japan Stock 2",
+        "asset_type": "stock",
+        "currency": "JPY",
+        "exchange": "DEMO",
+        "source": "sample",
+        "metadata_json": {"demo_only": True, "sector_33": "検証用"},
+    },
+]
+
+
 def generate_sample_market_data(periods: int = 320) -> pd.DataFrame:
     rng = np.random.default_rng(42)
     dates = pd.bdate_range(end=pd.Timestamp.now(tz=UTC).normalize(), periods=periods)
@@ -20,6 +45,8 @@ def generate_sample_market_data(periods: int = 320) -> pd.DataFrame:
         "SP500": us_base * 0.88 + sp_noise,
         "NIKKEI225": np.roll(us_base, 1) * 0.42 + fx_returns * 0.35 + nikkei_noise,
         "DEXJPUS": fx_returns,
+        "DEMOJP1": np.roll(us_base, 1) * 0.35 + nikkei_noise * 0.45,
+        "DEMOJP2": np.roll(us_base, 1) * -0.20 + nikkei_noise * 0.65,
     }
     starting_values = {
         "NASDAQCOM": 15000,
@@ -27,6 +54,8 @@ def generate_sample_market_data(periods: int = 320) -> pd.DataFrame:
         "SP500": 5000,
         "NIKKEI225": 39000,
         "DEXJPUS": 150,
+        "DEMOJP1": 1200,
+        "DEMOJP2": 2800,
     }
 
     rows = []
