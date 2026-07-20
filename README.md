@@ -180,6 +180,8 @@ http://localhost:8501
 ```bash
 MARKET_DATA_MODE=demo docker compose run --rm app python jobs/seed_sample_data.py --demo
 MARKET_DATA_MODE=demo docker compose up --build
+# DBを使わず、合成データだけでフェーズ4仮想口座を確認する
+MARKET_DATA_MODE=demo docker compose run --rm app python jobs/run_backtest.py --demo
 ```
 
 デモモードの画面は合成データだけを表示し、投資判断には使用できません。既存DB内のサンプル行も通常モードの分析・画面からは除外されます。
