@@ -182,6 +182,8 @@ MARKET_DATA_MODE=demo docker compose run --rm app python jobs/seed_sample_data.p
 MARKET_DATA_MODE=demo docker compose up --build
 # DBを使わず、合成データだけでフェーズ4仮想口座を確認する
 MARKET_DATA_MODE=demo docker compose run --rm app python jobs/run_backtest.py --demo
+# 取引台帳をMacのlogs/へ保存する場合（DBには保存しない）
+MARKET_DATA_MODE=demo docker compose run --rm app python jobs/run_backtest.py --demo --ledger-path /app/logs/demo_virtual_ledger.json
 ```
 
 デモモードの画面は合成データだけを表示し、投資判断には使用できません。既存DB内のサンプル行も通常モードの分析・画面からは除外されます。

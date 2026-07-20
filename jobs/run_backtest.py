@@ -1,5 +1,7 @@
 from datetime import UTC, datetime
 import argparse
+import json
+from pathlib import Path
 
 from app.core.logging import configure_logging
 from app.database.session import SessionLocal
@@ -15,6 +17,10 @@ from app.core.config import get_settings
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a backtest or the isolated phase-4 demo.")
     parser.add_argument("--demo", action="store_true", help="Run only in-memory synthetic phase-4 evaluation")
+    parser.add_argument(
+        "--ledger-path",
+        help="Optional JSON path for the demo account ledger; never writes to PostgreSQL",
+    )
     return parser.parse_args()
 
 
@@ -34,6 +40,25 @@ def main() -> None:
             "short_term": simulate_virtual_account(short_trades, account_name="short_term"),
             "mid_term": simulate_virtual_account(mid_trades, account_name="mid_term"),
         }
+        if args.ledger_path:
+            path = Path(args.ledger_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            serializable = {
+                account: {
+                    key: value
+                    for key, value in account_result.items()
+                    if key != "trades"
+                }
+                | {
+                    "trades": account_result["trades"].assign(
+                        signal_date=lambda frame: frame["signal_date"].astype(str),
+                        exit_date=lambda frame: frame["exit_date"].astype(str),
+                    ).to_dict(orient="records")
+                }
+                for account, account_result in result.items()
+                if account in {"short_term", "mid_term"}
+            }
+            path.write_text(json.dumps(serializable, ensure_ascii=False, indent=2), encoding="utf-8")
         result["short_term"].pop("trades", None)
         result["mid_term"].pop("trades", None)
         print(f"Phase-4 demo backtest summary: {result}")
