@@ -6,6 +6,11 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from app.analysis.fundamentals import derive_fundamental_metrics
+from app.analysis.virtual_trading import (
+    build_virtual_trades,
+    generate_demo_phase4_data,
+    simulate_virtual_account,
+)
 from app.database.repositories import (
     latest_correlation_results,
     latest_fetch_logs,
@@ -409,6 +414,34 @@ with tab_virtual:
     st.caption("実際の投資や注文は行いません。過去時点で候補に出たと仮定し、一定営業日後の損益と理由を検証します。")
     if get_settings().market_data_mode == "demo":
         st.warning("検証用デモ: 合成データで画面と計算処理を確認しています。実績・予測・投資判断には使用できません。")
+        if st.button("デモ仮想投資を実行", type="primary"):
+            demo_index, demo_japan = generate_demo_phase4_data()
+            demo_accounts = {
+                "短期（5営業日）": simulate_virtual_account(
+                    build_virtual_trades(demo_index, demo_japan, score_threshold=50, holding_days=5),
+                    account_name="short_term",
+                ),
+                "中期（20営業日）": simulate_virtual_account(
+                    build_virtual_trades(demo_index, demo_japan, score_threshold=50, holding_days=20),
+                    account_name="mid_term",
+                ),
+            }
+            st.session_state["demo_virtual_accounts"] = demo_accounts
+        demo_accounts = st.session_state.get("demo_virtual_accounts")
+        if demo_accounts:
+            st.caption("合成データによる検証結果です。実際の投資成績ではありません。")
+            account_columns = st.columns(2)
+            for column, (label, account) in zip(account_columns, demo_accounts.items(), strict=True):
+                pnl = account["realized_pnl"]
+                column.metric(label, f"¥{account['equity']:,.0f}", f"{pnl:+,.0f}円")
+                ledger = account["trades"]
+                column.caption(f"取引件数: {len(ledger)} / 初期資金: ¥{account['initial_cash']:,.0f}")
+                if not ledger.empty:
+                    column.dataframe(
+                        ledger[["symbol", "signal_date", "exit_date", "quantity", "realized_pnl"]],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
     else:
         st.info("通常モードでは、各銘柄30営業日以上の有効な調整済み履歴がそろうまで仮想評価を生成しません。")
     threshold = st.slider("仮想エントリーの最低スコア", min_value=50, max_value=90, value=70, step=5)
