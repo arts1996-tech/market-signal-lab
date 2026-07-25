@@ -8,7 +8,7 @@ from time import sleep
 from app.core.logging import configure_logging
 from app.analysis.market_calendar import exchange_calendar
 from app.database.repositories import (
-    collection_target_statuses,
+    collection_target_records,
     has_collected_price_for_date,
     list_assets_by_source,
     list_assets_missing_price_for_date,
@@ -36,12 +36,38 @@ def candidate_dates(latest_date: date, history_days: int) -> list[date]:
     return ([latest_date] if dates and dates[-1] == latest_date else []) + [value for value in dates if value < latest_date]
 
 
-def select_next_work(session, today: date, lag_days: int, history_days: int, limit: int):
+def should_probe_latest_target(
+    target, now: datetime, probe_interval_hours: int
+) -> bool:
+    """Probe an unavailable latest target at startup and periodically thereafter."""
+    if target is None or target.status != "unavailable":
+        return True
+    if target.checked_at is None:
+        return True
+    return target.checked_at <= now - timedelta(hours=probe_interval_hours)
+
+
+def select_next_work(
+    session,
+    today: date,
+    lag_days: int,
+    history_days: int,
+    limit: int,
+    latest_probe_hours: int = 6,
+):
     latest_date = today - timedelta(days=lag_days)
     dates = candidate_dates(latest_date, history_days)
-    statuses = collection_target_statuses(session, SOURCE, dates)
+    targets = collection_target_records(session, SOURCE, dates)
     for target_date in dates:
-        if statuses.get(target_date) == "unavailable":
+        target = targets.get(target_date)
+        if target_date == latest_date and not should_probe_latest_target(
+            target, datetime.now(UTC), latest_probe_hours
+        ):
+            # The latest API-availability check is deliberately rate-limited. While
+            # waiting, older sessions may be backfilled without repeatedly probing
+            # the same unavailable date.
+            continue
+        if target is not None and target.status == "unavailable":
             upsert_collection_target(
                 session,
                 SOURCE,
@@ -84,6 +110,7 @@ def collect_next_price_batch(
     history_days: int,
     limit: int,
     master_refresh_days: int,
+    latest_probe_hours: int = 6,
 ) -> dict:
     now = datetime.now(UTC)
     latest_master = latest_successful_job_run(session, "collect_jquants_listed_info")
@@ -92,7 +119,11 @@ def collect_next_price_batch(
         or latest_master.finished_at is None
         or latest_master.finished_at < now - timedelta(days=master_refresh_days)
     ):
+        refresh_started_at = datetime.now(UTC)
         refresh = collect_jquants_listed_info(session)
+        # The continuous collector must record the refresh itself. Without this
+        # job-run entry every loop sees a stale/absent master and refreshes forever.
+        record_job(session, "collect_jquants_listed_info", refresh["status"], refresh_started_at, refresh)
         return {
             "status": refresh["status"],
             "phase": "asset_master_refresh",
@@ -110,7 +141,9 @@ def collect_next_price_batch(
             "message": "Full asset master collection was requested; price collection starts on the next run.",
         }
 
-    target_date, assets = select_next_work(session, today, lag_days, history_days, limit)
+    target_date, assets = select_next_work(
+        session, today, lag_days, history_days, limit, latest_probe_hours
+    )
     if target_date is None:
         return {"status": "success", "phase": "complete", "message": "No pending price collection work."}
 
@@ -175,6 +208,7 @@ def run_once(session, args, today: date | None = None) -> dict:
         history_days=args.history_days,
         limit=args.limit,
         master_refresh_days=args.master_refresh_days,
+        latest_probe_hours=args.latest_probe_hours,
     )
     record_job(session, "collect_jquants_all_prices", result["status"], started_at, result)
     return result
@@ -186,6 +220,12 @@ def main() -> None:
     parser.add_argument("--history-days", type=int, default=720)
     parser.add_argument("--limit", type=int, default=5, help="Maximum price requests for one run")
     parser.add_argument("--master-refresh-days", type=int, default=7)
+    parser.add_argument(
+        "--latest-probe-hours",
+        type=int,
+        default=6,
+        help="Minimum interval before retrying an unavailable latest date",
+    )
     parser.add_argument("--continuous", action="store_true", help="Run continuously with a safe request interval")
     args = parser.parse_args()
 

@@ -309,6 +309,21 @@ def collection_target_statuses(
     return {row.session_date: row.status for row in rows}
 
 
+def collection_target_records(
+    session: Session, source: str, session_dates: list[date]
+) -> dict[date, PriceCollectionTarget]:
+    """Return collection targets with timestamps for scheduling decisions."""
+    if not session_dates:
+        return {}
+    rows = session.scalars(
+        select(PriceCollectionTarget).where(
+            PriceCollectionTarget.source == source,
+            PriceCollectionTarget.session_date.in_(session_dates),
+        )
+    )
+    return {row.session_date: row for row in rows}
+
+
 def has_collected_price_for_date(session: Session, source: str, session_date: date) -> bool:
     count = session.scalar(
         select(func.count())

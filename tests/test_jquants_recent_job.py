@@ -1,9 +1,14 @@
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 
 from sqlalchemy.dialects import postgresql
 
-from jobs.collect_jquants_all_prices import candidate_dates, sleep_seconds_for_result, should_mark_target_unavailable
+from jobs.collect_jquants_all_prices import (
+    candidate_dates,
+    should_mark_target_unavailable,
+    should_probe_latest_target,
+    sleep_seconds_for_result,
+)
 from app.database.repositories import upsert_unavailable_collection_items
 from jobs.collect_jquants_recent_daily_batch import collect_recent_daily_batch, recent_candidate_dates
 
@@ -92,6 +97,18 @@ def test_single_symbol_result_never_marks_an_entire_date_unavailable():
     assert not should_mark_target_unavailable(0, 1, 1, has_existing_prices=True)
     assert not should_mark_target_unavailable(0, 1, 1, has_existing_prices=False)
     assert should_mark_target_unavailable(0, 3, 3, has_existing_prices=False)
+
+
+def test_latest_unavailable_target_is_probed_only_after_cooldown():
+    now = datetime(2026, 7, 25, 2, 0, tzinfo=UTC)
+    target = SimpleNamespace(status="unavailable", checked_at=now - timedelta(hours=1))
+    assert not should_probe_latest_target(target, now, probe_interval_hours=6)
+    assert should_probe_latest_target(
+        SimpleNamespace(status="unavailable", checked_at=now - timedelta(hours=6)),
+        now,
+        probe_interval_hours=6,
+    )
+    assert should_probe_latest_target(None, now, probe_interval_hours=6)
 
 
 def test_no_data_upsert_replaces_legacy_terminal_status():
