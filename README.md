@@ -6,6 +6,8 @@
 
 このシステムは自動売買や証券会社への発注を行いません。「必ず上がる」「買うべき」といった断定や利益保証をせず、統計的な傾向、根拠、反対材料、過去検証、データ品質を提示します。最終的な投資判断と注文は利用者が行います。
 
+> **現在の利用上の重要事項:** 現時点の仮想口座と候補スコアは、実際の売買判断や投資額決定の主な根拠にできる成熟度には達していません。正直な評価、利用してよい範囲、実投資支援前の必須品質ゲートは [docs/19_investment_decision_readiness_assessment.md](docs/19_investment_decision_readiness_assessment.md) を参照してください。
+
 GitHub: https://github.com/arts1996-tech/market-signal-lab
 
 ## 仕様書と読む順序
@@ -30,6 +32,8 @@ GitHub: https://github.com/arts1996-tech/market-signal-lab
 16. `docs/15_cross_model_verification.md`
 17. `docs/16_slack_free_plan_review.md`
 18. `docs/17_remediation_todo.md`
+19. `docs/18_phase3_data_source_design.md`
+20. `docs/19_investment_decision_readiness_assessment.md`
 
 レビュー文書とオプション提案は、必須要件と区別して扱います。文書、既存コード、実運用状態に矛盾がある場合は、機能やルールを勝手に削除せず、差分と推奨案を確認してから変更します。
 
