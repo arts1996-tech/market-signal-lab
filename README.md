@@ -162,7 +162,7 @@ docker compose run --rm app alembic upgrade head
 4. Docker Composeで起動します。
 
 ```bash
-docker compose up --build
+docker compose up --build db app
 ```
 
 5. ブラウザで開きます。
@@ -170,6 +170,10 @@ docker compose up --build
 ```text
 http://localhost:8501
 ```
+
+ラズパイの常駐収集が稼働中は、同じJ-Quants APIキーのレート制限競合を避けるため、Macで`jquants-collector`を同時起動しません。
+
+「システム管理」タブでは、現在の収集段階、対象日、連続30営業日到達銘柄、直近30営業日のカバー率、残り要求上限、15秒間隔に基づく理論最短時間を確認できます。表示は接続中DBの状態であり、`localhost`はMacへ最後に複製した時点、ラズパイ画面はラズパイの実運用値です。
 
 起動時にAlembicマイグレーションが実行されます。通常モードではサンプルデータを投入せず、実データだけを分析対象にします。価格がない場合はFREDまたはJ-Quantsの収集ジョブを実行してください。
 
@@ -179,7 +183,7 @@ http://localhost:8501
 
 ```bash
 MARKET_DATA_MODE=demo docker compose run --rm app python jobs/seed_sample_data.py --demo
-MARKET_DATA_MODE=demo docker compose up --build
+MARKET_DATA_MODE=demo docker compose up --build db app
 # DBを使わず、合成データだけでフェーズ4仮想口座を確認する
 MARKET_DATA_MODE=demo docker compose run --rm app python jobs/run_backtest.py --demo
 # 取引台帳をMacのlogs/へ保存する場合（DBには保存しない）
@@ -377,7 +381,7 @@ Raspberry Pi側のcronでは、以下のようにコンテナ内コマンドを�
 
 このリポジトリのラズパイ用設定は [docker/raspberry-pi.crontab](/Users/tsurusumu/Projects/market-signal-lab/docker/raspberry-pi.crontab) です。平日06:10（JST）にFREDの市場データを取得します。J-QuantsはDocker Composeの常駐 `jquants-collector` サービスが、1銘柄ずつ15秒以上の間隔で継続取得します。収集順は、取得可能な最新取引日を全銘柄で埋め、次に直近30取引日の欠損を新しい日付から補完し、その後に残りの約2年分を古い日付から補完します。
 
-J-Quants銘柄マスターが空の場合、最初の実行で上場銘柄を件数制限なしで取得します。その後、最新の取得可能日（安全のため91日前）の全銘柄を優先して埋め、完了後は未取得日を古い順に、Free planの約2年の範囲まで補完します。銘柄マスターは7日ごとに自動更新し、更新結果をジョブ履歴へ記録します。最新候補日が一時的に取得不能な場合は、同じ日を15秒ごとに再試行せず、標準6時間間隔で再確認し、その間は過去日の補完を継続します。進捗はDBに保存するため、ラズパイやコンテナが再起動しても、保存済みの銘柄・日付を避けて続行します。
+J-Quants銘柄マスターが空の場合、最初の実行で上場銘柄を件数制限なしで取得します。その後、最新の取得可能日（安全のため91日前）の全銘柄を優先して埋め、直近30取引日の欠損を新しい日付から補完してから、Free planの残り約2年分を古い日付から補完します。銘柄マスターは7日ごとに自動更新し、更新結果をジョブ履歴へ記録します。最新候補日が一時的に取得不能な場合は、同じ日を15秒ごとに再試行せず、標準6時間間隔で再確認し、その間は直近欠損または過去日の補完を継続します。進捗はDBに保存するため、ラズパイやコンテナが再起動しても、保存済みの銘柄・日付を避けて続行します。
 
 15秒間隔を守るため、実効速度は最大4銘柄/分です。4,448銘柄の最新取得可能日を埋める初回処理は約18時間半が目安です。
 

@@ -3,11 +3,14 @@
 import json
 import os
 import shutil
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 
-from app.analysis.market_calendar import latest_contiguous_exchange_observations
+from app.analysis.market_calendar import (
+    exchange_calendar,
+    latest_contiguous_exchange_observations,
+)
 from app.database.session import SessionLocal
 from app.services.market_service import record_job
 
@@ -45,12 +48,95 @@ def contiguous_history_counts(rows, thresholds: tuple[int, ...] = (1, 5, 10, 20,
     }
 
 
+def recent_exchange_sessions(latest_session: date | None, count: int = 30) -> list[date]:
+    """Return the latest JPX sessions ending at the newest collected session."""
+    if latest_session is None or count < 1:
+        return []
+    cutoff = latest_session - timedelta(days=count * 3)
+    sessions = exchange_calendar("XTKS").sessions_in_range(cutoff, latest_session)
+    return [session.date() for session in sessions[-count:]]
+
+
+def recent_window_progress(
+    asset_count: int,
+    session_dates: list[date],
+    covered_by_date: dict[date, int],
+    request_interval_seconds: int = 15,
+) -> dict:
+    """Summarize terminal price/no-data coverage for a recent session window."""
+    expected = asset_count * len(session_dates)
+    covered = sum(min(asset_count, covered_by_date.get(value, 0)) for value in session_dates)
+    remaining = max(0, expected - covered)
+    return {
+        "session_count": len(session_dates),
+        "complete_sessions": sum(
+            covered_by_date.get(value, 0) >= asset_count
+            for value in session_dates
+            if asset_count > 0
+        ),
+        "asset_count": asset_count,
+        "covered_asset_sessions": covered,
+        "expected_asset_sessions": expected,
+        "remaining_requests_upper_bound": remaining,
+        "progress_ratio": covered / expected if expected else None,
+        "theoretical_minimum_hours": remaining * request_interval_seconds / 3600,
+        "oldest_session": session_dates[0].isoformat() if session_dates else None,
+        "latest_session": session_dates[-1].isoformat() if session_dates else None,
+    }
+
+
 def main() -> None:
     usage = shutil.disk_usage("/")
     started_at = datetime.now(UTC)
     with SessionLocal() as session:
         prices = session.execute(text("SELECT count(*) FROM market_prices")).scalar_one()
         latest = session.execute(text("SELECT max(fetched_at) FROM market_prices")).scalar_one()
+        latest_price_session = session.execute(text("""
+            SELECT max(session_date)
+            FROM market_prices
+            WHERE source = 'jquants' AND timeframe = '1d'
+        """)).scalar_one()
+        recent_sessions = recent_exchange_sessions(latest_price_session)
+        jquants_asset_count = session.execute(text("""
+            SELECT count(*)
+            FROM assets
+            WHERE source = 'jquants' AND asset_type IN ('stock', 'etf')
+        """)).scalar_one()
+        coverage_by_date = {}
+        if recent_sessions:
+            coverage_query = text("""
+                WITH covered AS (
+                    SELECT asset_id, session_date
+                    FROM market_prices
+                    WHERE source = 'jquants'
+                      AND timeframe = '1d'
+                      AND session_date IN :recent_dates
+                    UNION
+                    SELECT asset_id, session_date
+                    FROM price_collection_items
+                    WHERE source = 'jquants'
+                      AND status = 'no_data'
+                      AND session_date IN :recent_dates
+                )
+                SELECT session_date, count(*) AS covered
+                FROM covered
+                GROUP BY session_date
+            """).bindparams(bindparam("recent_dates", expanding=True))
+            coverage_by_date = dict(
+                session.execute(
+                    coverage_query, {"recent_dates": recent_sessions}
+                ).all()
+            )
+        recent_progress = recent_window_progress(
+            jquants_asset_count, recent_sessions, coverage_by_date
+        )
+        latest_collector = session.execute(text("""
+            SELECT status, started_at, details
+            FROM job_runs
+            WHERE job_name = 'collect_jquants_all_prices'
+            ORDER BY started_at DESC
+            LIMIT 1
+        """)).mappings().first()
         observed_history_counts = session.execute(text("""
             SELECT
                 count(*) FILTER (WHERE observations >= 1) AS ge_1,
@@ -131,6 +217,21 @@ def main() -> None:
         "disk_free_bytes": usage.free,
         "disk_used_ratio": usage.used / usage.total,
         "market_prices": prices,
+        "collection_queue_phase": (
+            latest_collector["details"].get("queue_phase")
+            if latest_collector and isinstance(latest_collector["details"], dict)
+            else None
+        ),
+        "collection_queue_target_date": (
+            latest_collector["details"].get("target_date")
+            if latest_collector and isinstance(latest_collector["details"], dict)
+            else None
+        ),
+        "collection_queue_status": latest_collector["status"] if latest_collector else None,
+        "collection_queue_checked_at": (
+            latest_collector["started_at"].isoformat() if latest_collector else None
+        ),
+        "recent_30_session_progress": recent_progress,
         "adjusted_history_ready_symbols": history_counts["ge_30"],
         "adjusted_history_symbols_by_threshold": {
             "1": history_counts["ge_1"],

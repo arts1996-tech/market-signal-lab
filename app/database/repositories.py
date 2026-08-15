@@ -533,8 +533,15 @@ def insert_job_run(session: Session, **values) -> None:
     session.add(JobRun(**values))
 
 
-def latest_job_runs(session: Session, limit: int = 20) -> list[JobRun]:
-    return list(session.scalars(select(JobRun).order_by(JobRun.started_at.desc()).limit(limit)))
+def latest_job_runs(
+    session: Session,
+    limit: int = 20,
+    job_name: str | None = None,
+) -> list[JobRun]:
+    query = select(JobRun).order_by(JobRun.started_at.desc())
+    if job_name:
+        query = query.where(JobRun.job_name == job_name)
+    return list(session.scalars(query.limit(limit)))
 
 
 def latest_successful_job_run(session: Session, job_name: str) -> JobRun | None:

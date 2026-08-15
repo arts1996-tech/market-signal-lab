@@ -675,14 +675,22 @@ with tab_spillover:
                     st.caption(
                         "回帰は統計的な関連を示すだけで、因果関係、将来の値動き、利益を保証するものではありません。"
                     )
-            sensitivity = load_sensitivity_data(base_symbol)
             st.subheader("業種・銘柄感応度（観測値）")
             st.caption("過去の対応セッションにおける統計的な関連を示します。予測や推奨ではありません。標本数が少ない業種・銘柄は除外しています。")
-            sector_view = sensitivity["sensitivity"]["sector"]
-            if sector_view.empty:
-                st.info("業種感応度に必要な対応セッションが不足しています。")
+            if st.toggle(
+                "業種・銘柄感応度を計算する",
+                value=False,
+                key="enable_sector_sensitivity",
+                help="全対象銘柄を確認するため、必要なときだけ実行します。",
+            ):
+                sensitivity = load_sensitivity_data(base_symbol)
+                sector_view = sensitivity["sensitivity"]["sector"]
+                if sector_view.empty:
+                    st.info("業種感応度に必要な対応セッションが不足しています。")
+                else:
+                    st.dataframe(sector_view, use_container_width=True)
             else:
-                st.dataframe(sector_view, use_container_width=True)
+                st.info("画面の通常読み込みを軽くするため、感応度計算は停止しています。")
             st.caption(
                 "保存するには `python jobs/run_spillover_analysis.py --jp-symbol <銘柄コード>` を実行します。欠損値は補完せず、始値・終値がある観測日のみ利用します。"
             )
@@ -691,7 +699,56 @@ with tab_system:
     with SessionLocal() as session:
         fetch_logs = latest_fetch_logs(session)
         job_runs = latest_job_runs(session)
+        operations_runs = latest_job_runs(session, limit=5, job_name="check_operations")
+        collector_runs = latest_job_runs(
+            session, limit=1, job_name="collect_jquants_all_prices"
+        )
         correlation_logs = latest_correlation_results(session, analysis_status=None)
+
+    latest_operations = operations_runs[0].details if operations_runs else {}
+    latest_collector = collector_runs[0].details if collector_runs else {}
+    recent_progress = latest_operations.get("recent_30_session_progress", {})
+    st.subheader("J-Quants収集進捗")
+    st.caption(
+        "この表示は、現在のアプリが接続しているDBの状態です。localhostではMacへ最後に複製した時点、ラズパイ画面ではラズパイの実運用値を表示します。"
+    )
+    progress_cols = st.columns(4)
+    queue_phase_labels = {
+        "latest": "最新取引日",
+        "recent_gap": "直近30日の欠損",
+        "history": "古い履歴",
+    }
+    queue_phase = latest_collector.get("queue_phase") or latest_operations.get(
+        "collection_queue_phase"
+    )
+    queue_target = latest_collector.get("target_date") or latest_operations.get(
+        "collection_queue_target_date"
+    )
+    progress_cols[0].metric("現在の収集段階", queue_phase_labels.get(queue_phase, "未確認"))
+    progress_cols[1].metric("処理対象日", queue_target or "-")
+    progress_cols[2].metric(
+        "連続30営業日到達銘柄",
+        latest_operations.get("adjusted_history_ready_symbols", "-"),
+    )
+    progress_cols[3].metric(
+        "最新連続履歴の最大",
+        f"{latest_operations.get('adjusted_history_max_observations', '-')}営業日",
+    )
+    recent_ratio = recent_progress.get("progress_ratio")
+    if recent_ratio is not None:
+        st.progress(min(1.0, max(0.0, float(recent_ratio))))
+        st.caption(
+            "直近30営業日カバー率 "
+            f"{float(recent_ratio):.1%} / 完了日 "
+            f"{recent_progress.get('complete_sessions', 0)} of "
+            f"{recent_progress.get('session_count', 30)} / 残り要求上限 "
+            f"{recent_progress.get('remaining_requests_upper_bound', 0):,}件 / "
+            f"理論最短 {recent_progress.get('theoretical_minimum_hours', 0):.1f}時間"
+        )
+    else:
+        st.info("直近30営業日の収集進捗は、次回の運用確認後に表示されます。")
+    if operations_runs:
+        st.caption(f"運用確認時刻: {format_jst(operations_runs[0].started_at)}")
 
     st.subheader("API取得状況")
     st.dataframe(
@@ -710,8 +767,8 @@ with tab_system:
     )
 
     operations_history = []
-    for job in job_runs:
-        if job.job_name != "check_operations" or not isinstance(job.details, dict):
+    for job in operations_runs:
+        if not isinstance(job.details, dict):
             continue
         operations_history.append(
             {

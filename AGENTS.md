@@ -385,6 +385,7 @@ docker compose run --rm app pytest
 - 合同会議の合意対応をMac側で進行中。`.dockerignore`を追加し、Dockerビルドコンテキストを約22KBへ縮小。app／collectorの起動時Alembic実行を分離し、明示マイグレーション手順へ変更。バックアップのpg_dump接続URLからパスワードを除外し、PGPASSFILEを使用。J-Quantsの最新日優先・履歴oldest-first補完順を修正。分析入力は調整済みOHLC優先、raw_*保持へ変更し、pytestは72件成功。いずれもラズパイ未配置。
 - その後、公式取引カレンダーを相関・波及分析の実データ経路へ適用し、日本休場中の米国セッション累積を追加した。J-Quantsページングキーの追跡も追加し、Macで86970の2026-04-01〜2026-04-10を1回実測（8行、433ms）。Mac側のpytestは73件成功。バックアップ復元試験はapp側PostgreSQLクライアントで一時DBへ成功（assets=26、market_prices=53,689）。全期間のページング回数・429率、夏時間・分割の受け入れ試験、ラズパイ配置は未完了。
 - 2026-08-15にユーザー承認のもと、直近連続履歴を優先する三段階収集キューをラズパイへ配置した。事前バックアップは`market_signal_lab_20260815_045321.dump`。Macの全pytestは110件、ラズパイの収集関連pytestは12件成功。`jquants-collector`だけを再作成し、`restart: unless-stopped`を維持した。ログで`latest:2026-05-15`完了後に`recent_gap:2026-05-14`、続いて`2026-05-13`へ移行したことを確認した。配置後は`market_prices=185,744`、最新日4,226件、2026-05-14は4,223件、ディスク使用率12%（114GB中14GB使用、96GB空き）。app・db・collectorはすべて稼働中で、DBスキーマ変更はない。
+- 2026-08-15にMacの運用表示を改善した。`check_operations`は直近30営業日のカバー率、残件上限、15秒間隔による理論最短時間、最新collectorの`queue_phase`と対象日を保存する。「システム管理」は常駐collectorの大量ログと分離して最新運用確認を表示する。Mac復元DBではカバー率54.7%、残り60,705件、理論最短252.9時間、連続最大11営業日、30営業日到達0銘柄。localhostはMacスナップショットでありラズパイのリアルタイム値ではない。非表示タブの全銘柄感応度自動計算は停止し、明示切替にした。APIレート制限競合を避けるためMacのcollectorは停止し、Macの通常起動は`docker compose up --build db app`とする。ラズパイcollectorは継続稼働中。
 
 ## 17. 完了報告の形式
 
