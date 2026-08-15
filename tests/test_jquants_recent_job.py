@@ -4,7 +4,9 @@ from types import SimpleNamespace
 from sqlalchemy.dialects import postgresql
 
 from jobs.collect_jquants_all_prices import (
+    candidate_date_phases,
     candidate_dates,
+    select_next_work,
     should_mark_target_unavailable,
     should_probe_latest_target,
     sleep_seconds_for_result,
@@ -19,11 +21,83 @@ def test_recent_candidate_dates_skip_weekends():
     assert result == ["20260410", "20260409", "20260408"]
 
 
-def test_full_collection_candidates_prioritize_latest_then_oldest_history():
+def test_full_collection_candidates_prioritize_latest_recent_gaps_then_oldest_history():
     result = candidate_dates(date(2026, 4, 10), history_days=5)
 
-    assert result[0] == date(2026, 4, 10)
-    assert result[1:] == [date(2026, 4, 6), date(2026, 4, 7), date(2026, 4, 8), date(2026, 4, 9)]
+    assert result == [
+        date(2026, 4, 10),
+        date(2026, 4, 9),
+        date(2026, 4, 8),
+        date(2026, 4, 7),
+        date(2026, 4, 6),
+    ]
+
+
+def test_full_collection_moves_older_sessions_after_recent_window():
+    result = candidate_date_phases(
+        date(2026, 4, 10), history_days=10, recent_session_count=3
+    )
+
+    assert result[:3] == [
+        (date(2026, 4, 10), "latest"),
+        (date(2026, 4, 9), "recent_gap"),
+        (date(2026, 4, 8), "recent_gap"),
+    ]
+    assert result[3:] == [
+        (date(2026, 3, 31), "history"),
+        (date(2026, 4, 1), "history"),
+        (date(2026, 4, 2), "history"),
+        (date(2026, 4, 3), "history"),
+        (date(2026, 4, 6), "history"),
+        (date(2026, 4, 7), "history"),
+    ]
+
+
+def test_latest_candidate_uses_previous_exchange_session_on_weekend():
+    result = candidate_date_phases(
+        date(2026, 4, 12), history_days=10, recent_session_count=3
+    )
+
+    assert result[0] == (date(2026, 4, 10), "latest")
+
+
+def test_next_work_finishes_latest_before_selecting_recent_gap(monkeypatch):
+    checked_dates = []
+    commits = []
+    expected_asset = SimpleNamespace(symbol="86970")
+    monkeypatch.setattr(
+        "jobs.collect_jquants_all_prices.collection_target_records",
+        lambda *args, **kwargs: {},
+    )
+
+    def missing_assets(session, source, target_date, asset_types, limit):
+        checked_dates.append(target_date)
+        return [expected_asset] if target_date == date(2026, 4, 9) else []
+
+    monkeypatch.setattr(
+        "jobs.collect_jquants_all_prices.list_assets_missing_price_for_date",
+        missing_assets,
+    )
+    monkeypatch.setattr(
+        "jobs.collect_jquants_all_prices.upsert_collection_target",
+        lambda *args, **kwargs: None,
+    )
+    session = SimpleNamespace(commit=lambda: commits.append(True))
+
+    target_date, assets, queue_phase = select_next_work(
+        session,
+        today=date(2026, 7, 10),
+        lag_days=91,
+        history_days=10,
+        limit=1,
+        recent_session_count=3,
+    )
+
+    assert checked_dates == [date(2026, 4, 10), date(2026, 4, 9)]
+    assert commits == [True]
+    assert target_date == date(2026, 4, 9)
+    assert assets == [expected_asset]
+    assert queue_phase == "recent_gap"
 
 
 def test_recent_candidate_dates_use_weekday_target():

@@ -375,7 +375,7 @@ Raspberry Pi側のcronでは、以下のようにコンテナ内コマンドを�
 0 23 * * * cd /path/to/market-signal-lab && docker compose exec -T app python jobs/backup_database.py
 ```
 
-このリポジトリのラズパイ用設定は [docker/raspberry-pi.crontab](/Users/tsurusumu/Projects/market-signal-lab/docker/raspberry-pi.crontab) です。平日06:10（JST）にFREDの市場データを取得します。J-QuantsはDocker Composeの常駐 `jquants-collector` サービスが、1銘柄ずつ15秒以上の間隔で継続取得します。
+このリポジトリのラズパイ用設定は [docker/raspberry-pi.crontab](/Users/tsurusumu/Projects/market-signal-lab/docker/raspberry-pi.crontab) です。平日06:10（JST）にFREDの市場データを取得します。J-QuantsはDocker Composeの常駐 `jquants-collector` サービスが、1銘柄ずつ15秒以上の間隔で継続取得します。収集順は、取得可能な最新取引日を全銘柄で埋め、次に直近30取引日の欠損を新しい日付から補完し、その後に残りの約2年分を古い日付から補完します。
 
 J-Quants銘柄マスターが空の場合、最初の実行で上場銘柄を件数制限なしで取得します。その後、最新の取得可能日（安全のため91日前）の全銘柄を優先して埋め、完了後は未取得日を古い順に、Free planの約2年の範囲まで補完します。銘柄マスターは7日ごとに自動更新し、更新結果をジョブ履歴へ記録します。最新候補日が一時的に取得不能な場合は、同じ日を15秒ごとに再試行せず、標準6時間間隔で再確認し、その間は過去日の補完を継続します。進捗はDBに保存するため、ラズパイやコンテナが再起動しても、保存済みの銘柄・日付を避けて続行します。
 
@@ -389,7 +389,7 @@ crontab docker/raspberry-pi.crontab
 crontab -l
 docker compose exec app python jobs/collect_us_market.py
 docker compose logs -f jquants-collector
-docker compose exec app python jobs/collect_jquants_all_prices.py --limit 5 --lag-days 91 --history-days 720
+docker compose exec app python jobs/collect_jquants_all_prices.py --limit 5 --lag-days 91 --recent-session-count 30 --history-days 720
 ```
 
 J-Quants APIキー未設定、またはFree planで取得可能な日次データがない場合、ジョブはデータを作らず、取得ログとジョブ履歴にスキップ理由を残します。

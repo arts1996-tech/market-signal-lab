@@ -28,12 +28,42 @@ SOURCE = "jquants"
 ASSET_TYPES = ["stock", "etf"]
 
 
-def candidate_dates(latest_date: date, history_days: int) -> list[date]:
-    """Return the latest JPX session first, then historical sessions oldest-first."""
+def candidate_date_phases(
+    latest_date: date,
+    history_days: int,
+    recent_session_count: int = 30,
+) -> list[tuple[date, str]]:
+    """Return latest, recent-gap, then oldest-history collection work."""
+    if recent_session_count < 1:
+        raise ValueError("recent_session_count must be at least 1")
     cutoff = latest_date - timedelta(days=history_days)
     sessions = exchange_calendar("XTKS").sessions_in_range(cutoff, latest_date)
     dates = [session.date() for session in sessions]
-    return ([latest_date] if dates and dates[-1] == latest_date else []) + [value for value in dates if value < latest_date]
+    if not dates:
+        return []
+
+    recent = dates[-recent_session_count:]
+    historical = dates[:-recent_session_count]
+    latest_session = recent[-1]
+    return (
+        [(latest_session, "latest")]
+        + [(value, "recent_gap") for value in reversed(recent[:-1])]
+        + [(value, "history") for value in historical]
+    )
+
+
+def candidate_dates(
+    latest_date: date,
+    history_days: int,
+    recent_session_count: int = 30,
+) -> list[date]:
+    """Return dates in their effective three-stage collection order."""
+    return [
+        target_date
+        for target_date, _ in candidate_date_phases(
+            latest_date, history_days, recent_session_count
+        )
+    ]
 
 
 def should_probe_latest_target(
@@ -54,13 +84,17 @@ def select_next_work(
     history_days: int,
     limit: int,
     latest_probe_hours: int = 6,
+    recent_session_count: int = 30,
 ):
     latest_date = today - timedelta(days=lag_days)
-    dates = candidate_dates(latest_date, history_days)
+    phased_dates = candidate_date_phases(
+        latest_date, history_days, recent_session_count
+    )
+    dates = [target_date for target_date, _ in phased_dates]
     targets = collection_target_records(session, SOURCE, dates)
-    for target_date in dates:
+    for target_date, queue_phase in phased_dates:
         target = targets.get(target_date)
-        if target_date == latest_date and not should_probe_latest_target(
+        if queue_phase == "latest" and not should_probe_latest_target(
             target, datetime.now(UTC), latest_probe_hours
         ):
             # The latest API-availability check is deliberately rate-limited. While
@@ -79,7 +113,7 @@ def select_next_work(
             session.commit()
         assets = list_assets_missing_price_for_date(session, SOURCE, target_date, ASSET_TYPES, limit)
         if assets:
-            return target_date, assets
+            return target_date, assets, queue_phase
         upsert_collection_target(
             session,
             SOURCE,
@@ -89,7 +123,7 @@ def select_next_work(
             {"reason": "all_assets_have_price_or_terminal_unavailable_status"},
         )
         session.commit()
-    return None, []
+    return None, [], None
 
 
 def should_mark_target_unavailable(
@@ -111,6 +145,7 @@ def collect_next_price_batch(
     limit: int,
     master_refresh_days: int,
     latest_probe_hours: int = 6,
+    recent_session_count: int = 30,
 ) -> dict:
     now = datetime.now(UTC)
     latest_master = latest_successful_job_run(session, "collect_jquants_listed_info")
@@ -141,8 +176,14 @@ def collect_next_price_batch(
             "message": "Full asset master collection was requested; price collection starts on the next run.",
         }
 
-    target_date, assets = select_next_work(
-        session, today, lag_days, history_days, limit, latest_probe_hours
+    target_date, assets, queue_phase = select_next_work(
+        session,
+        today,
+        lag_days,
+        history_days,
+        limit,
+        latest_probe_hours,
+        recent_session_count,
     )
     if target_date is None:
         return {"status": "success", "phase": "complete", "message": "No pending price collection work."}
@@ -184,6 +225,7 @@ def collect_next_price_batch(
     return {
         "status": result["status"],
         "phase": "price_collection",
+        "queue_phase": queue_phase,
         "target_date": target_date.isoformat(),
         "requested_symbols": symbols,
         "unavailable_marked": unavailable_count,
@@ -209,6 +251,7 @@ def run_once(session, args, today: date | None = None) -> dict:
         limit=args.limit,
         master_refresh_days=args.master_refresh_days,
         latest_probe_hours=args.latest_probe_hours,
+        recent_session_count=args.recent_session_count,
     )
     record_job(session, "collect_jquants_all_prices", result["status"], started_at, result)
     return result
@@ -218,6 +261,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Collect all J-Quants Free plan daily prices incrementally.")
     parser.add_argument("--lag-days", type=int, default=91)
     parser.add_argument("--history-days", type=int, default=720)
+    parser.add_argument(
+        "--recent-session-count",
+        type=int,
+        default=30,
+        help="Number of latest JPX sessions to fill before oldest-first history",
+    )
     parser.add_argument("--limit", type=int, default=5, help="Maximum price requests for one run")
     parser.add_argument("--master-refresh-days", type=int, default=7)
     parser.add_argument(
