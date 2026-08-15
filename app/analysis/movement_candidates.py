@@ -215,27 +215,16 @@ def none_if_na(value):
 
 
 def apply_virtual_trade_feedback(score: int, feedback: dict | None) -> tuple[int, str | None, float | None]:
-    if not feedback or feedback.get("trades", 0) < 3:
+    """Return virtual results as an uncalibrated note without changing score."""
+    if not feedback:
         return score, None, None
 
+    trades = int(feedback.get("trades", 0))
     win_rate = feedback.get("win_rate", 0)
     average_return = feedback.get("average_return", 0)
     large_move_rate = feedback.get("large_move_rate", 0)
-    adjustment = 0
-    if win_rate >= 0.6:
-        adjustment += 6
-    elif win_rate <= 0.35:
-        adjustment -= 6
-    if average_return >= 0.02:
-        adjustment += 5
-    elif average_return <= -0.02:
-        adjustment -= 5
-    if large_move_rate >= 0.4:
-        adjustment += 4
-
-    feedback_score = max(0.0, min(1.0, (win_rate + large_move_rate) / 2))
     reason = (
-        f"過去の仮想投資フィードバック: 勝率 {win_rate:.0%}, "
+        f"仮想投資の参考統計（スコア未反映・{trades}件）: 勝率 {win_rate:.0%}, "
         f"平均損益 {average_return:.2%}, 大幅変動率 {large_move_rate:.0%}"
     )
-    return min(100, max(0, score + adjustment)), reason, feedback_score
+    return score, reason, None

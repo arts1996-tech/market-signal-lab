@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 
+from app.backtest.portfolio import ExecutionAssumptions, simulate_long_portfolio
 from app.analysis.movement_candidates import (
     movement_score,
     us_japan_market_context,
@@ -37,6 +38,7 @@ def generate_demo_phase4_data(periods: int = 120, symbol: str = "DEMOJP") -> tup
                 "symbol": name,
                 "name": name,
                 "price_time": date,
+                "open": float(value),
                 "close": float(value),
                 "source": "demo",
                 "source_symbol": source_symbol,
@@ -50,6 +52,7 @@ def generate_demo_phase4_data(periods: int = 120, symbol: str = "DEMOJP") -> tup
             "symbol": symbol,
             "name": "Demo Japan Equity",
             "price_time": date,
+            "open": float(value),
             "close": float(value),
             "source": "demo",
             "source_symbol": symbol,
@@ -66,36 +69,30 @@ def simulate_virtual_account(
     account_name: str = "short_term",
     allocation_rate: float = 0.25,
     fee_rate: float = 0.001,
+    spread_rate: float = 0.001,
+    tax_rate: float = 0.0,
     lot_size: int = 100,
+    maximum_positions: int = 2,
+    price_history: pd.DataFrame | None = None,
+    benchmark: pd.Series | None = None,
 ) -> dict:
-    """Simulate cash/equity for demo or backtest trades without placing orders."""
-    if initial_cash <= 0 or not 0 < allocation_rate <= 1 or fee_rate < 0 or lot_size <= 0:
-        raise ValueError("invalid virtual account parameters")
-    cash = float(initial_cash)
-    records: list[dict] = []
-    if trades.empty:
-        return {"account_name": account_name, "initial_cash": initial_cash, "cash": cash, "equity": cash, "realized_pnl": 0.0, "trades": pd.DataFrame()}
-    ordered = trades.sort_values(["signal_date", "exit_date"]).reset_index(drop=True)
-    for trade in ordered.to_dict(orient="records"):
-        entry = float(trade["entry_price"])
-        exit_price = float(trade["exit_price"])
-        if entry <= 0 or exit_price <= 0:
-            continue
-        budget = min(cash, initial_cash * allocation_rate)
-        quantity = int(budget // (entry * lot_size)) * lot_size
-        if quantity <= 0:
-            continue
-        direction = str(trade.get("direction", ""))
-        multiplier = -1 if "下方向" in direction else 1
-        entry_value = entry * quantity
-        exit_value = exit_price * quantity
-        fees = (entry_value + exit_value) * fee_rate
-        pnl = multiplier * (exit_value - entry_value) - fees
-        cash += pnl
-        records.append({"account_name": account_name, "symbol": trade.get("symbol"), "signal_date": trade.get("signal_date"), "exit_date": trade.get("exit_date"), "quantity": quantity, "entry_price": entry, "exit_price": exit_price, "realized_pnl": pnl, "cash_after": cash, "equity_after": cash})
-    ledger = pd.DataFrame(records)
-    realized = float(ledger["realized_pnl"].sum()) if not ledger.empty else 0.0
-    return {"account_name": account_name, "initial_cash": float(initial_cash), "cash": cash, "equity": cash, "realized_pnl": realized, "unrealized_pnl": 0.0, "trades": ledger}
+    """Simulate a cash-reserving, long-only account without placing orders."""
+    assumptions = ExecutionAssumptions(
+        fee_rate=fee_rate,
+        spread_rate=spread_rate,
+        tax_rate=tax_rate,
+        lot_size=lot_size,
+        maximum_positions=maximum_positions,
+        maximum_position_rate=allocation_rate,
+    )
+    return simulate_long_portfolio(
+        trades,
+        initial_cash=initial_cash,
+        account_name=account_name,
+        assumptions=assumptions,
+        price_history=price_history,
+        benchmark=benchmark,
+    )
 
 
 def build_virtual_trades(
@@ -112,6 +109,9 @@ def build_virtual_trades(
     price_frame = japan_prices.copy()
     price_frame["price_time"] = pd.to_datetime(price_frame["price_time"], utc=True).dt.normalize()
     price_frame["close"] = pd.to_numeric(price_frame["close"])
+    if "open" not in price_frame:
+        return pd.DataFrame()
+    price_frame["open"] = pd.to_numeric(price_frame["open"], errors="coerce")
 
     rows = []
     context_cache = {}
@@ -122,18 +122,19 @@ def build_virtual_trades(
         )
         ordered = ordered.tail(contiguous_observations)
         close = ordered["close"]
+        open_prices = ordered["open"]
         if len(close) < min_observations + holding_days:
             continue
         indicators = short_term_indicator_frame(close)
         name = group["name"].dropna().iloc[-1] if "name" in group and not group["name"].dropna().empty else symbol
-        start_location = max(min_observations, len(close) - holding_days - 10)
+        start_location = max(min_observations - 1, len(close) - holding_days - 11)
         for location in range(start_location, len(close) - holding_days):
             signal_date = close.index[location]
             row = indicators.loc[signal_date]
             cache_key = pd.Timestamp(signal_date)
             if cache_key not in context_cache:
                 historical_index_prices = (
-                    index_prices[pd.to_datetime(index_prices["price_time"], utc=True) <= signal_date]
+                    index_prices[pd.to_datetime(index_prices["price_time"], utc=True) < signal_date]
                     if not index_prices.empty and "price_time" in index_prices
                     else pd.DataFrame()
                 )
@@ -142,18 +143,26 @@ def build_virtual_trades(
             score, direction, reasons = movement_score(row, context["average_correlation"], context["us_signal"])
             if score < score_threshold:
                 continue
+            entry_location = location + 1
+            entry_date = close.index[entry_location]
             exit_date = close.index[location + holding_days]
-            entry_price = float(close.iloc[location])
+            entry_price = open_prices.iloc[entry_location]
+            if pd.isna(entry_price):
+                continue
+            entry_price = float(entry_price)
             exit_price = float(close.iloc[location + holding_days])
             trade_return = exit_price / entry_price - 1
+            side = "long" if "上方向" in direction else "observe_only"
             rows.append(
                 {
                     "signal_date": signal_date,
+                    "entry_date": entry_date,
                     "exit_date": exit_date,
                     "symbol": symbol,
                     "name": name,
                     "score": score,
                     "direction": direction,
+                    "side": side,
                     "entry_price": entry_price,
                     "exit_price": exit_price,
                     "return": trade_return,
@@ -161,6 +170,8 @@ def build_virtual_trades(
                     "entry_reasons": reasons,
                     "outcome_reasons": outcome_reasons(trade_return, direction, row, context),
                     "holding_days": holding_days,
+                    "entry_price_rule": "next_xtks_session_open",
+                    "exit_price_rule": "holding_period_close",
                 }
             )
 

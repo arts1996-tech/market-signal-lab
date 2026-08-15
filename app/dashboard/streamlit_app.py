@@ -553,7 +553,15 @@ if active_page == "仮想投資評価":
         virtual_data = load_movement_data(score_threshold=threshold, holding_days=holding_days)
         trades = virtual_data["virtual_trades"]
         feedback = virtual_data["virtual_feedback"]
-        st.caption("仮想投資の成績は銘柄別に集計され、変動候補画面のフィードバック指標として次回の抽出に反映されます。")
+        virtual_account = virtual_data["virtual_account"]
+        st.caption(
+            "仮想投資の成績は未較正の参考統計として表示します。"
+            "少数標本による誤調整を避けるため、候補スコアには反映しません。"
+        )
+        st.info(
+            "安全側の約定規則: シグナル日の次の東証営業日始値で買い、指定保有日の終値で決済します。"
+            "始値欠損は取引せず、下方向シグナルは空売りせず観察専用とします。"
+        )
         if trades.empty:
             st.warning("仮想投資評価に必要な履歴データが不足しています。東証カレンダー上で最新から連続する30営業日以上の日本株・ETFデータが必要です。")
         else:
@@ -563,8 +571,25 @@ if active_page == "仮想投資評価":
             summary_cols[2].metric("勝率", format_percent((trades["return"] > 0).mean()))
             summary_cols[3].metric("最大損益", format_percent(trades["return"].max()))
 
+            account_metrics = virtual_account["metrics"]
+            account_cols = st.columns(5)
+            account_cols[0].metric("買いのみ口座", f"¥{virtual_account['equity']:,.0f}")
+            account_cols[1].metric("実現損益", f"¥{virtual_account['realized_pnl']:+,.0f}")
+            account_cols[2].metric(
+                "最大ドローダウン", format_percent(account_metrics["maximum_drawdown"])
+            )
+            account_cols[3].metric(
+                "日経平均の同期間騰落",
+                format_percent(account_metrics["benchmark_return"]),
+            )
+            account_cols[4].metric(
+                "指数との差",
+                format_percent(account_metrics["excess_return"]),
+            )
+
             view = trades.copy()
             view["signal_date"] = view["signal_date"].map(lambda value: pd.to_datetime(value).strftime("%Y-%m-%d"))
+            view["entry_date"] = view["entry_date"].map(lambda value: pd.to_datetime(value).strftime("%Y-%m-%d"))
             view["exit_date"] = view["exit_date"].map(lambda value: pd.to_datetime(value).strftime("%Y-%m-%d"))
             view["return"] = view["return"].map(format_percent)
             view["entry_reasons"] = view["entry_reasons"].map(format_reason_list)
@@ -573,11 +598,13 @@ if active_page == "仮想投資評価":
                 view[
                     [
                         "signal_date",
+                        "entry_date",
                         "exit_date",
                         "symbol",
                         "name",
                         "score",
                         "direction",
+                        "side",
                         "return",
                         "outcome",
                         "entry_reasons",
@@ -588,7 +615,7 @@ if active_page == "仮想投資評価":
             )
 
             if feedback:
-                with st.expander("候補抽出に戻すフィードバック集計"):
+                with st.expander("スコアへ反映しない参考集計"):
                     feedback_view = pd.DataFrame(
                         [{"symbol": symbol, **values} for symbol, values in feedback.items()]
                     )

@@ -22,7 +22,11 @@ from app.analysis.sensitivity import sector_sensitivity
 from app.analysis.screening import SCREENING_MIN_HISTORY, screen_assets
 from app.analysis.fundamentals import fundamentals_as_of
 from app.analysis.technical import short_term_indicator_frame, short_term_signal_snapshot
-from app.analysis.virtual_trading import build_virtual_trades, summarize_virtual_trade_feedback
+from app.analysis.virtual_trading import (
+    build_virtual_trades,
+    simulate_virtual_account,
+    summarize_virtual_trade_feedback,
+)
 from app.database.repositories import (
     list_assets_by_source,
     list_assets_with_minimum_price_history,
@@ -840,7 +844,30 @@ def load_movement_and_virtual_trade_analysis(
         max_trades=virtual_trade_limit,
     )
     feedback = summarize_virtual_trade_feedback(virtual_trades)
-    candidates = build_movement_candidates(index_prices, japan_prices, limit=candidate_limit, feedback_by_symbol=feedback)
+    benchmark = None
+    if not index_prices.empty:
+        nikkei = index_prices[index_prices["symbol"] == "NIKKEI225"].copy()
+        if not nikkei.empty:
+            nikkei["price_time"] = pd.to_datetime(nikkei["price_time"], utc=True).dt.normalize()
+            benchmark = (
+                nikkei.drop_duplicates("price_time", keep="last")
+                .set_index("price_time")["close"]
+                .sort_index()
+            )
+    virtual_account = simulate_virtual_account(
+        virtual_trades,
+        account_name="long_only_evaluation",
+        allocation_rate=0.30,
+        maximum_positions=2,
+        price_history=japan_prices,
+        benchmark=benchmark,
+    )
+    candidates = build_movement_candidates(
+        index_prices,
+        japan_prices,
+        limit=candidate_limit,
+        feedback_by_symbol=feedback,
+    )
     return {
         "index_prices": index_prices,
         "japan_prices": japan_prices,
@@ -848,6 +875,7 @@ def load_movement_and_virtual_trade_analysis(
         "movement": candidates,
         "virtual_trades": virtual_trades,
         "virtual_feedback": feedback,
+        "virtual_account": virtual_account,
         "score_threshold": score_threshold,
         "holding_days": holding_days,
     }
