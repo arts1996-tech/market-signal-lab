@@ -235,6 +235,35 @@ def list_assets_by_source(
     return list(session.scalars(query))
 
 
+def list_assets_with_minimum_price_history(
+    session: Session,
+    source: str,
+    asset_types: list[str],
+    min_history: int,
+    limit: int,
+    price_bases: list[str] | None = None,
+) -> list[Asset]:
+    """Select assets that already satisfy a distinct-session history gate."""
+    query = (
+        select(Asset)
+        .join(MarketPrice, MarketPrice.asset_id == Asset.id)
+        .where(
+            Asset.source == source,
+            Asset.asset_type.in_(asset_types),
+            MarketPrice.source == source,
+            MarketPrice.timeframe == "1d",
+            MarketPrice.adjusted_close.is_not(None),
+        )
+        .group_by(Asset.id)
+        .having(func.count(func.distinct(MarketPrice.session_date)) >= min_history)
+        .order_by(Asset.symbol)
+        .limit(limit)
+    )
+    if price_bases:
+        query = query.where(MarketPrice.price_basis.in_(price_bases))
+    return list(session.scalars(query))
+
+
 def list_assets_missing_price_for_date(
     session: Session,
     source: str,

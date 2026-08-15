@@ -19,12 +19,13 @@ from app.analysis.movement_candidates import build_movement_candidates
 from app.analysis.regression import rolling_ols, run_granger_test, run_ols, walk_forward_ols
 from app.analysis.spillover import TARGET_METRICS, spillover_conditional_stats, us_japan_spillover_frame
 from app.analysis.sensitivity import sector_sensitivity
-from app.analysis.screening import screen_assets
+from app.analysis.screening import SCREENING_MIN_HISTORY, screen_assets
 from app.analysis.fundamentals import fundamentals_as_of
 from app.analysis.technical import short_term_indicator_frame, short_term_signal_snapshot
 from app.analysis.virtual_trading import build_virtual_trades, summarize_virtual_trade_feedback
 from app.database.repositories import (
     list_assets_by_source,
+    list_assets_with_minimum_price_history,
     market_prices_frame,
     upsert_correlation_results,
     upsert_spillover_features,
@@ -427,12 +428,25 @@ def load_sector_sensitivity_analysis(session: Session, base_symbol: str = "NASDA
 
 def load_asset_screening_analysis(session: Session, limit: int = 200) -> dict:
     """Load a bounded, source-policy-selected stock/ETF technical screen."""
-    asset_source = "sample" if market_price_source_policy() == "demo_only" else "jquants"
-    assets = list_assets_by_source(session, asset_source, asset_types=["stock", "etf"], limit=limit)
+    source_policy = market_price_source_policy()
+    asset_source = "sample" if source_policy == "demo_only" else "jquants"
+    if source_policy == "demo_only":
+        assets = list_assets_by_source(
+            session, asset_source, asset_types=["stock", "etf"], limit=limit
+        )
+    else:
+        assets = list_assets_with_minimum_price_history(
+            session,
+            asset_source,
+            asset_types=["stock", "etf"],
+            min_history=SCREENING_MIN_HISTORY,
+            limit=limit,
+            price_bases=["raw_ohlcv_with_adjusted"],
+        )
     if not assets:
         return {"assets": pd.DataFrame(), "prices": pd.DataFrame(), "screening": pd.DataFrame()}
     symbols = [asset.symbol for asset in assets]
-    prices = market_prices_frame(session, symbols, source_policy=market_price_source_policy())
+    prices = market_prices_frame(session, symbols, source_policy=source_policy)
     asset_rows = pd.DataFrame(
         [
             {
@@ -444,7 +458,13 @@ def load_asset_screening_analysis(session: Session, limit: int = 200) -> dict:
             for asset in assets
         ]
     )
-    return {"assets": asset_rows, "prices": prices, "screening": screen_assets(prices, asset_rows)}
+    return {
+        "assets": asset_rows,
+        "prices": prices,
+        "screening": screen_assets(
+            prices, asset_rows, min_history=SCREENING_MIN_HISTORY
+        ),
+    }
 
 
 def load_fundamental_snapshots(session: Session, symbol: str, as_of=None) -> pd.DataFrame:

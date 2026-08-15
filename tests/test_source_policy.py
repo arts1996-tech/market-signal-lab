@@ -5,7 +5,11 @@ from sqlalchemy.dialects import postgresql
 
 from app.core.config import Settings
 from app.core.data_source_policy import SOURCE_POLICY_VERSION
-from app.database.repositories import market_prices_frame, resolve_market_price_sources
+from app.database.repositories import (
+    list_assets_with_minimum_price_history,
+    market_prices_frame,
+    resolve_market_price_sources,
+)
 from app.services.analysis_service import build_analysis_input_provenance, market_price_source_policy
 
 
@@ -43,6 +47,30 @@ def test_market_prices_frame_excludes_sample_by_default_and_demo_selects_only_sa
 
     assert "market_prices.source !=" in live_sql
     assert "market_prices.source =" in demo_sql
+
+
+def test_screening_asset_query_requires_distinct_adjusted_sessions():
+    class _ScalarCaptureSession:
+        query = None
+
+        def scalars(self, query):
+            self.query = query
+            return []
+
+    session = _ScalarCaptureSession()
+    list_assets_with_minimum_price_history(
+        session,
+        source="jquants",
+        asset_types=["stock", "etf"],
+        min_history=30,
+        limit=200,
+        price_bases=["raw_ohlcv_with_adjusted"],
+    )
+
+    sql = str(session.query.compile(dialect=postgresql.dialect()))
+    assert "count(distinct(market_prices.session_date))" in sql.lower()
+    assert "market_prices.adjusted_close IS NOT NULL" in sql
+    assert "market_prices.price_basis IN" in sql
 
 
 def test_normal_compose_start_does_not_seed_synthetic_data():

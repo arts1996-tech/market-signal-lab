@@ -293,15 +293,21 @@ with tab_screening:
     st.caption("観測済みの価格データから技術指標を比較します。財務値や将来価格は推測せず、投資推奨は行いません。")
     screening = load_screening_data()["screening"]
     if screening.empty:
-        st.warning("スクリーニングには、銘柄マスターと50営業日以上のJ-Quants価格履歴が必要です。")
+        st.warning("スクリーニングには、銘柄マスターと30営業日以上の有効なJ-Quants調整済み価格履歴が必要です。")
     else:
         asset_type = st.multiselect("対象区分", ["stock", "etf"], default=["stock", "etf"])
         view = screening[screening["asset_type"].isin(asset_type)].copy()
+        view["data_as_of"] = view["data_as_of"].map(
+            lambda value: "-" if pd.isna(value) else pd.Timestamp(value).strftime("%Y-%m-%d")
+        )
         view["return_20d"] = view["return_20d"].map(format_percent)
         view["volatility_20d"] = view["volatility_20d"].map(format_percent)
         view["rsi_14"] = view["rsi_14"].round(1)
         st.dataframe(view, use_container_width=True)
-        st.caption("対象は先頭200銘柄に限定しています。標本数、価格基準、source、最終取得時刻はシステム管理タブでも確認してください。")
+        st.caption(
+            "30営業日以上の有効な調整済み価格を持つ銘柄から最大200銘柄を表示しています。"
+            "50日・75日移動平均は、それぞれ必要な観測数がそろった銘柄だけで利用します。"
+        )
         financial_symbols = sorted(set(view["symbol"].tolist()) | set(load_fundamental_symbol_options()))
         selected_financial_symbol = st.selectbox("財務サマリーを表示", financial_symbols)
         financials = load_fundamentals_data(selected_financial_symbol)
