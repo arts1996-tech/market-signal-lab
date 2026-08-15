@@ -34,6 +34,7 @@ GitHub: https://github.com/arts1996-tech/market-signal-lab
 18. `docs/17_remediation_todo.md`
 19. `docs/18_phase3_data_source_design.md`
 20. `docs/19_investment_decision_readiness_assessment.md`
+21. `docs/20_virtual_account_decision_logic.md`
 
 レビュー文書とオプション提案は、必須要件と区別して扱います。文書、既存コード、実運用状態に矛盾がある場合は、機能やルールを勝手に削除せず、差分と推奨案を確認してから変更します。
 
