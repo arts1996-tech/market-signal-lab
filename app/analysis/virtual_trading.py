@@ -5,6 +5,10 @@ from app.analysis.movement_candidates import (
     movement_score,
     us_japan_market_context,
 )
+from app.analysis.market_calendar import (
+    exchange_calendar,
+    latest_contiguous_exchange_observations,
+)
 from app.analysis.technical import short_term_indicator_frame
 
 
@@ -17,7 +21,7 @@ def generate_demo_phase4_data(periods: int = 120, symbol: str = "DEMOJP") -> tup
     if periods < 40:
         raise ValueError("periods must be at least 40")
     rng = np.random.default_rng(20260720)
-    dates = pd.bdate_range("2025-01-06", periods=periods, tz="UTC")
+    dates = exchange_calendar("XTKS").sessions_in_range("2025-01-01", "2026-12-31")[:periods]
     us_returns = rng.normal(0.0005, 0.012, periods)
     japan_returns = np.roll(us_returns, 1) * 0.35 + rng.normal(0.0003, 0.014, periods)
     japan_returns[0] = 0.0003
@@ -113,6 +117,10 @@ def build_virtual_trades(
     context_cache = {}
     for symbol, group in price_frame.groupby("symbol"):
         ordered = group.drop_duplicates("price_time").set_index("price_time").sort_index()
+        contiguous_observations = latest_contiguous_exchange_observations(
+            ordered.index, "XTKS"
+        )
+        ordered = ordered.tail(contiguous_observations)
         close = ordered["close"]
         if len(close) < min_observations + holding_days:
             continue

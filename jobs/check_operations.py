@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import text
 
+from app.analysis.market_calendar import latest_contiguous_exchange_observations
 from app.database.session import SessionLocal
 from app.services.market_service import record_job
 
@@ -28,13 +29,29 @@ def memory_snapshot() -> dict:
     }
 
 
+def contiguous_history_counts(rows, thresholds: tuple[int, ...] = (1, 5, 10, 20, 30)) -> dict:
+    """Summarize latest contiguous XTKS sessions by asset."""
+    dates_by_asset: dict[str, list] = {}
+    for row in rows:
+        asset_id = row["asset_id"]
+        dates_by_asset.setdefault(asset_id, []).append(row["session_date"])
+    counts = [
+        latest_contiguous_exchange_observations(dates, "XTKS")
+        for dates in dates_by_asset.values()
+    ]
+    return {
+        **{f"ge_{threshold}": sum(count >= threshold for count in counts) for threshold in thresholds},
+        "max_observations": max(counts, default=0),
+    }
+
+
 def main() -> None:
     usage = shutil.disk_usage("/")
     started_at = datetime.now(UTC)
     with SessionLocal() as session:
         prices = session.execute(text("SELECT count(*) FROM market_prices")).scalar_one()
         latest = session.execute(text("SELECT max(fetched_at) FROM market_prices")).scalar_one()
-        history_counts = session.execute(text("""
+        observed_history_counts = session.execute(text("""
             SELECT
                 count(*) FILTER (WHERE observations >= 1) AS ge_1,
                 count(*) FILTER (WHERE observations >= 5) AS ge_5,
@@ -49,6 +66,15 @@ def main() -> None:
                 GROUP BY asset_id
             ) counts
         """)).mappings().one()
+        contiguous_rows = session.execute(text("""
+            SELECT asset_id, session_date
+            FROM market_prices
+            WHERE source = 'jquants'
+              AND price_basis = 'raw_ohlcv_with_adjusted'
+              AND adjusted_close IS NOT NULL
+            ORDER BY asset_id, session_date
+        """)).mappings().all()
+        history_counts = contiguous_history_counts(contiguous_rows)
         target_counts = session.execute(text("""
             SELECT
                 count(*) AS total,
@@ -114,6 +140,14 @@ def main() -> None:
             "30": history_counts["ge_30"],
         },
         "adjusted_history_max_observations": history_counts["max_observations"],
+        "adjusted_observed_history_symbols_by_threshold": {
+            "1": observed_history_counts["ge_1"],
+            "5": observed_history_counts["ge_5"],
+            "10": observed_history_counts["ge_10"],
+            "20": observed_history_counts["ge_20"],
+            "30": observed_history_counts["ge_30"],
+        },
+        "adjusted_observed_history_max_observations": observed_history_counts["max_observations"],
         "collection_targets_total": target_counts["total"],
         "collection_targets_completed": target_counts["completed"],
         "collection_targets_progress_ratio": (

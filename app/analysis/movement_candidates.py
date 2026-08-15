@@ -1,6 +1,7 @@
 import pandas as pd
 
 from app.analysis.correlation import close_wide, horizon_correlations, us_japan_pair_frame
+from app.analysis.market_calendar import latest_contiguous_exchange_observations
 from app.analysis.technical import short_term_indicator_frame
 
 
@@ -84,10 +85,23 @@ def build_movement_candidates(
     frame["close"] = pd.to_numeric(frame["close"])
     for symbol, group in frame.groupby("symbol"):
         ordered = group.drop_duplicates("price_time").set_index("price_time").sort_index()
+        total_observations = len(ordered)
+        contiguous_observations = latest_contiguous_exchange_observations(
+            ordered.index, "XTKS"
+        )
+        ordered = ordered.tail(contiguous_observations)
         close = ordered["close"]
         name = group["name"].dropna().iloc[-1] if "name" in group and not group["name"].dropna().empty else symbol
-        if len(close) < min_observations:
-            insufficient.append({"symbol": symbol, "name": name, "observations": len(close)})
+        if contiguous_observations < min_observations:
+            insufficient.append(
+                {
+                    "symbol": symbol,
+                    "name": name,
+                    "observations": contiguous_observations,
+                    "total_observations": total_observations,
+                    "reason": "latest_contiguous_sessions_below_minimum",
+                }
+            )
             continue
 
         indicators = short_term_indicator_frame(close)
@@ -120,9 +134,15 @@ def build_movement_candidates(
         )
 
     candidates = pd.DataFrame(rows)
+    eligible_count = len(candidates)
     if not candidates.empty:
         candidates = candidates.sort_values(["score", "volatility_20d"], ascending=[False, False]).head(limit)
-    return {**context, "candidates": candidates, "insufficient": pd.DataFrame(insufficient)}
+    return {
+        **context,
+        "candidates": candidates,
+        "eligible_count": eligible_count,
+        "insufficient": pd.DataFrame(insufficient),
+    }
 
 
 def movement_score(row: pd.Series, average_correlation, us_signal: dict) -> tuple[int, str, list[str]]:

@@ -1,5 +1,6 @@
 import pandas as pd
 
+from app.analysis.market_calendar import exchange_calendar
 from app.analysis.movement_candidates import apply_virtual_trade_feedback, build_movement_candidates
 from app.analysis.virtual_trading import (
     build_virtual_trades,
@@ -10,7 +11,9 @@ from app.analysis.virtual_trading import (
 
 
 def _price_rows(symbol: str, values: list[float], name: str | None = None, source: str = "jquants") -> list[dict]:
-    dates = pd.date_range("2026-01-01", periods=len(values), freq="B", tz="UTC")
+    dates = exchange_calendar("XTKS").sessions_in_range("2026-01-01", "2026-12-31")[
+        : len(values)
+    ]
     return [
         {
             "symbol": symbol,
@@ -31,6 +34,27 @@ def test_build_movement_candidates_returns_insufficient_rows():
 
     assert result["candidates"].empty
     assert result["insufficient"].loc[0, "symbol"] == "86970"
+
+
+def test_movement_candidates_reject_non_contiguous_thirty_observations():
+    old_dates = exchange_calendar("XTKS").sessions_in_range("2024-01-01", "2024-03-31")[:20]
+    recent_dates = exchange_calendar("XTKS").sessions_in_range("2026-04-01", "2026-05-31")[:15]
+    dates = old_dates.append(recent_dates)
+    japan_prices = pd.DataFrame(
+        {
+            "symbol": "86970",
+            "name": "JPX",
+            "price_time": dates,
+            "close": range(100, 135),
+        }
+    )
+
+    result = build_movement_candidates(pd.DataFrame(), japan_prices, min_observations=30)
+
+    assert result["candidates"].empty
+    assert result["eligible_count"] == 0
+    assert result["insufficient"].loc[0, "observations"] == 15
+    assert result["insufficient"].loc[0, "total_observations"] == 35
 
 
 def test_apply_virtual_trade_feedback_adjusts_score():
@@ -75,6 +99,30 @@ def test_virtual_trades_require_thirty_observations_in_live_like_input():
     japan_prices = pd.DataFrame(_price_rows("86970", [100 + i for i in range(29)]))
 
     trades = build_virtual_trades(index_prices, japan_prices, score_threshold=0, holding_days=5)
+
+    assert trades.empty
+
+
+def test_virtual_trades_do_not_cross_a_session_gap():
+    old_dates = exchange_calendar("XTKS").sessions_in_range("2024-01-01", "2024-03-31")[:25]
+    recent_dates = exchange_calendar("XTKS").sessions_in_range("2026-04-01", "2026-05-31")[:15]
+    dates = old_dates.append(recent_dates)
+    japan_prices = pd.DataFrame(
+        {
+            "symbol": "86970",
+            "name": "JPX",
+            "price_time": dates,
+            "close": range(100, 140),
+        }
+    )
+
+    trades = build_virtual_trades(
+        pd.DataFrame(),
+        japan_prices,
+        score_threshold=0,
+        holding_days=5,
+        min_observations=30,
+    )
 
     assert trades.empty
 

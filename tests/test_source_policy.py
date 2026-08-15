@@ -71,6 +71,7 @@ def test_screening_asset_query_requires_distinct_adjusted_sessions():
     assert "count(distinct(market_prices.session_date))" in sql.lower()
     assert "market_prices.adjusted_close IS NOT NULL" in sql
     assert "market_prices.price_basis IN" in sql
+    assert "ORDER BY count(distinct(market_prices.session_date)) DESC" in sql
 
 
 def test_normal_compose_start_does_not_seed_synthetic_data():

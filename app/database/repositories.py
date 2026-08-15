@@ -256,7 +256,11 @@ def list_assets_with_minimum_price_history(
         )
         .group_by(Asset.id)
         .having(func.count(func.distinct(MarketPrice.session_date)) >= min_history)
-        .order_by(Asset.symbol)
+        .order_by(
+            func.count(func.distinct(MarketPrice.session_date)).desc(),
+            func.max(MarketPrice.session_date).desc(),
+            Asset.symbol,
+        )
         .limit(limit)
     )
     if price_bases:

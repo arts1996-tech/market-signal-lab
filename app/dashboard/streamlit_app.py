@@ -291,24 +291,50 @@ with tab_short:
 with tab_screening:
     st.subheader("銘柄・ETFスクリーニング")
     st.caption("観測済みの価格データから技術指標を比較します。財務値や将来価格は推測せず、投資推奨は行いません。")
+    st.warning(
+        "J-Quants Free planの価格は約12週間遅延しています。"
+        "この一覧は過去データ上の分析候補であり、現在の短期売買判断には使用できません。"
+    )
     screening = load_screening_data()["screening"]
     if screening.empty:
-        st.warning("スクリーニングには、銘柄マスターと30営業日以上の有効なJ-Quants調整済み価格履歴が必要です。")
+        st.warning("スクリーニングには、銘柄マスターと東証カレンダー上で連続する30営業日以上の有効なJ-Quants調整済み価格履歴が必要です。")
     else:
-        asset_type = st.multiselect("対象区分", ["stock", "etf"], default=["stock", "etf"])
-        view = screening[screening["asset_type"].isin(asset_type)].copy()
+        filter_cols = st.columns(3)
+        asset_type = filter_cols[0].multiselect(
+            "対象区分", ["stock", "etf"], default=["stock", "etf"]
+        )
+        minimum_attention = filter_cols[1].slider(
+            "最低注目度", min_value=0, max_value=100, value=50, step=5
+        )
+        sector_options = sorted(screening["sector"].dropna().unique().tolist())
+        selected_sectors = filter_cols[2].multiselect("業種（未選択はすべて）", sector_options)
+        view = screening[
+            screening["asset_type"].isin(asset_type)
+            & (screening["attention_score"] >= minimum_attention)
+        ].copy()
+        if selected_sectors:
+            view = view[view["sector"].isin(selected_sectors)]
         view["data_as_of"] = view["data_as_of"].map(
             lambda value: "-" if pd.isna(value) else pd.Timestamp(value).strftime("%Y-%m-%d")
         )
+        view["attention_reasons"] = view["attention_reasons"].map(format_reason_list)
+        view["quality_warnings"] = view["quality_warnings"].map(format_reason_list)
         view["return_20d"] = view["return_20d"].map(format_percent)
         view["volatility_20d"] = view["volatility_20d"].map(format_percent)
         view["rsi_14"] = view["rsi_14"].round(1)
-        st.dataframe(view, use_container_width=True)
+        st.metric("表示中の分析候補", len(view))
+        if view.empty:
+            st.info("現在の条件に一致する分析候補はありません。条件を緩めて確認してください。")
+        else:
+            st.dataframe(view, use_container_width=True)
         st.caption(
-            "30営業日以上の有効な調整済み価格を持つ銘柄から最大200銘柄を表示しています。"
+            "東証カレンダー上で連続する30営業日以上の有効な調整済み価格を持つ銘柄のうち、履歴が充実した最大200銘柄を比較しています。"
+            "注目度は値動きの大きさや指標の偏りを示すもので、上昇確率や推奨順位ではありません。"
             "50日・75日移動平均は、それぞれ必要な観測数がそろった銘柄だけで利用します。"
         )
-        financial_symbols = sorted(set(view["symbol"].tolist()) | set(load_fundamental_symbol_options()))
+        financial_symbols = sorted(
+            set(screening["symbol"].tolist()) | set(load_fundamental_symbol_options())
+        )
         selected_financial_symbol = st.selectbox("財務サマリーを表示", financial_symbols)
         financials = load_fundamentals_data(selected_financial_symbol)
         if financials.empty:
@@ -373,14 +399,12 @@ with tab_candidates:
             st.dataframe(movement["pair_summaries"], use_container_width=True)
 
     candidates = movement["candidates"]
-    valid_history_count = 0
-    if not movement_data["japan_prices"].empty:
-        valid_history_count = int(
-            (movement_data["japan_prices"].groupby("symbol").size() >= 30).sum()
-        )
-    st.caption(f"候補判定可能な有効履歴30日以上の銘柄数: {valid_history_count}")
+    valid_history_count = movement.get("eligible_count", 0)
+    st.caption(
+        f"候補判定可能な最新連続履歴30営業日以上の銘柄数: {valid_history_count}"
+    )
     if candidates.empty:
-        st.warning("候補はまだありません。候補判定には各銘柄30営業日以上の有効な調整済み価格履歴が必要です。legacy_unknownの価格は品質保護のため判定に使用しません。")
+        st.warning("候補はまだありません。候補判定には各銘柄について東証カレンダー上で最新から連続する30営業日以上の有効な調整済み価格履歴が必要です。legacy_unknownの価格は品質保護のため判定に使用しません。")
         insufficient = movement.get("insufficient", pd.DataFrame())
         if not insufficient.empty:
             st.caption("現在の候補対象と履歴件数")
@@ -449,7 +473,7 @@ with tab_virtual:
                         hide_index=True,
                     )
     else:
-        st.info("通常モードでは、各銘柄30営業日以上の有効な調整済み履歴がそろうまで仮想評価を生成しません。")
+        st.info("通常モードでは、各銘柄について東証カレンダー上で最新から連続する30営業日以上の有効な調整済み履歴がそろうまで仮想評価を生成しません。")
     threshold = st.slider("仮想エントリーの最低スコア", min_value=50, max_value=90, value=70, step=5)
     holding_days = st.selectbox("仮想保有期間", [1, 5, 10, 20], index=1)
     virtual_data = load_movement_data(score_threshold=threshold, holding_days=holding_days)
@@ -457,7 +481,7 @@ with tab_virtual:
     feedback = virtual_data["virtual_feedback"]
     st.caption("仮想投資の成績は銘柄別に集計され、変動候補画面のフィードバック指標として次回の抽出に反映されます。")
     if trades.empty:
-        st.warning("仮想投資評価に必要な履歴データが不足しています。30営業日以上の日本株・ETFデータが必要です。")
+        st.warning("仮想投資評価に必要な履歴データが不足しています。東証カレンダー上で最新から連続する30営業日以上の日本株・ETFデータが必要です。")
     else:
         summary_cols = st.columns(4)
         summary_cols[0].metric("仮想件数", len(trades))
@@ -698,6 +722,12 @@ with tab_system:
                 "adjusted_history_ready_symbols": job.details.get("adjusted_history_ready_symbols"),
                 "adjusted_history_max_observations": job.details.get("adjusted_history_max_observations"),
                 "adjusted_history_symbols_by_threshold": job.details.get("adjusted_history_symbols_by_threshold"),
+                "raw_observed_history_max_rows": job.details.get(
+                    "adjusted_observed_history_max_observations"
+                ),
+                "raw_observed_history_by_threshold": job.details.get(
+                    "adjusted_observed_history_symbols_by_threshold"
+                ),
                 "collection_targets_progress_ratio": job.details.get("collection_targets_progress_ratio"),
                 "collection_next_session_date": job.details.get("collection_next_session_date"),
                 "collection_items_retry_pending": job.details.get("collection_items_retry_pending"),

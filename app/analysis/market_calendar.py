@@ -86,6 +86,19 @@ def calendar_gap_report(observed_dates, calendar_name: str) -> dict:
     }
 
 
+def latest_contiguous_exchange_observations(observed_dates, calendar_name: str) -> int:
+    """Count the latest uninterrupted exchange-session suffix."""
+    ordered = sorted({_calendar_date(pd.Timestamp(value)) for value in observed_dates})
+    if not ordered or not is_exchange_session(ordered[-1], calendar_name):
+        return 0
+    count = 1
+    for previous, current in zip(reversed(ordered[:-1]), reversed(ordered[1:]), strict=True):
+        if not is_next_exchange_session(previous, current, calendar_name):
+            break
+        count += 1
+    return count
+
+
 def align_us_previous_to_japan(
     us_returns: pd.Series,
     japan_returns: pd.Series,
