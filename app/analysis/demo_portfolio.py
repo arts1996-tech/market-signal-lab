@@ -4,6 +4,13 @@ import numpy as np
 import pandas as pd
 
 from app.analysis.market_calendar import exchange_calendar
+from app.backtest.ohlc import (
+    MarketImpactAssumptions,
+    PortfolioRiskRules,
+    simulate_ohlc_portfolio,
+)
+from app.backtest.portfolio import ExecutionAssumptions
+from app.backtest.validation import evaluate_frozen_strategy_walk_forward
 from app.providers.news import DemoNewsProvider
 
 
@@ -35,25 +42,39 @@ def generate_demo_portfolio_prices(periods: int = 180) -> pd.DataFrame:
     dates = pd.DatetimeIndex(pd.to_datetime(sessions[:periods], utc=True))
     market = rng.normal(0.00035, 0.011, periods)
     definitions = (
-        ("DEMOJP1", "検証用テクノロジー", 1200.0, 1.25, 0.012),
-        ("DEMOJP2", "検証用製造業", 2800.0, 0.85, 0.010),
-        ("DEMOJP3", "検証用小売業", 1750.0, 0.55, 0.014),
-        ("DEMOETF", "検証用日本ETF", 2200.0, 0.70, 0.007),
+        ("DEMOJP1", "検証用テクノロジー", "technology", 1200.0, 1.25, 0.012),
+        ("DEMOJP2", "検証用製造業", "manufacturing", 2800.0, 0.85, 0.010),
+        ("DEMOJP3", "検証用小売業", "retail", 1750.0, 0.55, 0.014),
+        ("DEMOETF", "検証用日本ETF", "diversified_etf", 2200.0, 0.70, 0.007),
     )
     records = []
-    for index, (symbol, name, start, beta, noise) in enumerate(definitions):
+    for index, (symbol, name, sector, start, beta, noise) in enumerate(definitions):
         returns = market * beta + rng.normal(0.0001 * (index - 1), noise, periods)
-        values = start * np.cumprod(1 + returns)
+        closes = start * np.cumprod(1 + returns)
+        overnight = rng.normal(0, noise * 0.25, periods)
+        opens = np.r_[start, closes[:-1]] * (1 + overnight)
+        intraday_range = np.abs(rng.normal(noise * 0.8, noise * 0.25, periods))
+        highs = np.maximum(opens, closes) * (1 + intraday_range / 2)
+        lows = np.minimum(opens, closes) * (1 - intraday_range / 2)
+        volumes = rng.integers(80_000, 1_200_000, periods)
         records.extend(
             {
                 "price_time": date,
                 "symbol": symbol,
                 "name": name,
-                "close": float(value),
+                "sector": sector,
+                "open": float(open_price),
+                "high": float(high),
+                "low": float(low),
+                "close": float(close),
+                "volume": int(volume),
                 "source": "demo",
+                "price_basis": "synthetic_unadjusted",
                 "synthetic": True,
             }
-            for date, value in zip(dates, values, strict=True)
+            for date, open_price, high, low, close, volume in zip(
+                dates, opens, highs, lows, closes, volumes, strict=True
+            )
         )
     return pd.DataFrame(records)
 
@@ -109,173 +130,90 @@ def _run_account(
     lot_size: int,
 ) -> dict:
     dates = pd.DatetimeIndex(sorted(pd.to_datetime(prices["price_time"], utc=True).unique()))
-    cash = float(initial_cash)
-    realized_pnl = 0.0
-    positions: dict[str, dict] = {}
-    transactions: list[dict] = []
-    snapshots: list[dict] = []
-    high_watermark = float(initial_cash)
+    signal_rows: list[dict] = []
     latest_signals: list[dict] = []
-
-    price_table = prices.pivot(index="price_time", columns="symbol", values="close").sort_index()
-    names = prices.drop_duplicates("symbol").set_index("symbol")["name"].to_dict()
-
+    sectors = prices.drop_duplicates("symbol").set_index("symbol")["sector"].to_dict()
     for location in range(20, len(dates)):
-        execution_date = dates[location]
         decision_date = dates[location - 1]
+        entry_date = dates[location]
         history = prices[pd.to_datetime(prices["price_time"], utc=True) <= decision_date]
         latest_signals = _rank_signals(history, news, decision_date)
-        signal_by_symbol = {item["symbol"]: item for item in latest_signals}
-
-        for symbol, position in list(positions.items()):
-            decision_price = float(price_table.loc[decision_date, symbol])
-            return_since_entry = decision_price / position["entry_price"] - 1
-            held_days = location - position["entry_location"]
-            signal = signal_by_symbol.get(symbol, {})
-            news_headlines = signal.get("news_headlines", [])
-            exit_reason = None
-            if return_since_entry <= rule.stop_loss:
-                exit_reason = "損切り条件成立"
-            elif return_since_entry >= rule.take_profit:
-                exit_reason = "利益確定条件成立"
-            elif held_days >= rule.maximum_holding_days:
-                exit_reason = "最大保有期間到達"
-            elif signal.get("score", 50) < 40 and news_headlines:
-                exit_reason = "ニュース・価格条件の悪化"
-            if not exit_reason:
-                continue
-            market_price = float(price_table.loc[execution_date, symbol])
-            execution_price = market_price * (1 - spread_rate / 2)
-            gross = execution_price * position["quantity"]
-            fee = gross * fee_rate
-            proceeds = gross - fee
-            pnl = proceeds - position["cost"]
-            cash += proceeds
-            realized_pnl += pnl
-            action = {
-                "利益確定条件成立": "利益確定",
-                "損切り条件成立": "損切り",
-                "最大保有期間到達": "保有期限決済",
-                "ニュース・価格条件の悪化": "条件悪化決済",
-            }[exit_reason]
-            transactions.append(
-                {
-                    "account": rule.name,
-                    "date": execution_date,
-                    "action": action,
-                    "symbol": symbol,
-                    "name": names[symbol],
-                    "quantity": position["quantity"],
-                    "execution_price": execution_price,
-                    "amount": proceeds,
-                    "realized_pnl": pnl,
-                    "reason": exit_reason,
-                    "decision_as_of": decision_date,
-                }
-            )
-            del positions[symbol]
-
-        market_value_before_entry = sum(
-            float(price_table.loc[execution_date, symbol]) * position["quantity"]
-            for symbol, position in positions.items()
-        )
-        equity_before_entry = cash + market_value_before_entry
-        available_slots = rule.maximum_positions - len(positions)
         for signal in latest_signals:
-            if available_slots <= 0 or signal["score"] < rule.minimum_score:
-                break
-            symbol = signal["symbol"]
-            if symbol in positions or pd.isna(price_table.loc[execution_date, symbol]):
+            if signal["score"] < rule.minimum_score:
                 continue
-            market_price = float(price_table.loc[execution_date, symbol])
-            execution_price = market_price * (1 + spread_rate / 2)
-            budget = min(cash, equity_before_entry * rule.maximum_position_rate)
-            quantity = int(budget // (execution_price * lot_size * (1 + fee_rate))) * lot_size
-            if quantity <= 0:
-                continue
-            gross = execution_price * quantity
-            fee = gross * fee_rate
-            cost = gross + fee
-            if cost > cash:
-                continue
-            cash -= cost
-            positions[symbol] = {
-                "quantity": quantity,
-                "entry_price": execution_price,
-                "entry_date": execution_date,
-                "entry_location": location,
-                "cost": cost,
-                "reasons": signal["reasons"],
-            }
-            transactions.append(
+            signal_rows.append(
                 {
-                    "account": rule.name,
-                    "date": execution_date,
-                    "action": "仮想エントリー",
-                    "symbol": symbol,
-                    "name": names[symbol],
-                    "quantity": quantity,
-                    "execution_price": execution_price,
-                    "amount": cost,
-                    "realized_pnl": 0.0,
-                    "reason": " / ".join(signal["reasons"]),
-                    "decision_as_of": decision_date,
+                    **signal,
+                    "signal_date": decision_date,
+                    "entry_date": entry_date,
+                    "side": "long",
+                    "sector": sectors.get(signal["symbol"], "unknown"),
+                    "minimum_score": rule.minimum_score,
+                    "stop_loss": rule.stop_loss,
+                    "take_profit": rule.take_profit,
+                    "maximum_holding_days": rule.maximum_holding_days,
+                    "counterarguments": [
+                        "合成データであり実市場の板・ニュース・企業行動を再現しません"
+                    ],
                 }
             )
-            available_slots -= 1
-
-        market_value = sum(
-            float(price_table.loc[execution_date, symbol]) * position["quantity"]
-            for symbol, position in positions.items()
-        )
-        cost_basis = sum(position["cost"] for position in positions.values())
-        unrealized_pnl = market_value - cost_basis
-        equity = cash + market_value
-        high_watermark = max(high_watermark, equity)
-        snapshots.append(
-            {
-                "date": execution_date,
-                "cash": cash,
-                "market_value": market_value,
-                "equity": equity,
-                "realized_pnl": realized_pnl,
-                "unrealized_pnl": unrealized_pnl,
-                "drawdown": equity / high_watermark - 1,
-            }
-        )
-
-    snapshot_frame = pd.DataFrame(snapshots)
-    position_records = []
-    last_date = dates[-1]
-    for symbol, position in positions.items():
-        last_price = float(price_table.loc[last_date, symbol])
-        position_records.append(
-            {
-                "symbol": symbol,
-                "name": names[symbol],
-                "quantity": position["quantity"],
-                "entry_date": position["entry_date"],
-                "entry_price": position["entry_price"],
-                "current_price": last_price,
-                "market_value": last_price * position["quantity"],
-                "unrealized_pnl": last_price * position["quantity"] - position["cost"],
-                "entry_reasons": position["reasons"],
-            }
-        )
-    return {
-        "account_name": rule.name,
-        "label": rule.label,
-        "initial_cash": initial_cash,
-        "cash": float(snapshot_frame.iloc[-1]["cash"]),
-        "equity": float(snapshot_frame.iloc[-1]["equity"]),
-        "realized_pnl": float(snapshot_frame.iloc[-1]["realized_pnl"]),
-        "unrealized_pnl": float(snapshot_frame.iloc[-1]["unrealized_pnl"]),
-        "maximum_drawdown": float(snapshot_frame["drawdown"].min()),
-        "positions": pd.DataFrame(position_records),
-        "transactions": pd.DataFrame(transactions),
-        "snapshots": snapshot_frame,
-        "latest_signals": pd.DataFrame(latest_signals),
-    }
+    signals = pd.DataFrame(signal_rows)
+    assumptions = ExecutionAssumptions(
+        fee_rate=fee_rate,
+        spread_rate=spread_rate,
+        tax_rate=0.0,
+        lot_size=lot_size,
+        maximum_positions=rule.maximum_positions,
+        maximum_position_rate=rule.maximum_position_rate,
+    )
+    result = simulate_ohlc_portfolio(
+        signals,
+        prices,
+        initial_cash=initial_cash,
+        account_name=rule.name,
+        assumptions=assumptions,
+        market_impact=MarketImpactAssumptions(require_volume=True),
+        risk_rules=PortfolioRiskRules(maximum_sector_rate=0.50),
+        benchmark=(
+            prices[prices["symbol"] == "DEMOETF"]
+            .drop_duplicates("price_time")
+            .set_index("price_time")["close"]
+            .sort_index()
+        ),
+        input_data_version="deterministic-synthetic-demo-v2",
+    )
+    walk_forward = evaluate_frozen_strategy_walk_forward(
+        signals,
+        prices,
+        lambda test_signals, prices_as_of_test: simulate_ohlc_portfolio(
+            test_signals,
+            prices_as_of_test,
+            initial_cash=initial_cash,
+            account_name=rule.name,
+            assumptions=assumptions,
+            market_impact=MarketImpactAssumptions(require_volume=True),
+            risk_rules=PortfolioRiskRules(maximum_sector_rate=0.50),
+            benchmark=(
+                prices_as_of_test[prices_as_of_test["symbol"] == "DEMOETF"]
+                .drop_duplicates("price_time")
+                .set_index("price_time")["close"]
+                .sort_index()
+            ),
+            input_data_version="deterministic-synthetic-demo-v2",
+        ),
+        minimum_train_sessions=60,
+        test_sessions=20,
+    )
+    result.update(
+        {
+            "label": rule.label,
+            "maximum_drawdown": result["metrics"]["maximum_drawdown"],
+            "latest_signals": pd.DataFrame(latest_signals),
+            "signals": signals,
+            "walk_forward": walk_forward,
+        }
+    )
+    return result
 
 
 def run_demo_portfolio_environment(
@@ -309,9 +247,13 @@ def run_demo_portfolio_environment(
             "lot_size": lot_size,
             "tax_rate": 0.0,
             "currency": "JPY",
-            "execution_rule": "前営業日までの情報で判断し、次営業日の終値で仮想約定",
+            "execution_rule": "前営業日までの情報で判断し、次営業日の始値で仮想約定",
             "maximum_positions": 2,
             "maximum_position_rate": 0.30,
+            "maximum_volume_participation": 0.10,
+            "partial_fill": True,
+            "simultaneous_hit_policy": "損切りを先に成立したものとして扱う",
+            "strategy_version": "phase4-long-only-v0.2",
             "price_source": "deterministic_synthetic_demo",
             "news_source": "deterministic_synthetic_demo_scenario",
             "open_position_valuation": "当日終値。未実現損益には将来の決済手数料を含めない",

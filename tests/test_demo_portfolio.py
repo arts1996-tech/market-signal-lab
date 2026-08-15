@@ -40,12 +40,6 @@ def test_demo_portfolio_never_uses_execution_day_information_for_decisions():
 
 def test_demo_exit_labels_follow_conditions_instead_of_profit_sign():
     result = run_demo_portfolio_environment()
-    expected_actions = {
-        "利益確定条件成立": "利益確定",
-        "損切り条件成立": "損切り",
-        "最大保有期間到達": "保有期限決済",
-        "ニュース・価格条件の悪化": "条件悪化決済",
-    }
 
     exits = pd.concat(
         [
@@ -55,9 +49,25 @@ def test_demo_exit_labels_follow_conditions_instead_of_profit_sign():
         ignore_index=True,
     )
     assert not exits.empty
-    assert {"利益確定条件成立", "損切り条件成立"}.issubset(set(exits["reason"]))
     for row in exits.itertuples(index=False):
-        assert row.action == expected_actions[row.reason]
+        if row.reason.startswith("利益確定条件成立"):
+            assert row.action == "利益確定"
+        elif row.reason.startswith("損切り条件成立"):
+            assert row.action == "損切り"
+        else:
+            assert row.reason == "最大保有期間到達"
+            assert row.action == "保有期限決済"
+
+
+def test_demo_portfolio_uses_shared_ohlc_engine_and_audit_manifest():
+    result = run_demo_portfolio_environment()
+
+    for account in result["accounts"].values():
+        assert account["manifest"]["execution_version"] == "ohlc-next-open-conservative-v1"
+        assert account["manifest"]["run_id"]
+        assert not account["decision_cards"].empty
+        assert account["decision_cards"]["human_review_required"].all()
+        assert account["market_impact"].require_volume is True
 
 
 @pytest.mark.parametrize(

@@ -95,6 +95,54 @@ def simulate_virtual_account(
     )
 
 
+def virtual_signals_from_reference_trades(
+    trades: pd.DataFrame,
+    *,
+    stop_loss: float = -0.05,
+    take_profit: float = 0.08,
+    maximum_holding_days: int | None = None,
+) -> pd.DataFrame:
+    """Remove future outcome fields and create point-in-time execution signals.
+
+    ``build_virtual_trades`` also produces reference outcomes for the evaluation
+    table. Those future prices must never be handed to the portfolio engine as
+    signal inputs, so this adapter selects only fields known at the decision.
+    """
+
+    if trades.empty:
+        return pd.DataFrame()
+    if stop_loss >= 0 or take_profit <= 0:
+        raise ValueError("stop_loss must be negative and take_profit must be positive")
+    required = {"signal_date", "entry_date", "symbol", "side"}
+    missing = required.difference(trades.columns)
+    if missing:
+        raise ValueError(f"trades missing required signal columns: {sorted(missing)}")
+    rows = []
+    for trade in trades.to_dict(orient="records"):
+        holding_days = maximum_holding_days or int(trade.get("holding_days", 5))
+        rows.append(
+            {
+                "signal_date": trade["signal_date"],
+                "entry_date": trade["entry_date"],
+                "symbol": trade["symbol"],
+                "name": trade.get("name", trade["symbol"]),
+                "sector": trade.get("sector", "unknown"),
+                "score": trade.get("score", 0),
+                "side": trade["side"],
+                "minimum_score": trade.get("score_threshold", 70),
+                "stop_loss": stop_loss,
+                "take_profit": take_profit,
+                "maximum_holding_days": holding_days,
+                "reasons": trade.get("entry_reasons", []),
+                "counterarguments": [
+                    "財務・イベント・板情報を完全には反映していません",
+                    "過去の参考評価は将来の収益を保証しません",
+                ],
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def build_virtual_trades(
     index_prices: pd.DataFrame,
     japan_prices: pd.DataFrame,

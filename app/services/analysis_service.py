@@ -24,9 +24,15 @@ from app.analysis.fundamentals import fundamentals_as_of
 from app.analysis.technical import short_term_indicator_frame, short_term_signal_snapshot
 from app.analysis.virtual_trading import (
     build_virtual_trades,
-    simulate_virtual_account,
     summarize_virtual_trade_feedback,
+    virtual_signals_from_reference_trades,
 )
+from app.backtest.ohlc import (
+    MarketImpactAssumptions,
+    PortfolioRiskRules,
+    simulate_ohlc_portfolio,
+)
+from app.backtest.portfolio import ExecutionAssumptions
 from app.database.repositories import (
     list_assets_by_source,
     list_assets_with_minimum_price_history,
@@ -854,12 +860,26 @@ def load_movement_and_virtual_trade_analysis(
                 .set_index("price_time")["close"]
                 .sort_index()
             )
-    virtual_account = simulate_virtual_account(
+    virtual_signals = virtual_signals_from_reference_trades(
         virtual_trades,
+        stop_loss=-0.05,
+        take_profit=0.08,
+        maximum_holding_days=holding_days,
+    )
+    virtual_account = simulate_ohlc_portfolio(
+        virtual_signals,
+        japan_prices,
         account_name="long_only_evaluation",
-        allocation_rate=0.30,
-        maximum_positions=2,
-        price_history=japan_prices,
+        assumptions=ExecutionAssumptions(
+            fee_rate=0.001,
+            spread_rate=0.001,
+            tax_rate=0.0,
+            lot_size=100,
+            maximum_positions=2,
+            maximum_position_rate=0.30,
+        ),
+        market_impact=MarketImpactAssumptions(require_volume=True),
+        risk_rules=PortfolioRiskRules(maximum_sector_rate=0.50),
         benchmark=benchmark,
     )
     candidates = build_movement_candidates(
@@ -874,6 +894,7 @@ def load_movement_and_virtual_trade_analysis(
         "asset_count": len(japan_symbols),
         "movement": candidates,
         "virtual_trades": virtual_trades,
+        "virtual_signals": virtual_signals,
         "virtual_feedback": feedback,
         "virtual_account": virtual_account,
         "score_threshold": score_threshold,

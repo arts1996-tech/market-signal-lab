@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -7,6 +9,7 @@ import streamlit as st
 
 from app.analysis.fundamentals import derive_fundamental_metrics
 from app.analysis.demo_portfolio import run_demo_portfolio_environment
+from app.backtest.shadow import write_forward_shadow_snapshot
 from app.database.repositories import (
     latest_correlation_results,
     latest_fetch_logs,
@@ -503,6 +506,21 @@ if active_page == "仮想投資評価":
                 metrics[3].metric("実現損益", f"¥{account['realized_pnl']:+,.0f}")
                 metrics[4].metric("未実現損益", f"¥{account['unrealized_pnl']:+,.0f}")
                 metrics[5].metric("最大ドローダウン", format_percent(account["maximum_drawdown"]))
+                account_statistics = account["metrics"]
+                average_ci = account_statistics.get("average_trade_return_ci95")
+                win_ci = account_statistics.get("win_rate_ci95")
+                if average_ci and win_ci:
+                    st.caption(
+                        "標本不確実性（95%近似区間）: "
+                        f"平均取引損益 {format_percent(average_ci[0])}〜"
+                        f"{format_percent(average_ci[1])} / "
+                        f"勝率 {format_percent(win_ci[0])}〜{format_percent(win_ci[1])}"
+                    )
+                st.caption(
+                    f"監査ID: {account['manifest']['run_id'][:16]}… / "
+                    f"戦略版: {account['manifest']['strategy_version']} / "
+                    f"約定版: {account['manifest']['execution_version']}"
+                )
 
                 snapshots = account["snapshots"].copy()
                 if not snapshots.empty:
@@ -546,6 +564,55 @@ if active_page == "仮想投資評価":
                             format_reason_list
                         )
                         st.dataframe(latest_signals, use_container_width=True, hide_index=True)
+
+                cards = account["decision_cards"].copy()
+                with st.expander(f"判断カード（{len(cards)}件）"):
+                    if cards.empty:
+                        st.info("判断カードはありません。")
+                    else:
+                        for column in ["reasons", "counterarguments", "quality_warnings"]:
+                            cards[column] = cards[column].map(format_reason_list)
+                        st.dataframe(
+                            cards[
+                                [
+                                    "status",
+                                    "symbol",
+                                    "data_as_of",
+                                    "entry_date",
+                                    "entry_price",
+                                    "take_profit_rate",
+                                    "stop_loss_rate",
+                                    "risk_reward",
+                                    "reference_quantity",
+                                    "planned_risk",
+                                    "reasons",
+                                    "counterarguments",
+                                    "quality_warnings",
+                                    "outcome_reason",
+                                    "human_review_required",
+                                ]
+                            ],
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+
+                walk_forward = account["walk_forward"].copy()
+                with st.expander("未見期間ウォークフォワード検証"):
+                    st.caption(
+                        "固定した同一ルールを、学習期間より後の20営業日ずつに限定して評価します。"
+                    )
+                    st.dataframe(walk_forward, use_container_width=True, hide_index=True)
+
+                if st.button(
+                    f"{account['label']}口座の現在結果を前向き観察として保存",
+                    key=f"save_forward_shadow_{account['account_name']}",
+                ):
+                    path = write_forward_shadow_snapshot(
+                        Path("data/forward_shadow") / account["account_name"],
+                        account,
+                        as_of=datetime.now(UTC),
+                    )
+                    st.success(f"実注文なしの観察記録を保存しました: {path}")
     else:
         st.info("通常モードでは、各銘柄について東証カレンダー上で最新から連続する30営業日以上の有効な調整済み履歴がそろうまで仮想評価を生成しません。")
         threshold = st.slider("仮想エントリーの最低スコア", min_value=50, max_value=90, value=70, step=5)
@@ -559,7 +626,9 @@ if active_page == "仮想投資評価":
             "少数標本による誤調整を避けるため、候補スコアには反映しません。"
         )
         st.info(
-            "安全側の約定規則: シグナル日の次の東証営業日始値で買い、指定保有日の終値で決済します。"
+            "安全側の約定規則: シグナル日の次の東証営業日始値で買い、"
+            "その後の日次OHLCで利益確定・損切り・最大保有期限を判定します。"
+            "同一日足で利益確定と損切りに到達した場合は損切りを優先し、"
             "始値欠損は取引せず、下方向シグナルは空売りせず観察専用とします。"
         )
         if trades.empty:
@@ -586,6 +655,43 @@ if active_page == "仮想投資評価":
                 "指数との差",
                 format_percent(account_metrics["excess_return"]),
             )
+            if account_metrics["closed_trades"]:
+                average_ci = account_metrics.get("average_trade_return_ci95")
+                win_ci = account_metrics.get("win_rate_ci95")
+                if average_ci and win_ci:
+                    st.caption(
+                        "標本不確実性（95%近似区間）: "
+                        f"平均取引損益 {format_percent(average_ci[0])}〜"
+                        f"{format_percent(average_ci[1])} / "
+                        f"勝率 {format_percent(win_ci[0])}〜{format_percent(win_ci[1])}"
+                    )
+                else:
+                    st.caption(
+                        "標本不確実性: 平均取引損益の95%区間には完了取引が2件以上必要です。"
+                    )
+            st.caption(
+                f"監査ID: {virtual_account['manifest']['run_id'][:16]}… / "
+                f"戦略版: {virtual_account['manifest']['strategy_version']} / "
+                f"約定版: {virtual_account['manifest']['execution_version']}"
+            )
+            rejected = virtual_account["rejected_signals"]
+            if not rejected.empty:
+                with st.expander(f"約定しなかった候補（{len(rejected)}件）"):
+                    st.dataframe(rejected, use_container_width=True, hide_index=True)
+
+            cards = virtual_account["decision_cards"].copy()
+            if not cards.empty:
+                with st.expander(f"判断カード（{len(cards)}件）"):
+                    for column in ["reasons", "counterarguments", "quality_warnings"]:
+                        cards[column] = cards[column].map(format_reason_list)
+                    st.dataframe(cards, use_container_width=True, hide_index=True)
+                if st.button("現在の実データ評価を前向き観察として保存"):
+                    path = write_forward_shadow_snapshot(
+                        Path("data/forward_shadow/live_long_only"),
+                        virtual_account,
+                        as_of=datetime.now(UTC),
+                    )
+                    st.success(f"実注文なしの観察記録を保存しました: {path}")
 
             view = trades.copy()
             view["signal_date"] = view["signal_date"].map(lambda value: pd.to_datetime(value).strftime("%Y-%m-%d"))

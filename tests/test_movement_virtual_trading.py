@@ -6,6 +6,7 @@ from app.analysis.virtual_trading import (
     build_virtual_trades,
     generate_demo_phase4_data,
     simulate_virtual_account,
+    virtual_signals_from_reference_trades,
     summarize_virtual_trade_feedback,
 )
 
@@ -232,3 +233,37 @@ def test_virtual_account_reserves_cash_and_rejects_short_equivalent_trades():
     assert account["cash"] > 1_000_000
     assert set(account["rejected_trades"]["reason"]) == {"long_only_account"}
     assert account["metrics"]["closed_trades"] == 1
+
+
+def test_reference_trade_adapter_never_passes_future_outcomes_to_engine():
+    sessions = exchange_calendar("XTKS").sessions_in_range("2026-01-01", "2026-01-31")
+    trades = pd.DataFrame(
+        [
+            {
+                "signal_date": sessions[0],
+                "entry_date": sessions[1],
+                "exit_date": sessions[5],
+                "symbol": "SAFE",
+                "name": "Safe signal",
+                "score": 80,
+                "side": "long",
+                "entry_price": 100,
+                "exit_price": 999,
+                "return": 8.99,
+                "outcome": "future result",
+                "entry_reasons": ["known at signal"],
+                "outcome_reasons": ["future-only explanation"],
+                "holding_days": 5,
+            }
+        ]
+    )
+
+    signals = virtual_signals_from_reference_trades(trades)
+
+    assert len(signals) == 1
+    assert "exit_date" not in signals
+    assert "exit_price" not in signals
+    assert "return" not in signals
+    assert "outcome" not in signals
+    assert "outcome_reasons" not in signals
+    assert signals.iloc[0]["reasons"] == ["known at signal"]
