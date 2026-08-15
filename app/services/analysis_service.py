@@ -157,6 +157,22 @@ def load_market_analysis(session: Session, symbols: list[str] | None = None) -> 
     }
 
 
+def load_market_status(session: Session, symbols: list[str] | None = None) -> dict:
+    """Load only the data needed by the shared freshness/status panel.
+
+    This deliberately skips correlation, regression, screening, and movement
+    calculations so switching to an unrelated dashboard page stays cheap.
+    """
+    prices = market_prices_frame(
+        session, symbols or DEFAULT_SYMBOLS, source_policy=market_price_source_policy()
+    )
+    warnings = build_data_quality_warnings(prices)
+    return {
+        "status": build_analysis_status(prices, warnings),
+        "warnings": warnings,
+    }
+
+
 def build_data_quality_warnings(
     prices: pd.DataFrame,
     stale_after_days: int | None = None,
@@ -197,10 +213,13 @@ def build_data_quality_warnings(
 def build_analysis_status(prices: pd.DataFrame, warnings: list[dict], settings: Settings | None = None) -> dict:
     """Create a display-safe summary of analysis mode, freshness, and quality."""
     settings = settings or get_settings()
+    display_source_policy = (
+        "demo_only" if settings.market_data_mode == "demo" else SOURCE_POLICY_VERSION
+    )
     if prices.empty:
         return {
             "mode": settings.market_data_mode,
-            "source_policy": SOURCE_POLICY_VERSION,
+            "source_policy": display_source_policy,
             "period_start": None,
             "period_end": None,
             "latest_fetched_at": None,
@@ -212,7 +231,7 @@ def build_analysis_status(prices: pd.DataFrame, warnings: list[dict], settings: 
     bases = sorted(str(value) for value in prices.get("price_basis", pd.Series(dtype=str)).dropna().unique())
     return {
         "mode": settings.market_data_mode,
-        "source_policy": SOURCE_POLICY_VERSION,
+        "source_policy": display_source_policy,
         "period_start": price_time.min().to_pydatetime() if not price_time.empty else None,
         "period_end": price_time.max().to_pydatetime() if not price_time.empty else None,
         "latest_fetched_at": fetched.max().to_pydatetime() if not fetched.empty else None,

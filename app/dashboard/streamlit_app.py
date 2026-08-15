@@ -6,11 +6,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from app.analysis.fundamentals import derive_fundamental_metrics
-from app.analysis.virtual_trading import (
-    build_virtual_trades,
-    generate_demo_phase4_data,
-    simulate_virtual_account,
-)
+from app.analysis.demo_portfolio import run_demo_portfolio_environment
 from app.database.repositories import (
     latest_correlation_results,
     latest_fetch_logs,
@@ -21,8 +17,9 @@ from app.database.session import SessionLocal
 from app.core.config import get_settings
 from app.services.analysis_service import (
     DEFAULT_SYMBOLS,
-    load_market_analysis,
     build_analysis_status,
+    load_market_analysis,
+    load_market_status,
     load_movement_and_virtual_trade_analysis,
     load_short_term_analysis,
     load_us_japan_spillover_analysis,
@@ -116,30 +113,66 @@ def load_etf_metrics_data(symbol: str) -> pd.DataFrame:
         return load_etf_metric_snapshots(session, symbol)
 
 
+@st.cache_data(ttl=300)
+def load_status_data() -> dict:
+    with SessionLocal() as session:
+        return load_market_status(session, DEFAULT_SYMBOLS)
+
+
+@st.cache_data
+def load_demo_portfolio() -> dict:
+    return run_demo_portfolio_environment()
+
+
+PAGE_OPTIONS = [
+    "市場ダッシュボード",
+    "短期分析",
+    "銘柄・ETF分析",
+    "変動候補",
+    "仮想投資評価",
+    "市場連動性",
+    "日米波及分析",
+    "システム管理",
+]
+
+
 st.title("Market Signal Lab")
 st.caption("短期取引と中期投資の判断材料を整理する分析アプリです。自動売買や投資助言は行いません。")
-if get_settings().market_data_mode == "demo":
+settings = get_settings()
+is_demo = settings.market_data_mode == "demo"
+if is_demo:
     st.warning("デモモード: 合成データのみを表示しています。投資判断には使用できません。")
 
-tab_market, tab_short, tab_screening, tab_candidates, tab_virtual, tab_correlation, tab_spillover, tab_system = st.tabs(
-    [
-        "市場ダッシュボード",
-        "短期分析",
-        "銘柄・ETF分析",
-        "変動候補",
-        "仮想投資評価",
-        "市場連動性",
-        "日米波及分析",
-        "システム管理",
-    ]
+active_page = st.radio(
+    "表示画面",
+    PAGE_OPTIONS,
+    index=PAGE_OPTIONS.index("仮想投資評価") if is_demo else 0,
+    horizontal=True,
+    label_visibility="collapsed",
+    key="active_page",
 )
 
-analysis = load_data()
-wide = analysis["wide"]
-normalized = analysis["normalized"]
-prices = analysis["prices"]
-data_quality_warnings = analysis["data_quality_warnings"]
-analysis_status = build_analysis_status(prices, data_quality_warnings)
+analysis = load_data() if active_page in {"市場ダッシュボード", "市場連動性"} else None
+if analysis is not None:
+    analysis_status = build_analysis_status(analysis["prices"], analysis["data_quality_warnings"])
+    data_quality_warnings = analysis["data_quality_warnings"]
+elif is_demo and active_page == "仮想投資評価":
+    analysis_status = {
+        "mode": "demo",
+        "source_policy": "demo_only",
+        "period_start": None,
+        "period_end": None,
+        "latest_fetched_at": None,
+        "price_bases": ["synthetic_demo"],
+        "warning_count": 1,
+    }
+    data_quality_warnings = [
+        {"message": "合成価格・合成ニュースだけを使用する検証画面です。実データではありません。"}
+    ]
+else:
+    status_data = load_status_data()
+    analysis_status = status_data["status"]
+    data_quality_warnings = status_data["warnings"]
 
 with st.expander("データ品質・分析の現在地", expanded=True):
     status_cols = st.columns(4)
@@ -156,7 +189,10 @@ with st.expander("データ品質・分析の現在地", expanded=True):
         for warning in data_quality_warnings:
             st.warning(warning["message"])
 
-with tab_market:
+if active_page == "市場ダッシュボード":
+    wide = analysis["wide"]
+    normalized = analysis["normalized"]
+    prices = analysis["prices"]
     if wide.empty:
         st.warning("実データがありません。FREDまたはJ-Quantsの収集ジョブを実行してください。")
     else:
@@ -207,7 +243,7 @@ with tab_market:
             use_container_width=True,
         )
 
-with tab_short:
+if active_page == "短期分析":
     st.subheader("短期分析")
     selected_symbol = st.selectbox("対象", DEFAULT_SYMBOLS, index=0)
     short = load_short_data(selected_symbol)
@@ -288,7 +324,7 @@ with tab_short:
         )
         st.caption(f"データソース: {short.get('source', '-')} / 最終取得: {format_jst(short.get('fetched_at'))}")
 
-with tab_screening:
+if active_page == "銘柄・ETF分析":
     st.subheader("銘柄・ETFスクリーニング")
     st.caption("観測済みの価格データから技術指標を比較します。財務値や将来価格は推測せず、投資推奨は行いません。")
     st.warning(
@@ -377,7 +413,7 @@ with tab_screening:
                 st.dataframe(etf_metrics, use_container_width=True)
                 st.caption("取得済みの提供元データのみ表示しています。")
 
-with tab_candidates:
+if active_page == "変動候補":
     st.subheader("大きく動きそうな日本株・ETF候補")
     st.caption(
         "米国指数と日経平均の相関、市場の直近変動、個別銘柄の短期指標、過去の仮想投資フィードバックから候補を抽出します。投資助言ではありません。"
@@ -439,91 +475,129 @@ with tab_candidates:
         with st.expander("データ不足で評価できない銘柄"):
             st.dataframe(insufficient, use_container_width=True)
 
-with tab_virtual:
+if active_page == "仮想投資評価":
     st.subheader("仮想投資評価")
     st.caption("実際の投資や注文は行いません。過去時点で候補に出たと仮定し、一定営業日後の損益と理由を検証します。")
-    if get_settings().market_data_mode == "demo":
-        st.warning("検証用デモ: 合成データで画面と計算処理を確認しています。実績・予測・投資判断には使用できません。")
-        if st.button("デモ仮想投資を実行", type="primary"):
-            demo_index, demo_japan = generate_demo_phase4_data()
-            demo_accounts = {
-                "短期（5営業日）": simulate_virtual_account(
-                    build_virtual_trades(demo_index, demo_japan, score_threshold=50, holding_days=5),
-                    account_name="short_term",
-                ),
-                "中期（20営業日）": simulate_virtual_account(
-                    build_virtual_trades(demo_index, demo_japan, score_threshold=50, holding_days=20),
-                    account_name="mid_term",
-                ),
-            }
-            st.session_state["demo_virtual_accounts"] = demo_accounts
-        demo_accounts = st.session_state.get("demo_virtual_accounts")
-        if demo_accounts:
-            st.caption("合成データによる検証結果です。実際の投資成績ではありません。")
-            account_columns = st.columns(2)
-            for column, (label, account) in zip(account_columns, demo_accounts.items(), strict=True):
-                pnl = account["realized_pnl"]
-                column.metric(label, f"¥{account['equity']:,.0f}", f"{pnl:+,.0f}円")
-                ledger = account["trades"]
-                column.caption(f"取引件数: {len(ledger)} / 初期資金: ¥{account['initial_cash']:,.0f}")
-                if not ledger.empty:
-                    column.dataframe(
-                        ledger[["symbol", "signal_date", "exit_date", "quantity", "realized_pnl"]],
-                        use_container_width=True,
-                        hide_index=True,
-                    )
+    if is_demo:
+        st.warning(
+            "検証用デモ: 合成価格・合成ニュースだけで計算します。実績、予測、投資判断には使用できません。"
+        )
+        if st.button("短期・中期のデモ仮想口座を実行", type="primary"):
+            st.session_state["demo_portfolio_environment"] = load_demo_portfolio()
+        demo_environment = st.session_state.get("demo_portfolio_environment")
+        if demo_environment:
+            assumptions = demo_environment["assumptions"]
+            st.caption(demo_environment["warning"])
+            st.info(
+                "約定仮定: "
+                f"{assumptions['execution_rule']} / 手数料 {assumptions['fee_rate']:.2%} / "
+                f"スプレッド {assumptions['spread_rate']:.2%} / 税率 {assumptions['tax_rate']:.1%} / "
+                f"売買単位 {assumptions['lot_size']}株 / 同時保有上限 {assumptions['maximum_positions']}銘柄"
+            )
+            for account in demo_environment["accounts"].values():
+                st.markdown(f"### {account['label']}口座")
+                metrics = st.columns(6)
+                metrics[0].metric("初期資金", f"¥{account['initial_cash']:,.0f}")
+                metrics[1].metric("現金", f"¥{account['cash']:,.0f}")
+                metrics[2].metric("評価額", f"¥{account['equity']:,.0f}")
+                metrics[3].metric("実現損益", f"¥{account['realized_pnl']:+,.0f}")
+                metrics[4].metric("未実現損益", f"¥{account['unrealized_pnl']:+,.0f}")
+                metrics[5].metric("最大ドローダウン", format_percent(account["maximum_drawdown"]))
+
+                snapshots = account["snapshots"].copy()
+                if not snapshots.empty:
+                    balance = snapshots.set_index("date")[["equity"]].rename(columns={"equity": "口座残高"})
+                    st.line_chart(balance)
+
+                positions = account["positions"]
+                if positions.empty:
+                    st.caption("現在の仮想保有はありません。")
+                else:
+                    with st.expander("現在の仮想保有", expanded=True):
+                        st.dataframe(positions, use_container_width=True, hide_index=True)
+
+                transactions = account["transactions"].copy()
+                with st.expander(f"取引履歴（{len(transactions)}件）"):
+                    if transactions.empty:
+                        st.info("取引条件に一致する仮想取引はありません。")
+                    else:
+                        st.dataframe(
+                            transactions[
+                                [
+                                    "date",
+                                    "action",
+                                    "symbol",
+                                    "quantity",
+                                    "execution_price",
+                                    "realized_pnl",
+                                    "reason",
+                                    "decision_as_of",
+                                ]
+                            ],
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+
+                latest_signals = account["latest_signals"].copy()
+                if not latest_signals.empty:
+                    with st.expander("直近の検証用シグナル"):
+                        latest_signals["reasons"] = latest_signals["reasons"].map(format_reason_list)
+                        latest_signals["news_headlines"] = latest_signals["news_headlines"].map(
+                            format_reason_list
+                        )
+                        st.dataframe(latest_signals, use_container_width=True, hide_index=True)
     else:
         st.info("通常モードでは、各銘柄について東証カレンダー上で最新から連続する30営業日以上の有効な調整済み履歴がそろうまで仮想評価を生成しません。")
-    threshold = st.slider("仮想エントリーの最低スコア", min_value=50, max_value=90, value=70, step=5)
-    holding_days = st.selectbox("仮想保有期間", [1, 5, 10, 20], index=1)
-    virtual_data = load_movement_data(score_threshold=threshold, holding_days=holding_days)
-    trades = virtual_data["virtual_trades"]
-    feedback = virtual_data["virtual_feedback"]
-    st.caption("仮想投資の成績は銘柄別に集計され、変動候補画面のフィードバック指標として次回の抽出に反映されます。")
-    if trades.empty:
-        st.warning("仮想投資評価に必要な履歴データが不足しています。東証カレンダー上で最新から連続する30営業日以上の日本株・ETFデータが必要です。")
-    else:
-        summary_cols = st.columns(4)
-        summary_cols[0].metric("仮想件数", len(trades))
-        summary_cols[1].metric("平均損益", format_percent(trades["return"].mean()))
-        summary_cols[2].metric("勝率", format_percent((trades["return"] > 0).mean()))
-        summary_cols[3].metric("最大損益", format_percent(trades["return"].max()))
+        threshold = st.slider("仮想エントリーの最低スコア", min_value=50, max_value=90, value=70, step=5)
+        holding_days = st.selectbox("仮想保有期間", [1, 5, 10, 20], index=1)
+        virtual_data = load_movement_data(score_threshold=threshold, holding_days=holding_days)
+        trades = virtual_data["virtual_trades"]
+        feedback = virtual_data["virtual_feedback"]
+        st.caption("仮想投資の成績は銘柄別に集計され、変動候補画面のフィードバック指標として次回の抽出に反映されます。")
+        if trades.empty:
+            st.warning("仮想投資評価に必要な履歴データが不足しています。東証カレンダー上で最新から連続する30営業日以上の日本株・ETFデータが必要です。")
+        else:
+            summary_cols = st.columns(4)
+            summary_cols[0].metric("仮想件数", len(trades))
+            summary_cols[1].metric("平均損益", format_percent(trades["return"].mean()))
+            summary_cols[2].metric("勝率", format_percent((trades["return"] > 0).mean()))
+            summary_cols[3].metric("最大損益", format_percent(trades["return"].max()))
 
-        view = trades.copy()
-        view["signal_date"] = view["signal_date"].map(lambda value: pd.to_datetime(value).strftime("%Y-%m-%d"))
-        view["exit_date"] = view["exit_date"].map(lambda value: pd.to_datetime(value).strftime("%Y-%m-%d"))
-        view["return"] = view["return"].map(format_percent)
-        view["entry_reasons"] = view["entry_reasons"].map(format_reason_list)
-        view["outcome_reasons"] = view["outcome_reasons"].map(format_reason_list)
-        st.dataframe(
-            view[
-                [
-                    "signal_date",
-                    "exit_date",
-                    "symbol",
-                    "name",
-                    "score",
-                    "direction",
-                    "return",
-                    "outcome",
-                    "entry_reasons",
-                    "outcome_reasons",
-                ]
-            ],
-            use_container_width=True,
-        )
+            view = trades.copy()
+            view["signal_date"] = view["signal_date"].map(lambda value: pd.to_datetime(value).strftime("%Y-%m-%d"))
+            view["exit_date"] = view["exit_date"].map(lambda value: pd.to_datetime(value).strftime("%Y-%m-%d"))
+            view["return"] = view["return"].map(format_percent)
+            view["entry_reasons"] = view["entry_reasons"].map(format_reason_list)
+            view["outcome_reasons"] = view["outcome_reasons"].map(format_reason_list)
+            st.dataframe(
+                view[
+                    [
+                        "signal_date",
+                        "exit_date",
+                        "symbol",
+                        "name",
+                        "score",
+                        "direction",
+                        "return",
+                        "outcome",
+                        "entry_reasons",
+                        "outcome_reasons",
+                    ]
+                ],
+                use_container_width=True,
+            )
 
-        if feedback:
-            with st.expander("候補抽出に戻すフィードバック集計"):
-                feedback_view = pd.DataFrame(
-                    [{"symbol": symbol, **values} for symbol, values in feedback.items()]
-                )
-                feedback_view["win_rate"] = feedback_view["win_rate"].map(format_percent)
-                feedback_view["average_return"] = feedback_view["average_return"].map(format_percent)
-                feedback_view["large_move_rate"] = feedback_view["large_move_rate"].map(format_percent)
-                st.dataframe(feedback_view, use_container_width=True)
+            if feedback:
+                with st.expander("候補抽出に戻すフィードバック集計"):
+                    feedback_view = pd.DataFrame(
+                        [{"symbol": symbol, **values} for symbol, values in feedback.items()]
+                    )
+                    feedback_view["win_rate"] = feedback_view["win_rate"].map(format_percent)
+                    feedback_view["average_return"] = feedback_view["average_return"].map(format_percent)
+                    feedback_view["large_move_rate"] = feedback_view["large_move_rate"].map(format_percent)
+                    st.dataframe(feedback_view, use_container_width=True)
 
-with tab_correlation:
+if active_page == "市場連動性":
     st.subheader("NASDAQ Composite 前営業日と日経平均 当日の対応")
     pair = analysis["pair"]
     if pair.empty:
@@ -560,7 +634,7 @@ with tab_correlation:
         st.dataframe(analysis["conditional_stats"], use_container_width=True)
         st.caption("統計的傾向の表示であり、将来の値動きや利益を保証するものではありません。")
 
-with tab_spillover:
+if active_page == "日米波及分析":
     st.subheader("米国前営業日から日本当日への波及")
     st.caption(
         "米国指数は前営業日の終値リターン、日本株・ETFは実際の始値・終値から算出した寄り付きギャップ・場中・日次リターンを対応させます。因果関係や将来の値動きを示すものではありません。"
@@ -695,7 +769,7 @@ with tab_spillover:
                 "保存するには `python jobs/run_spillover_analysis.py --jp-symbol <銘柄コード>` を実行します。欠損値は補完せず、始値・終値がある観測日のみ利用します。"
             )
 
-with tab_system:
+if active_page == "システム管理":
     with SessionLocal() as session:
         fetch_logs = latest_fetch_logs(session)
         job_runs = latest_job_runs(session)

@@ -6,11 +6,7 @@ from pathlib import Path
 from app.core.logging import configure_logging
 from app.database.session import SessionLocal
 from app.services.market_service import record_job
-from app.analysis.virtual_trading import (
-    build_virtual_trades,
-    generate_demo_phase4_data,
-    simulate_virtual_account,
-)
+from app.analysis.demo_portfolio import run_demo_portfolio_environment
 from app.core.config import get_settings
 
 
@@ -31,37 +27,41 @@ def main() -> None:
     if args.demo:
         if get_settings().market_data_mode != "demo":
             raise SystemExit("Synthetic backtest is demo-only. Set MARKET_DATA_MODE=demo.")
-        index_prices, japan_prices = generate_demo_phase4_data()
-        short_trades = build_virtual_trades(index_prices, japan_prices, score_threshold=50, holding_days=5, min_observations=30)
-        mid_trades = build_virtual_trades(index_prices, japan_prices, score_threshold=50, holding_days=20, min_observations=30)
-        result = {
-            "mode": "demo_only",
-            "warning": "合成データによる検証用であり、投資判断・実績には使用しません。",
-            "short_term": simulate_virtual_account(short_trades, account_name="short_term"),
-            "mid_term": simulate_virtual_account(mid_trades, account_name="mid_term"),
-        }
+        result = run_demo_portfolio_environment()
         if args.ledger_path:
             path = Path(args.ledger_path)
             path.parent.mkdir(parents=True, exist_ok=True)
             serializable = {
-                account: {
-                    key: value
-                    for key, value in account_result.items()
-                    if key != "trades"
-                }
-                | {
-                    "trades": account_result["trades"].assign(
-                        signal_date=lambda frame: frame["signal_date"].astype(str),
-                        exit_date=lambda frame: frame["exit_date"].astype(str),
-                    ).to_dict(orient="records")
-                }
-                for account, account_result in result.items()
-                if account in {"short_term", "mid_term"}
+                "mode": result["mode"],
+                "warning": result["warning"],
+                "assumptions": result["assumptions"],
+                "accounts": {
+                    account_name: {
+                        key: value.to_dict(orient="records")
+                        if hasattr(value, "to_dict")
+                        else value
+                        for key, value in account.items()
+                    }
+                    for account_name, account in result["accounts"].items()
+                },
             }
-            path.write_text(json.dumps(serializable, ensure_ascii=False, indent=2), encoding="utf-8")
-        result["short_term"].pop("trades", None)
-        result["mid_term"].pop("trades", None)
-        print(f"Phase-4 demo backtest summary: {result}")
+            path.write_text(
+                json.dumps(serializable, ensure_ascii=False, indent=2, default=str),
+                encoding="utf-8",
+            )
+        summary = {
+            account_name: {
+                "initial_cash": account["initial_cash"],
+                "cash": account["cash"],
+                "equity": account["equity"],
+                "realized_pnl": account["realized_pnl"],
+                "unrealized_pnl": account["unrealized_pnl"],
+                "maximum_drawdown": account["maximum_drawdown"],
+                "transactions": len(account["transactions"]),
+            }
+            for account_name, account in result["accounts"].items()
+        }
+        print(f"Phase-4 demo backtest summary: {summary}")
         return
     with SessionLocal() as session:
         details = {"status": "placeholder", "note": "Backtest engine module is ready for signal rules."}

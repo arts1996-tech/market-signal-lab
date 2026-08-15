@@ -4,7 +4,8 @@ import pandas as pd
 
 from app.analysis.market_calendar import calendar_gap_report, next_exchange_session
 from app.providers.fred import FredMarketProvider
-from app.services.analysis_service import build_data_quality_warnings
+from app.core.config import Settings
+from app.services.analysis_service import build_analysis_status, build_data_quality_warnings
 
 
 def test_fred_provider_exposes_phase1_common_interface():
@@ -51,6 +52,17 @@ def test_data_quality_warning_accepts_recent_price():
         stale_after_days=7,
         now=datetime(2026, 1, 10, tzinfo=UTC),
     )
+
+
+def test_analysis_status_labels_demo_source_policy_without_real_data_claims():
+    status = build_analysis_status(
+        pd.DataFrame(),
+        [{"status": "missing", "message": "demo"}],
+        settings=Settings(market_data_mode="demo"),
+    )
+
+    assert status["mode"] == "demo"
+    assert status["source_policy"] == "demo_only"
 
 
 def test_calendar_gap_report_detects_jpx_holiday_as_missing_session_only_when_expected():

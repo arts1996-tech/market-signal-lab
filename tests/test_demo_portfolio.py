@@ -1,0 +1,74 @@
+import pandas as pd
+import pytest
+
+from app.analysis.demo_portfolio import run_demo_portfolio_environment
+
+
+def test_demo_portfolio_uses_isolated_deterministic_inputs_and_accounts():
+    result = run_demo_portfolio_environment()
+    repeated = run_demo_portfolio_environment()
+
+    assert result["mode"] == "demo_only"
+    assert set(result["prices"]["source"]) == {"demo"}
+    assert result["prices"]["synthetic"].all()
+    assert set(result["news"]["source"]) == {"demo_scenario"}
+    assert result["news"]["synthetic"].all()
+    assert set(result["accounts"]) == {"short_term", "mid_term"}
+    assert result["assumptions"]["initial_cash_each"] == 2_500_000
+    assert result["assumptions"]["tax_rate"] == 0.0
+
+    for account_name, account in result["accounts"].items():
+        assert account["initial_cash"] == 2_500_000
+        assert account["account_name"] == account_name
+        assert account["cash"] >= 0
+        assert account["equity"] == pytest.approx(
+            account["cash"] + account["positions"].get("market_value", pd.Series(dtype=float)).sum()
+        )
+        assert account["equity"] == pytest.approx(repeated["accounts"][account_name]["equity"])
+
+
+def test_demo_portfolio_never_uses_execution_day_information_for_decisions():
+    result = run_demo_portfolio_environment()
+
+    for account in result["accounts"].values():
+        transactions = account["transactions"]
+        assert not transactions.empty
+        decision_times = pd.to_datetime(transactions["decision_as_of"], utc=True)
+        execution_times = pd.to_datetime(transactions["date"], utc=True)
+        assert (decision_times < execution_times).all()
+
+
+def test_demo_exit_labels_follow_conditions_instead_of_profit_sign():
+    result = run_demo_portfolio_environment()
+    expected_actions = {
+        "利益確定条件成立": "利益確定",
+        "損切り条件成立": "損切り",
+        "最大保有期間到達": "保有期限決済",
+        "ニュース・価格条件の悪化": "条件悪化決済",
+    }
+
+    exits = pd.concat(
+        [
+            account["transactions"].query("action != '仮想エントリー'")
+            for account in result["accounts"].values()
+        ],
+        ignore_index=True,
+    )
+    assert not exits.empty
+    assert {"利益確定条件成立", "損切り条件成立"}.issubset(set(exits["reason"]))
+    for row in exits.itertuples(index=False):
+        assert row.action == expected_actions[row.reason]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"initial_cash": 0},
+        {"fee_rate": -0.01},
+        {"spread_rate": -0.01},
+        {"lot_size": 0},
+    ],
+)
+def test_demo_portfolio_rejects_invalid_execution_assumptions(kwargs):
+    with pytest.raises(ValueError):
+        run_demo_portfolio_environment(**kwargs)
