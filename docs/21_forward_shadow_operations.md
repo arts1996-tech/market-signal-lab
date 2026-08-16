@@ -6,7 +6,7 @@
 `com.arts1996.market-signal-lab-forward-shadow`が、平日18:30、20:30、22:30に
 `jobs/run_forward_shadow.py --daily --not-before-jst 18:30`を呼ぶ。
 
-当日時点シグナル、短期・中期各250万円の口座状態引継ぎ、追記専用台帳、欠測監視を完成させる作業は`docs/22_current_priority_todo.md`のNOW-P0を正本とする。
+当日時点シグナルを過去評価から分ける`NOW-P0-1`は完了した。短期・中期各250万円の口座状態引継ぎ、追記専用台帳、遅延研究／現在判断の分離、欠測監視は`docs/22_current_priority_todo.md`の`NOW-P0-2`以降を正本とする。
 
 - ログイン時にも呼び出すが、JST 18:30より前は正常終了して保存しない。
 - 東証非営業日は保存しない。

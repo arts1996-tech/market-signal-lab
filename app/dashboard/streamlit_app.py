@@ -639,6 +639,61 @@ if active_page == "仮想投資評価":
         trades = virtual_data["virtual_trades"]
         feedback = virtual_data["virtual_feedback"]
         virtual_account = virtual_data["virtual_account"]
+        signal_generation = virtual_data["signal_generation"]
+        st.markdown("### 指定時点の判断（過去評価から分離）")
+        st.warning(
+            "この欄は判断時刻以前に利用可能だった価格だけで生成します。"
+            "J-Quants Freeの遅延価格を使うため、現在の買い判断ではなく研究用です。"
+            "将来リターン・決済価格・結果ラベルは入力していません。"
+        )
+        signal_summary = signal_generation["summary"]
+        signal_cols = st.columns(4)
+        signal_cols[0].metric("判定状態", signal_generation["observation_status"])
+        signal_cols[1].metric("買い候補", signal_summary["eligible_signals"])
+        signal_cols[2].metric("判断・見送り", signal_summary["decisions"])
+        signal_cols[3].metric("データ不足", signal_summary["insufficient"])
+        st.caption(
+            f"判断時刻: {format_jst(signal_generation['decision_at'])} / "
+            f"生成ルール版: {signal_generation['generation_version']}"
+        )
+        point_in_time_decisions = signal_generation["decisions"].copy()
+        if point_in_time_decisions.empty:
+            st.info("対象価格がなく、銘柄別判断を生成できませんでした。")
+        else:
+            point_in_time_decisions["decision_at"] = point_in_time_decisions[
+                "decision_at"
+            ].map(format_jst)
+            point_in_time_decisions["data_as_of"] = point_in_time_decisions[
+                "data_as_of"
+            ].map(format_jst)
+            point_in_time_decisions["reasons"] = point_in_time_decisions["reasons"].map(
+                format_reason_list
+            )
+            point_in_time_decisions["quality_warnings"] = point_in_time_decisions[
+                "quality_warnings"
+            ].map(format_reason_list)
+            with st.expander("指定時点の判断・見送り・データ不足", expanded=True):
+                st.dataframe(
+                    point_in_time_decisions[
+                        [
+                            "decision_at",
+                            "data_as_of",
+                            "symbol",
+                            "name",
+                            "decision",
+                            "status",
+                            "reason_code",
+                            "score",
+                            "direction",
+                            "reasons",
+                            "quality_warnings",
+                        ]
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+        st.markdown("### 将来結果を使った過去評価")
         st.caption(
             "仮想投資の成績は未較正の参考統計として表示します。"
             "少数標本による誤調整を避けるため、候補スコアには反映しません。"
@@ -703,13 +758,13 @@ if active_page == "仮想投資評価":
                     for column in ["reasons", "counterarguments", "quality_warnings"]:
                         cards[column] = cards[column].map(format_reason_list)
                     st.dataframe(cards, use_container_width=True, hide_index=True)
-                if st.button("現在の実データ評価を前向き観察として保存"):
+                if st.button("過去評価を研究スナップショットとして保存"):
                     path = write_forward_shadow_snapshot(
                         Path("data/forward_shadow/live_long_only"),
                         virtual_account,
                         as_of=datetime.now(UTC),
                     )
-                    st.success(f"実注文なしの観察記録を保存しました: {path}")
+                    st.success(f"遅延価格による研究記録を保存しました: {path}")
 
             view = trades.copy()
             view["signal_date"] = view["signal_date"].map(lambda value: pd.to_datetime(value).strftime("%Y-%m-%d"))

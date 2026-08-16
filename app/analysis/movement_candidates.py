@@ -97,6 +97,7 @@ def build_movement_candidates(
                 {
                     "symbol": symbol,
                     "name": name,
+                    "data_as_of": ordered.index.max() if not ordered.empty else None,
                     "observations": contiguous_observations,
                     "total_observations": total_observations,
                     "reason": "latest_contiguous_sessions_below_minimum",
@@ -119,6 +120,7 @@ def build_movement_candidates(
             {
                 "symbol": symbol,
                 "name": name,
+                "data_as_of": row.name,
                 "score": score,
                 "direction": direction,
                 "latest_close": float(row["close"]),

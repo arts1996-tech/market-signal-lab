@@ -15,12 +15,13 @@ from app.analysis.correlation import (
     rolling_correlation,
     us_japan_pair_frame,
 )
+from app.analysis.fundamentals import fundamentals_as_of
 from app.analysis.movement_candidates import build_movement_candidates
 from app.analysis.regression import rolling_ols, run_granger_test, run_ols, walk_forward_ols
 from app.analysis.spillover import TARGET_METRICS, spillover_conditional_stats, us_japan_spillover_frame
 from app.analysis.sensitivity import sector_sensitivity
 from app.analysis.screening import SCREENING_MIN_HISTORY, screen_assets
-from app.analysis.fundamentals import fundamentals_as_of
+from app.analysis.signal_generation import generate_signals_as_of
 from app.analysis.technical import short_term_indicator_frame, short_term_signal_snapshot
 from app.analysis.virtual_trading import (
     build_virtual_trades,
@@ -804,6 +805,7 @@ def load_movement_and_virtual_trade_analysis(
     virtual_trade_limit: int = 50,
     score_threshold: int = 70,
     holding_days: int = 5,
+    signal_as_of=None,
 ) -> dict:
     index_prices = market_prices_frame(
         session, DEFAULT_SYMBOLS, source_policy=market_price_source_policy()
@@ -895,11 +897,20 @@ def load_movement_and_virtual_trade_analysis(
         limit=candidate_limit,
         feedback_by_symbol=feedback,
     )
+    signal_generation = generate_signals_as_of(
+        index_prices,
+        japan_prices,
+        as_of=signal_as_of or datetime.now(UTC),
+        score_threshold=score_threshold,
+        limit=candidate_limit,
+        maximum_holding_days=holding_days,
+    )
     return {
         "index_prices": index_prices,
         "japan_prices": japan_prices,
         "asset_count": len(japan_symbols),
         "movement": candidates,
+        "signal_generation": signal_generation,
         "virtual_trades": virtual_trades,
         "virtual_signals": virtual_signals,
         "virtual_feedback": feedback,

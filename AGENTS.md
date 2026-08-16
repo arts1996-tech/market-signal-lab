@@ -397,6 +397,7 @@ docker compose run --rm app pytest
 - 同日ユーザー承認を受け、Macの`~/Library/LaunchAgents/com.arts1996.market-signal-lab-forward-shadow.plist`へ登録した。月〜金18:30にDocker経由で`jobs/run_forward_shadow.py --daily`を実行する。試運転は終了コード0で非営業日スキップを確認済み。Docker Desktop停止中は実行できないため、最初の実営業日後に`logs/forward-shadow-launchd*.log`と`data/forward_shadow/`を確認する。ラズパイには配置していない。
 - Mac暫定運用はログイン時（18:30以降のみ）と平日18:30・20:30・22:30の再試行へ変更した。当日保存済みならDB取得前に終了する。将来ラズパイを正式実行主体にする際は、`docs/21_forward_shadow_operations.md`に従ってMac LaunchAgentを停止し、ラズパイのsystemd timerへ一本化する。Macとラズパイを同時に正式運用せず、欠測を翌日のデータで後付け補完しない。
 - 2026-08-16の仕様・コード・ジョブ・画面・運用・テスト再監査結果を`docs/22_current_priority_todo.md`へ保存した。同文書を現行ToDoと再開順序の唯一の正本とし、`docs/17_remediation_todo.md`は完了済み是正履歴へ整理した。最優先はNOW-P0-1〜5であり、当日時点シグナル、短期・中期各250万円の継続口座、追記専用台帳、遅延研究／現在判断の分離、前向き記録監視をMacの合成データで完成させる。現行LaunchAgentの出力は遅延価格の研究スナップショットで、正式な6〜12か月の前向き期間へ算入しない。通常`run_backtest.py`と`run_mid_term_analysis.py`のplaceholder、財務表示、全銘柄バッチ、企業行動、上場廃止、為替、検証、監査、既存分析残、セキュリティ・運用課題も同文書へ漏れなく統合した。
+- 2026-08-16に`NOW-P0-1`をMacで完了した。`generate_signals_as_of`境界は判断時刻以前の`price_time`と`available_at`だけを使用し、買い候補・待機・データ不足を、将来リターン・決済価格・結果ラベルなしで生成する。通常画面では将来結果を使う過去評価と別欄に表示する。Docker上の全181テスト成功を確認済み。次の最優先は`NOW-P0-2`であり、短期・中期各250万円の継続口座を実装する。
 
 ## 17. 完了報告の形式
 
