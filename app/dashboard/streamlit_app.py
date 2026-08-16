@@ -640,7 +640,25 @@ if active_page == "仮想投資評価":
         feedback = virtual_data["virtual_feedback"]
         virtual_account = virtual_data["virtual_account"]
         signal_generation = virtual_data["signal_generation"]
-        st.markdown("### 指定時点の判断（過去評価から分離）")
+        decision_track = signal_generation.get(
+            "decision_track", "delayed_historical"
+        )
+        decision_observation = signal_generation.get("decision_observation") or {
+            "quality_gate_status": "legacy_cache_unclassified",
+            "price_latest_session": None,
+            "data_delay_days": None,
+            "data_sources": [],
+            "quality_gate_reasons": [
+                "decision_track_metadata_missing_refresh_required"
+            ],
+            "input_hash": "legacy-cache-untracked",
+        }
+        track_label = (
+            "遅延研究（delayed_historical）"
+            if decision_track == "delayed_historical"
+            else "現在判断（current_market）"
+        )
+        st.markdown(f"### {track_label}の指定時点判断")
         st.warning(
             "この欄は判断時刻以前に利用可能だった価格だけで生成します。"
             "J-Quants Freeの遅延価格を使うため、現在の買い判断ではなく研究用です。"
@@ -654,7 +672,17 @@ if active_page == "仮想投資評価":
         signal_cols[3].metric("データ不足", signal_summary["insufficient"])
         st.caption(
             f"判断時刻: {format_jst(signal_generation['decision_at'])} / "
-            f"生成ルール版: {signal_generation['generation_version']}"
+            f"生成ルール版: {signal_generation['generation_version']} / "
+            f"系統: {decision_track} / "
+            f"品質: {decision_observation['quality_gate_status']} / "
+            f"価格最終日: {decision_observation['price_latest_session'] or '-'} / "
+            f"遅延: {decision_observation['data_delay_days'] if decision_observation['data_delay_days'] is not None else '-'}営業日 / "
+            f"取得元: {', '.join(decision_observation['data_sources']) or '-'}"
+        )
+        st.caption(
+            "品質理由: "
+            + (" / ".join(decision_observation["quality_gate_reasons"]) or "なし")
+            + f" / 入力ハッシュ: {decision_observation['input_hash'][:12]}…"
         )
         point_in_time_decisions = signal_generation["decisions"].copy()
         if point_in_time_decisions.empty:
@@ -672,6 +700,20 @@ if active_page == "仮想投資評価":
             point_in_time_decisions["quality_warnings"] = point_in_time_decisions[
                 "quality_warnings"
             ].map(format_reason_list)
+            if "quality_gate_reasons" not in point_in_time_decisions:
+                point_in_time_decisions["quality_gate_reasons"] = [
+                    decision_observation["quality_gate_reasons"]
+                    for _ in range(len(point_in_time_decisions))
+                ]
+            if "decision_track" not in point_in_time_decisions:
+                point_in_time_decisions["decision_track"] = decision_track
+            if "quality_gate_status" not in point_in_time_decisions:
+                point_in_time_decisions["quality_gate_status"] = (
+                    decision_observation["quality_gate_status"]
+                )
+            point_in_time_decisions["quality_gate_reasons"] = point_in_time_decisions[
+                "quality_gate_reasons"
+            ].map(format_reason_list)
             with st.expander("指定時点の判断・見送り・データ不足", expanded=True):
                 st.dataframe(
                     point_in_time_decisions[
@@ -681,8 +723,11 @@ if active_page == "仮想投資評価":
                             "symbol",
                             "name",
                             "decision",
+                            "decision_track",
                             "status",
                             "reason_code",
+                            "quality_gate_status",
+                            "quality_gate_reasons",
                             "score",
                             "direction",
                             "reasons",
@@ -697,8 +742,9 @@ if active_page == "仮想投資評価":
         st.info(
             "短期・中期はそれぞれ250万円から開始し、資金移動を行いません。"
             "追記専用DB台帳と再起動後の復元基盤まで実装済みです。"
-            "この画面は遅延研究データのため、DBへの自動日次記録は現在判断系統を分離する"
-            "NOW-P0-4の完了後に接続します。"
+            "Mac定期ジョブも遅延研究系統としてDBへ日次記録しますが、"
+            "現在判断や正式な前向き検証期間には算入しません。"
+            "欠測・再試行の運用監視はNOW-P0-5で追加します。"
         )
         forward_accounts = virtual_data["forward_accounts"]
         for account in forward_accounts["accounts"].values():

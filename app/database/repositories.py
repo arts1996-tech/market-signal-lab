@@ -604,7 +604,7 @@ def insert_virtual_account_daily_state(
         pg_insert(VirtualAccountDailyState)
         .values(id=state_id, **values)
         .on_conflict_do_nothing(
-            constraint="uq_virtual_account_daily_state_session"
+            constraint="uq_virtual_account_daily_state_track_session"
         )
         .returning(VirtualAccountDailyState.id)
     )
@@ -618,6 +618,7 @@ def insert_virtual_account_daily_state(
     state = session.scalar(
         select(VirtualAccountDailyState).where(
             VirtualAccountDailyState.account_id == values["account_id"],
+            VirtualAccountDailyState.decision_track == values["decision_track"],
             VirtualAccountDailyState.session_date == values["session_date"],
         )
     )
@@ -649,10 +650,14 @@ def insert_virtual_account_events(session: Session, rows: Iterable[dict]) -> int
 def latest_virtual_account_daily_state(
     session: Session,
     account_id: str,
+    decision_track: str,
 ) -> VirtualAccountDailyState | None:
     return session.scalar(
         select(VirtualAccountDailyState)
-        .where(VirtualAccountDailyState.account_id == account_id)
+        .where(
+            VirtualAccountDailyState.account_id == account_id,
+            VirtualAccountDailyState.decision_track == decision_track,
+        )
         .order_by(VirtualAccountDailyState.session_date.desc())
         .limit(1)
     )
@@ -674,11 +679,13 @@ def get_virtual_account_by_name(
 def virtual_account_daily_state_for_date(
     session: Session,
     account_id: str,
+    decision_track: str,
     session_date: date,
 ) -> VirtualAccountDailyState | None:
     return session.scalar(
         select(VirtualAccountDailyState).where(
             VirtualAccountDailyState.account_id == account_id,
+            VirtualAccountDailyState.decision_track == decision_track,
             VirtualAccountDailyState.session_date == session_date,
         )
     )

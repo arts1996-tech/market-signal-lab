@@ -6,7 +6,7 @@
 `com.arts1996.market-signal-lab-forward-shadow`が、平日18:30、20:30、22:30に
 `jobs/run_forward_shadow.py --daily --not-before-jst 18:30`を呼ぶ。
 
-当日時点シグナルを過去評価から分ける`NOW-P0-1`、短期・中期各250万円の独立口座状態を次回へ渡す`NOW-P0-2`、追記専用PostgreSQL台帳と再起動後の復元を行う`NOW-P0-3`はMac側で完了した。ただし既存のMac定期ジョブはまだ遅延研究JSONだけを保存し、新台帳へ自動記録しない。遅延研究／現在判断の分離と欠測監視は`docs/22_current_priority_todo.md`の`NOW-P0-4`以降を正本とする。
+当日時点シグナル、短期・中期各250万円の独立口座、追記専用PostgreSQL台帳、`delayed_historical`／`current_market`のデータ分離はMac側で完了した。Mac定期ジョブは18:30 JSTを同日再試行共通の判断時刻とし、遅延研究だけを短期・中期のDB台帳へ保存する。JSONは`data/forward_shadow/<account>/delayed_historical/YYYY-MM-DD.json`へDBから監査出力する。現在判断や正式な6〜12か月の前向き検証期間には算入しない。欠測・再試行・障害監視は`docs/22_current_priority_todo.md`の`NOW-P0-5`を正本とする。
 
 - ログイン時にも呼び出すが、JST 18:30より前は正常終了して保存しない。
 - 東証非営業日は保存しない。

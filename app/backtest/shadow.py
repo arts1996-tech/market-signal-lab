@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 import json
 from pathlib import Path
@@ -14,6 +14,8 @@ def _serializable(value: Any) -> Any:
         return value.isoformat()
     if isinstance(value, datetime):
         return value.astimezone(UTC).isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
     if isinstance(value, Decimal):
         return float(value)
     if isinstance(value, dict):
@@ -58,10 +60,12 @@ def write_forward_shadow_snapshot(
     )
     payload = {
         "record_type": "forward_shadow_snapshot",
+        "decision_track": result.get("decision_track", "delayed_historical"),
         "observed_at": observed_at.isoformat(),
         "observation_date_jst": observation_date,
         "observation_cadence": "daily" if daily else "point_in_time",
         "observation_status": result.get("observation_status", "evaluated"),
+        "decision_observation": result.get("decision_observation", {}),
         "warning": "仮想記録です。実注文・投資助言・利益保証ではありません。",
         "manifest": manifest,
         "metrics": result.get("metrics", {}),

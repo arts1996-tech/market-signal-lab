@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import date
 from pathlib import Path
 import json
 from typing import Any
@@ -12,6 +12,7 @@ from app.backtest.audit import json_value, stable_payload_hash
 from app.backtest.forward_account import advance_forward_accounts_as_of
 from app.backtest.ohlc import MarketImpactAssumptions, PortfolioRiskRules
 from app.backtest.portfolio import ExecutionAssumptions
+from app.analysis.decision_tracks import DECISION_TRACK_CURRENT, DECISION_TRACKS
 from app.database.repositories import (
     get_or_create_virtual_account,
     get_virtual_account_by_name,
@@ -49,15 +50,38 @@ def _records(value: Any) -> list[dict]:
     return json_value(list(value))
 
 
+def _validated_observation(observation: dict) -> dict:
+    required = {
+        "decision_track",
+        "observed_at",
+        "price_latest_session",
+        "data_delay_days",
+        "data_sources",
+        "input_hash",
+        "quality_gate_status",
+        "quality_gate_reasons",
+    }
+    missing = required.difference(observation)
+    if missing:
+        raise ValueError(f"decision observation missing fields: {sorted(missing)}")
+    if observation["decision_track"] not in DECISION_TRACKS:
+        raise ValueError(f"unsupported decision_track: {observation['decision_track']}")
+    if not str(observation["input_hash"]):
+        raise ValueError("decision observation input_hash is required")
+    return observation
+
+
 def build_virtual_account_daily_state(
     account: dict,
     *,
-    observed_at: Any,
+    observation: dict,
     decisions: pd.DataFrame | None = None,
 ) -> dict:
     """Build a deterministic, serializable state without its database account id."""
 
-    observed = _utc_timestamp(observed_at)
+    observation = _validated_observation(observation)
+    observed = _utc_timestamp(observation["observed_at"])
+    decision_track = str(observation["decision_track"])
     manifest = account.get("manifest") or {}
     run_id = str(manifest.get("run_id") or "")
     input_data_version = str(manifest.get("input_data_version") or "")
@@ -90,6 +114,7 @@ def build_virtual_account_daily_state(
     session_date = observed.tz_convert(JST).date()
     deterministic = {
         "account_name": account["account_name"],
+        "decision_track": decision_track,
         "session_date": session_date.isoformat(),
         "run_id": run_id,
         "input_data_version": input_data_version,
@@ -104,6 +129,9 @@ def build_virtual_account_daily_state(
         "pending_orders": pending_orders,
         "signal_history": signal_history,
         "decisions": decision_records,
+        "observation": json_value(
+            {key: value for key, value in observation.items() if key != "observed_at"}
+        ),
     }
     return {
         "account": {
@@ -115,11 +143,18 @@ def build_virtual_account_daily_state(
             "state_version": str(account["state_version"]),
         },
         "state": {
+            "decision_track": decision_track,
             "session_date": session_date,
             "observed_at": observed.to_pydatetime(),
             "last_market_session": (
                 None if last_market_session is None else _utc_timestamp(last_market_session).date()
             ),
+            "price_latest_session": observation["price_latest_session"],
+            "data_delay_days": observation["data_delay_days"],
+            "data_sources": list(observation["data_sources"]),
+            "quality_gate_status": str(observation["quality_gate_status"]),
+            "quality_gate_reasons": list(observation["quality_gate_reasons"]),
+            "observation_input_hash": str(observation["input_hash"]),
             "status": (
                 "risk_halted"
                 if account.get("risk_halted")
@@ -147,6 +182,7 @@ def build_virtual_account_daily_state(
                 "metrics": json_value(account.get("metrics", {})),
                 "account_rule": json_value(account.get("account_rule", {})),
                 "point_in_time_decisions": decision_records,
+                "decision_observation": json_value(observation),
                 "warning": "仮想記録です。実注文・投資助言・利益保証ではありません。",
             },
         },
@@ -156,6 +192,7 @@ def build_virtual_account_daily_state(
 def _ledger_event(
     *,
     account_name: str,
+    decision_track: str,
     session_date: date,
     event_type: str,
     event_at: Any,
@@ -165,6 +202,7 @@ def _ledger_event(
     serialized = json_value(payload)
     event_key = {
         "account_name": account_name,
+        "decision_track": decision_track,
         "session_date": session_date.isoformat(),
         "event_type": event_type,
         "event_at": _utc_timestamp(event_at).isoformat(),
@@ -172,6 +210,7 @@ def _ledger_event(
     }
     return {
         "event_id": stable_payload_hash(event_key),
+        "decision_track": decision_track,
         "session_date": session_date,
         "event_type": event_type,
         "event_at": _utc_timestamp(event_at).to_pydatetime(),
@@ -183,10 +222,12 @@ def _ledger_event(
 def build_virtual_account_events(
     account: dict,
     *,
-    observed_at: Any,
+    observation: dict,
     decisions: pd.DataFrame | None = None,
 ) -> list[dict]:
-    observed = _utc_timestamp(observed_at)
+    observation = _validated_observation(observation)
+    observed = _utc_timestamp(observation["observed_at"])
+    decision_track = str(observation["decision_track"])
     session_date = observed.tz_convert(JST).date()
     account_name = str(account["account_name"])
     manifest = account.get("manifest") or {}
@@ -205,6 +246,7 @@ def build_virtual_account_events(
         events.append(
             _ledger_event(
                 account_name=account_name,
+                decision_track=decision_track,
                 session_date=session_date,
                 event_type="decision",
                 event_at=event_at,
@@ -216,6 +258,7 @@ def build_virtual_account_events(
             events.append(
                 _ledger_event(
                     account_name=account_name,
+                    decision_track=decision_track,
                     session_date=session_date,
                     event_type="skip",
                     event_at=event_at,
@@ -230,6 +273,7 @@ def build_virtual_account_events(
             events.append(
                 _ledger_event(
                     account_name=account_name,
+                    decision_track=decision_track,
                     session_date=session_date,
                     event_type="planned_execution",
                     event_at=event_at,
@@ -245,6 +289,7 @@ def build_virtual_account_events(
         events.append(
             _ledger_event(
                 account_name=account_name,
+                decision_track=decision_track,
                 session_date=session_date,
                 event_type="execution",
                 event_at=event_at,
@@ -256,6 +301,7 @@ def build_virtual_account_events(
             events.append(
                 _ledger_event(
                     account_name=account_name,
+                    decision_track=decision_track,
                     session_date=session_date,
                     event_type="closure",
                     event_at=event_at,
@@ -270,6 +316,7 @@ def build_virtual_account_events(
             events.append(
                 _ledger_event(
                     account_name=account_name,
+                    decision_track=decision_track,
                     session_date=session_date,
                     event_type="skip",
                     event_at=event_at,
@@ -293,6 +340,7 @@ def build_virtual_account_events(
     events.append(
         _ledger_event(
             account_name=account_name,
+            decision_track=decision_track,
             session_date=session_date,
             event_type="daily_balance",
             event_at=observed,
@@ -307,17 +355,13 @@ def persist_forward_accounts(
     session: Session,
     result: dict,
     *,
+    observation: dict,
     decisions: pd.DataFrame | None = None,
-    observed_at: Any | None = None,
 ) -> dict:
     """Append both account states and their events in the caller's transaction."""
 
-    observation_value = observed_at
-    if observation_value is None:
-        observation_value = result.get("state_as_of")
-    if observation_value is None:
-        observation_value = datetime.now(UTC)
-    observed = _utc_timestamp(observation_value)
+    observation = _validated_observation(observation)
+    observed = _utc_timestamp(observation["observed_at"])
     accounts = result.get("accounts") or {}
     if set(accounts) != {"short_term", "mid_term"}:
         raise ValueError("forward ledger requires independent short_term and mid_term accounts")
@@ -325,7 +369,7 @@ def persist_forward_accounts(
     for account_name, account_state in accounts.items():
         payload = build_virtual_account_daily_state(
             account_state,
-            observed_at=observed,
+            observation=observation,
             decisions=decisions,
         )
         account = get_or_create_virtual_account(session, payload["account"])
@@ -341,7 +385,7 @@ def persist_forward_accounts(
                 account_state,
                 # A retry reuses the first frozen observation timestamp so the
                 # daily-balance event remains idempotent as well.
-                observed_at=daily_state.observed_at,
+                observation={**observation, "observed_at": daily_state.observed_at},
                 decisions=decisions,
             )
         ]
@@ -350,6 +394,7 @@ def persist_forward_accounts(
             "account_id": account.id,
             "daily_state_id": daily_state.id,
             "session_date": daily_state.session_date,
+            "decision_track": daily_state.decision_track,
             "created": created,
             "events_inserted": inserted_events,
             "input_data_version": daily_state.input_data_version,
@@ -363,7 +408,7 @@ def advance_and_persist_forward_accounts(
     signals: pd.DataFrame,
     prices: pd.DataFrame,
     *,
-    as_of: Any,
+    observation: dict,
     decisions: pd.DataFrame | None = None,
     assumptions: ExecutionAssumptions | None = None,
     market_impact: MarketImpactAssumptions | None = None,
@@ -371,11 +416,19 @@ def advance_and_persist_forward_accounts(
 ) -> dict:
     """Restore, advance and append both accounts in one caller-owned transaction."""
 
-    previous_states = load_latest_forward_account_states(session)
+    observation = _validated_observation(observation)
+    if (
+        observation["decision_track"] == DECISION_TRACK_CURRENT
+        and observation["quality_gate_status"] != "passed"
+    ):
+        raise ValueError("current_market account advancement requires a passed quality gate")
+    previous_states = load_latest_forward_account_states(
+        session, str(observation["decision_track"])
+    )
     result = advance_forward_accounts_as_of(
         signals,
         prices,
-        as_of=as_of,
+        as_of=observation["observed_at"],
         previous_states=previous_states or None,
         assumptions=assumptions,
         market_impact=market_impact,
@@ -384,18 +437,23 @@ def advance_and_persist_forward_accounts(
     result["ledger"] = persist_forward_accounts(
         session,
         result,
+        observation=observation,
         decisions=decisions,
-        observed_at=as_of,
     )
     return result
 
 
-def load_latest_forward_account_states(session: Session) -> dict[str, dict]:
+def load_latest_forward_account_states(
+    session: Session,
+    decision_track: str,
+) -> dict[str, dict]:
     """Restore the latest frozen states in the format accepted by the engine."""
 
+    if decision_track not in DECISION_TRACKS:
+        raise ValueError(f"unsupported decision_track: {decision_track}")
     restored: dict[str, dict] = {}
     for account in list_virtual_accounts(session):
-        state = latest_virtual_account_daily_state(session, account.id)
+        state = latest_virtual_account_daily_state(session, account.id, decision_track)
         if state is None:
             continue
         restored[account.account_name] = {
@@ -405,6 +463,7 @@ def load_latest_forward_account_states(session: Session) -> dict[str, dict]:
             "strategy_version": account.strategy_version,
             "state_version": account.state_version,
             "state_as_of": state.observed_at,
+            "decision_track": state.decision_track,
             "last_market_session": state.last_market_session,
             "cash": float(state.cash),
             "equity": float(state.equity),
@@ -426,6 +485,7 @@ def export_virtual_account_day(
     output_dir: str | Path,
     *,
     account_name: str,
+    decision_track: str,
     session_date: date,
 ) -> Path:
     """Export a DB-backed immutable audit copy; PostgreSQL remains authoritative."""
@@ -433,7 +493,11 @@ def export_virtual_account_day(
     account = get_virtual_account_by_name(session, account_name)
     if account is None:
         raise LookupError(f"virtual account not found: {account_name}")
-    state = virtual_account_daily_state_for_date(session, account.id, session_date)
+    if decision_track not in DECISION_TRACKS:
+        raise ValueError(f"unsupported decision_track: {decision_track}")
+    state = virtual_account_daily_state_for_date(
+        session, account.id, decision_track, session_date
+    )
     if state is None:
         raise LookupError(f"virtual account state not found: {account_name} {session_date}")
     events = virtual_account_events_for_state(session, state.id)
@@ -453,9 +517,16 @@ def export_virtual_account_day(
             column: getattr(state, column)
             for column in (
                 "id",
+                "decision_track",
                 "session_date",
                 "observed_at",
                 "last_market_session",
+                "price_latest_session",
+                "data_delay_days",
+                "data_sources",
+                "quality_gate_status",
+                "quality_gate_reasons",
+                "observation_input_hash",
                 "status",
                 "input_data_version",
                 "input_hash",
@@ -489,7 +560,7 @@ def export_virtual_account_day(
     serialized = json.dumps(
         json_value(payload), ensure_ascii=False, sort_keys=True, indent=2
     )
-    directory = Path(output_dir) / account_name
+    directory = Path(output_dir) / account_name / decision_track
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{session_date.isoformat()}.json"
     if path.exists():

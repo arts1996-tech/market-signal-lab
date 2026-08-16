@@ -2,6 +2,7 @@ import pandas as pd
 import pytest
 
 from app.analysis.market_calendar import exchange_calendar
+from app.analysis.decision_tracks import DECISION_TRACK_DELAYED
 from app.backtest.forward_account import advance_forward_accounts_as_of
 from app.backtest.ohlc import MarketImpactAssumptions, PortfolioRiskRules
 from app.backtest.portfolio import ExecutionAssumptions
@@ -87,6 +88,20 @@ def _advance(signals, prices, as_of, previous_states=None):
         market_impact=market_impact,
         risk_rules=risk_rules,
     )
+
+
+def _observation(as_of):
+    timestamp = pd.Timestamp(as_of)
+    return {
+        "decision_track": DECISION_TRACK_DELAYED,
+        "observed_at": timestamp,
+        "price_latest_session": timestamp.date(),
+        "data_delay_days": 0,
+        "data_sources": ["demo"],
+        "input_hash": "test-observation-input",
+        "quality_gate_status": "research_only",
+        "quality_gate_reasons": ["delayed_data_research_only"],
+    }
 
 
 def test_forward_accounts_start_with_independent_jpy_2_5m_balances():
@@ -219,10 +234,10 @@ def test_daily_ledger_hash_is_stable_across_same_day_observation_retries():
     account = result["accounts"]["short_term"]
 
     first = build_virtual_account_daily_state(
-        account, observed_at=dates[0] + pd.Timedelta(hours=9)
+        account, observation=_observation(dates[0] + pd.Timedelta(hours=9))
     )
     retried = build_virtual_account_daily_state(
-        account, observed_at=dates[0] + pd.Timedelta(hours=12)
+        account, observation=_observation(dates[0] + pd.Timedelta(hours=12))
     )
 
     assert first["state"]["session_date"] == retried["state"]["session_date"]
@@ -253,7 +268,7 @@ def test_daily_ledger_emits_decision_plan_skip_execution_closure_and_balance():
     first_types = {
         event["event_type"]
         for event in build_virtual_account_events(
-            first_account, observed_at=dates[0], decisions=decisions
+            first_account, observation=_observation(dates[0]), decisions=decisions
         )
     }
 
@@ -266,7 +281,7 @@ def test_daily_ledger_emits_decision_plan_skip_execution_closure_and_balance():
     third_types = {
         event["event_type"]
         for event in build_virtual_account_events(
-            third["accounts"]["short_term"], observed_at=dates[2]
+            third["accounts"]["short_term"], observation=_observation(dates[2])
         )
     }
 
@@ -281,5 +296,5 @@ def test_ledger_requires_both_independent_accounts_before_database_write():
         persist_forward_accounts(
             None,
             {"accounts": {"short_term": {}}},
-            observed_at=_sessions()[0],
+            observation=_observation(_sessions()[0]),
         )

@@ -289,11 +289,15 @@ class VirtualAccountDailyState(Base):
     __tablename__ = "virtual_account_daily_states"
     __table_args__ = (
         UniqueConstraint(
-            "account_id", "session_date", name="uq_virtual_account_daily_state_session"
+            "account_id",
+            "decision_track",
+            "session_date",
+            name="uq_virtual_account_daily_state_track_session",
         ),
         Index(
             "ix_virtual_account_daily_states_lookup",
             "account_id",
+            "decision_track",
             "session_date",
         ),
     )
@@ -302,9 +306,18 @@ class VirtualAccountDailyState(Base):
     account_id: Mapped[str] = mapped_column(
         UUID(as_uuid=False), ForeignKey("virtual_accounts.id"), nullable=False
     )
+    decision_track: Mapped[str] = mapped_column(String(32), nullable=False)
     session_date: Mapped[date] = mapped_column(Date, nullable=False)
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     last_market_session: Mapped[date | None] = mapped_column(Date)
+    price_latest_session: Mapped[date | None] = mapped_column(Date)
+    data_delay_days: Mapped[int | None] = mapped_column(Integer)
+    data_sources: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    quality_gate_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    quality_gate_reasons: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
+    observation_input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     input_data_version: Mapped[str] = mapped_column(String(64), nullable=False)
     input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -338,6 +351,7 @@ class VirtualAccountEvent(Base):
         Index(
             "ix_virtual_account_events_lookup",
             "account_id",
+            "decision_track",
             "session_date",
             "event_type",
         ),
@@ -350,6 +364,7 @@ class VirtualAccountEvent(Base):
     daily_state_id: Mapped[str] = mapped_column(
         UUID(as_uuid=False), ForeignKey("virtual_account_daily_states.id"), nullable=False
     )
+    decision_track: Mapped[str] = mapped_column(String(32), nullable=False)
     session_date: Mapped[date] = mapped_column(Date, nullable=False)
     event_id: Mapped[str] = mapped_column(String(64), nullable=False)
     event_type: Mapped[str] = mapped_column(String(32), nullable=False)

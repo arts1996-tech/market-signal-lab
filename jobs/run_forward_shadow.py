@@ -5,11 +5,17 @@ from pathlib import Path
 import pandas as pd
 
 from app.analysis.demo_portfolio import run_demo_portfolio_environment
+from app.analysis.decision_tracks import DECISION_TRACK_DELAYED
 from app.analysis.market_calendar import is_exchange_session
 from app.backtest.shadow import write_forward_shadow_snapshot
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.database.session import SessionLocal
+from app.services.forward_account_ledger import (
+    export_virtual_account_day,
+    load_latest_forward_account_states,
+    persist_forward_accounts,
+)
 from app.services.analysis_service import load_movement_and_virtual_trade_analysis
 
 
@@ -77,6 +83,14 @@ def daily_preflight_reason(
     return None
 
 
+def canonical_daily_decision_at(observed_at: pd.Timestamp) -> pd.Timestamp:
+    """Use one stable 18:30 JST decision timestamp across same-day retries."""
+
+    local = observed_at.tz_convert("Asia/Tokyo")
+    canonical = local.normalize() + pd.Timedelta(hours=18, minutes=30)
+    return canonical.tz_convert("UTC")
+
+
 def main() -> None:
     args = parse_args()
     configure_logging()
@@ -86,7 +100,14 @@ def main() -> None:
     else:
         observed_at = observed_at.tz_convert("UTC")
     settings = get_settings()
-    expected_accounts = ["short_term", "mid_term"] if args.demo else ["live_long_only"]
+    expected_accounts = (
+        ["short_term", "mid_term"]
+        if args.demo
+        else [
+            f"short_term/{DECISION_TRACK_DELAYED}",
+            f"mid_term/{DECISION_TRACK_DELAYED}",
+        ]
+    )
     if args.daily:
         reason = daily_preflight_reason(
             args.output_dir,
@@ -102,31 +123,49 @@ def main() -> None:
             raise SystemExit("Synthetic forward recording requires MARKET_DATA_MODE=demo.")
         environment = run_demo_portfolio_environment()
         accounts = environment["accounts"]
+        paths = [
+            write_forward_shadow_snapshot(
+                Path(args.output_dir) / account_name,
+                account,
+                as_of=observed_at,
+                daily=args.daily,
+            )
+            for account_name, account in accounts.items()
+        ]
     else:
         if settings.market_data_mode == "demo":
             raise SystemExit("Real-data forward recording is disabled in demo mode.")
+        decision_at = canonical_daily_decision_at(observed_at) if args.daily else observed_at
         with SessionLocal() as session:
+            previous_states = load_latest_forward_account_states(
+                session, DECISION_TRACK_DELAYED
+            )
             analysis = load_movement_and_virtual_trade_analysis(
                 session,
                 score_threshold=args.score_threshold,
                 holding_days=args.holding_days,
+                signal_as_of=decision_at,
+                previous_forward_states=previous_states or None,
+                decision_track=DECISION_TRACK_DELAYED,
             )
-        live_account = analysis["virtual_account"]
-        if analysis["virtual_signals"].empty:
-            live_account = {
-                **live_account,
-                "observation_status": "no_eligible_signals_or_data_quality_gate",
-            }
-        accounts = {"live_long_only": live_account}
-    paths = [
-        write_forward_shadow_snapshot(
-            Path(args.output_dir) / account_name,
-            account,
-            as_of=observed_at,
-            daily=args.daily,
-        )
-        for account_name, account in accounts.items()
-    ]
+            signal_generation = analysis["signal_generation"]
+            persisted = persist_forward_accounts(
+                session,
+                analysis["forward_accounts"],
+                observation=signal_generation["decision_observation"],
+                decisions=signal_generation["decisions"],
+            )
+            session.commit()
+            paths = [
+                export_virtual_account_day(
+                    session,
+                    args.output_dir,
+                    account_name=account_name,
+                    decision_track=DECISION_TRACK_DELAYED,
+                    session_date=record["session_date"],
+                )
+                for account_name, record in persisted["accounts"].items()
+            ]
     print("Forward-shadow snapshots:")
     for path in paths:
         print(path)

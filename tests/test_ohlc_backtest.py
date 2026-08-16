@@ -788,6 +788,7 @@ def test_forward_shadow_snapshot_is_idempotent_and_contains_warning(tmp_path):
     assert first == second
     payload = json.loads(first.read_text(encoding="utf-8"))
     assert "実注文" in payload["warning"]
+    assert payload["decision_track"] == "delayed_historical"
     assert payload["manifest"]["run_id"] == result["manifest"]["run_id"]
 
 

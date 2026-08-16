@@ -59,8 +59,18 @@ def test_virtual_account_ledger_has_freeze_and_event_idempotency_constraints():
     }
 
     assert "uq_virtual_accounts_account_name" in account_constraints
-    assert "uq_virtual_account_daily_state_session" in state_constraints
+    assert "uq_virtual_account_daily_state_track_session" in state_constraints
     assert "uq_virtual_account_event_id" in event_constraints
+    assert {
+        "decision_track",
+        "price_latest_session",
+        "data_delay_days",
+        "data_sources",
+        "quality_gate_status",
+        "quality_gate_reasons",
+        "observation_input_hash",
+    }.issubset(VirtualAccountDailyState.__table__.columns.keys())
+    assert "decision_track" in VirtualAccountEvent.__table__.columns
 
 
 def test_chunked_splits_large_payloads():

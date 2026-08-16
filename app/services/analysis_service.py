@@ -15,6 +15,10 @@ from app.analysis.correlation import (
     rolling_correlation,
     us_japan_pair_frame,
 )
+from app.analysis.decision_tracks import (
+    DECISION_TRACK_DELAYED,
+    prepare_decision_track_inputs,
+)
 from app.analysis.fundamentals import fundamentals_as_of
 from app.analysis.movement_candidates import build_movement_candidates
 from app.analysis.regression import rolling_ols, run_granger_test, run_ols, walk_forward_ols
@@ -808,6 +812,7 @@ def load_movement_and_virtual_trade_analysis(
     holding_days: int = 5,
     signal_as_of=None,
     previous_forward_states: dict[str, dict] | None = None,
+    decision_track: str = DECISION_TRACK_DELAYED,
 ) -> dict:
     index_prices = market_prices_frame(
         session, DEFAULT_SYMBOLS, source_policy=market_price_source_policy()
@@ -907,8 +912,41 @@ def load_movement_and_virtual_trade_analysis(
         limit=candidate_limit,
         maximum_holding_days=holding_days,
     )
+    tracked_inputs = prepare_decision_track_inputs(
+        signal_generation,
+        index_prices,
+        japan_prices,
+        decision_track=decision_track,
+        observed_at=signal_generation["decision_at"],
+    )
+    tracked_decisions = tracked_inputs["decisions"]
+    tracked_insufficient = (
+        int(
+            tracked_decisions["status"]
+            .isin(["insufficient_data", "quality_gate_blocked"])
+            .sum()
+        )
+        if not tracked_decisions.empty
+        else 0
+    )
+    tracked_status = signal_generation["observation_status"]
+    if tracked_inputs["observation"]["quality_gate_status"] == "blocked":
+        tracked_status = "quality_gate_blocked"
+    signal_generation = {
+        **signal_generation,
+        "decision_track": decision_track,
+        "decision_observation": tracked_inputs["observation"],
+        "signals": tracked_inputs["signals"],
+        "decisions": tracked_decisions,
+        "observation_status": tracked_status,
+        "summary": {
+            "eligible_signals": len(tracked_inputs["signals"]),
+            "decisions": len(tracked_decisions),
+            "insufficient": tracked_insufficient,
+        },
+    }
     forward_accounts = advance_forward_accounts_as_of(
-        signal_generation["signals"],
+        tracked_inputs["signals"],
         japan_prices,
         as_of=signal_generation["decision_at"],
         previous_states=previous_forward_states,
