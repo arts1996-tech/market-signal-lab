@@ -6,7 +6,7 @@
 `com.arts1996.market-signal-lab-forward-shadow`が、平日18:30、20:30、22:30に
 `jobs/run_forward_shadow.py --daily --not-before-jst 18:30`を呼ぶ。
 
-当日時点シグナル、短期・中期各250万円の独立口座、追記専用PostgreSQL台帳、`delayed_historical`／`current_market`のデータ分離はMac側で完了した。Mac定期ジョブは18:30 JSTを同日再試行共通の判断時刻とし、遅延研究だけを短期・中期のDB台帳へ保存する。JSONは`data/forward_shadow/<account>/delayed_historical/YYYY-MM-DD.json`へDBから監査出力する。現在判断や正式な6〜12か月の前向き検証期間には算入しない。欠測・再試行・障害監視は`docs/22_current_priority_todo.md`の`NOW-P0-5`を正本とする。
+当日時点シグナル、短期・中期各250万円の独立口座、追記専用PostgreSQL台帳、`delayed_historical`／`current_market`のデータ分離、欠測・再試行・障害監視はMac側で完了した。Mac定期ジョブは18:30 JSTを同日再試行共通の判断時刻とし、遅延研究だけを短期・中期のDB台帳へ保存する。JSONは`data/forward_shadow/<account>/delayed_historical/YYYY-MM-DD.json`へDBから監査出力する。現在判断や正式な6〜12か月の前向き検証期間には算入しない。
 
 - ログイン時にも呼び出すが、JST 18:30より前は正常終了して保存しない。
 - 東証非営業日は保存しない。
@@ -15,6 +15,9 @@
 - 電源OFF、ログアウト、Docker Desktop停止中は実行できない。20:30、22:30の再試行で補う。
 - 翌日になってから前日の入力を再構成しない。取れなかった日は欠測として残す。
 - Macとラズパイの自動ジョブを同時に正式運用しない。
+- `job_runs`へ各試行の`started`と`success`／`skipped`／`error`を同じ試行IDで保存する。
+- Dockerへ到達できずDBへ記録できない試行は`logs/forward-shadow-host-attempts.tsv`へ保存する。
+- システム管理画面で当日2口座、最終成功、3回失敗、欠測、容量、JSON監査を確認する。
 
 ## 将来の正式運用: Raspberry Pi
 
@@ -43,6 +46,9 @@ Macのlaunchdは開発用の手動確認だけに戻し、自動トリガーを�
 - 候補なし、品質ゲート未達も判断結果として保存する。
 - すべての再試行が失敗した日は、翌日の価格やニュースで過去を作り直さない。
 - 欠測日、Docker停止、DB停止、ディスク不足は運用警告として別途集計する。
+- DB正本がありJSONだけ欠ける場合は再出力し、DB正本と異なるJSONは自動上書きしない。
 - Raspberry Pi停止中の正式記録をMacの古いDBスナップショットで代替しない。
+
+2026-08-16の非営業日試運転では、Mac DBの`started`／`skipped`、ホスト試行ログの`success`、システム管理画面の直近営業日欠測警告を確認した。最初の実営業日に短期・中期の`success`とDB由来JSONが作成されることは継続監視する。
 
 この仕組みは実注文を行わず、投資助言または予測能力の証明には使用しない。

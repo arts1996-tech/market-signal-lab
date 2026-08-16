@@ -8,7 +8,7 @@
 
 > **現在の利用上の重要事項:** 現時点の仮想口座と候補スコアは、実際の売買判断や投資額決定の主な根拠にできる成熟度には達していません。正直な評価、利用してよい範囲、実投資支援前の必須品質ゲートは [docs/19_investment_decision_readiness_assessment.md](docs/19_investment_decision_readiness_assessment.md) を参照してください。
 
-> **現行ToDoの正本:** 今後の最優先事項、実装順序、未完了項目、完了条件は [docs/22_current_priority_todo.md](docs/22_current_priority_todo.md) に一本化しています。過去文書に残る「次の作業」より、この文書を優先します。`NOW-P0-1`〜`NOW-P0-4`は完了し、次は前向き記録の欠測・再試行・障害監視を追加する`NOW-P0-5`です。
+> **現行ToDoの正本:** 今後の最優先事項、実装順序、未完了項目、完了条件は [docs/22_current_priority_todo.md](docs/22_current_priority_todo.md) に一本化しています。過去文書に残る「次の作業」より、この文書を優先します。`NOW-P0-1`〜`NOW-P0-5`の実装は完了しました。最初の実営業日の自動成功記録を監視しながら、次は偽の成功を廃止する`NOW-P1-1`です。
 
 GitHub: https://github.com/arts1996-tech/market-signal-lab
 
@@ -336,7 +336,11 @@ docker compose exec app alembic upgrade head
 
 Mac定期ジョブは18:30 JSTを同日再試行共通の判断時刻として、`delayed_historical`だけをDBへ記録します。J-Quants Freeの遅延データは画面でも「研究上の買い候補」と表示し、`current_market`へ渡した場合は鮮度ゲートがシグナルを消去して`current_market_freshness_failed`を保存します。これは正式な6〜12か月の現在判断検証期間には算入しません。Raspberry Piには`0011`・`0012`とも未適用です。将来結果を使う旧1口座経路も研究用として残し、自動売買、証券口座への接続、実注文は行いません。
 
-Macで平日18:30、20:30、22:30に上記の研究スナップショットを再試行する`launchd`設定は`docker/macos/com.arts1996.market-signal-lab-forward-shadow.plist`です。ログイン時にも呼びますが、JST 18:30より前、東証非営業日、当日保存済みの場合は分析前に正常終了します。Docker Desktopが起動していることを前提とし、標準出力とエラーは`logs/`へ保存します。2026-08-16にユーザー承認のもと`~/Library/LaunchAgents/com.arts1996.market-signal-lab-forward-shadow.plist`へ登録済みです。Macが停止中またはDocker Desktopが未起動の場合は後続時刻で再試行しますが、翌日に前日分を後付け生成しません。最初の実営業日後にログと`data/forward_shadow/`を確認します。正式な継続口座完成後にラズパイを常時運用の実行主体へ切り替える手順は[docs/21_forward_shadow_operations.md](docs/21_forward_shadow_operations.md)を参照してください。
+Macで平日18:30、20:30、22:30に上記の研究スナップショットを再試行する`launchd`設定は`docker/macos/com.arts1996.market-signal-lab-forward-shadow.plist`です。ログイン時にも呼びますが、JST 18:30より前、東証非営業日、当日保存済みの場合は分析前に正常終了します。2026-08-16にユーザー承認のもと`~/Library/LaunchAgents/com.arts1996.market-signal-lab-forward-shadow.plist`へ登録済みです。Macが停止中またはDocker Desktopが未起動の場合は後続時刻で再試行しますが、翌日に前日分を後付け生成しません。正式な継続口座完成後にラズパイを常時運用の実行主体へ切り替える手順は[docs/21_forward_shadow_operations.md](docs/21_forward_shadow_operations.md)を参照してください。
+
+`NOW-P0-5`では、MacのLaunchAgentを`docker/macos/run-forward-shadow.zsh`経由へ変更しました。各試行の開始、成功、見送り、失敗は同じ試行IDを付けて`job_runs`へ追記します。Dockerへ到達できない場合だけはDBへ書けないため、Git対象外の`logs/forward-shadow-host-attempts.tsv`へ`docker_unavailable`として残します。Dockerは動くがDBへ到達できない場合は`database_unavailable`、保存先が512 MiB未満または使用率95%以上なら`output_capacity_insufficient`、DB正本とJSONが異なる場合は`json_modified`として区別します。DB状態がありJSONだけ欠ける場合はDBから再出力しますが、改変済みJSONは自動上書きしません。
+
+利用者は画面上部の「システム管理」を選び、「前向き仮想口座の日次監視」で対象営業日、短期・中期の記録数、最終成功、当日失敗回数、欠測営業日、保存容量、JSON監査を確認できます。3回すべて失敗した日は警告し、翌日のデータで後付けしません。2026-08-16の非営業日試運転では`started`／`skipped`とホスト側成功を確認済みです。最初の実営業日に短期・中期の成功記録とJSONが作られることは継続監視項目です。
 
 `jobs/run_backtest.py --demo --validation-registry-path /app/data/validation/windows.json`を指定すると、シミュレーターを呼ぶ前に口座別の未見期間を登録します。同じ口座の重複期間を変更後ルールで再評価しようとすると停止します。短期口座と中期口座は別の評価系列です。レジストリはGit対象外であり、画面表示だけでは書き込みません。同じファイルを複数プロセスから同時更新する運用は行いません。
 

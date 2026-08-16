@@ -17,6 +17,13 @@ from app.services.forward_account_ledger import (
     persist_forward_accounts,
 )
 from app.services.analysis_service import load_movement_and_virtual_trade_analysis
+from app.services.forward_account_monitor import (
+    audit_virtual_account_export,
+    classify_forward_job_exception,
+    new_attempt_id,
+    output_capacity_status,
+    record_forward_job_status,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -68,6 +75,7 @@ def daily_preflight_reason(
     observed_at: pd.Timestamp,
     *,
     not_before_jst: str | None = None,
+    skip_existing_files: bool = True,
 ) -> str | None:
     local = observed_at.tz_convert("Asia/Tokyo")
     local_date = local.normalize()
@@ -78,7 +86,7 @@ def daily_preflight_reason(
         return f"current JST time is before the {not_before_jst} recording cutoff"
     date_label = local.strftime("%Y-%m-%d")
     paths = [Path(output_dir) / name / f"{date_label}.json" for name in account_names]
-    if paths and all(path.exists() for path in paths):
+    if skip_existing_files and paths and all(path.exists() for path in paths):
         return f"all account snapshots for {date_label} are already frozen"
     return None
 
@@ -108,14 +116,34 @@ def main() -> None:
             f"mid_term/{DECISION_TRACK_DELAYED}",
         ]
     )
+    attempt_id = new_attempt_id()
+    started_at = datetime.now(UTC)
     if args.daily:
         reason = daily_preflight_reason(
             args.output_dir,
             expected_accounts,
             observed_at,
             not_before_jst=args.not_before_jst,
+            skip_existing_files=args.demo,
         )
         if reason:
+            if not args.demo:
+                with SessionLocal() as session:
+                    record_forward_job_status(
+                        session,
+                        status="started",
+                        started_at=started_at,
+                        attempt_id=attempt_id,
+                        observed_at=observed_at,
+                    )
+                    record_forward_job_status(
+                        session,
+                        status="skipped",
+                        started_at=started_at,
+                        attempt_id=attempt_id,
+                        observed_at=observed_at,
+                        details={"reason": reason},
+                    )
             print(f"Forward-shadow skipped: {reason}.")
             return
     if args.demo:
@@ -136,36 +164,143 @@ def main() -> None:
         if settings.market_data_mode == "demo":
             raise SystemExit("Real-data forward recording is disabled in demo mode.")
         decision_at = canonical_daily_decision_at(observed_at) if args.daily else observed_at
-        with SessionLocal() as session:
-            previous_states = load_latest_forward_account_states(
-                session, DECISION_TRACK_DELAYED
-            )
-            analysis = load_movement_and_virtual_trade_analysis(
-                session,
-                score_threshold=args.score_threshold,
-                holding_days=args.holding_days,
-                signal_as_of=decision_at,
-                previous_forward_states=previous_states or None,
-                decision_track=DECISION_TRACK_DELAYED,
-            )
-            signal_generation = analysis["signal_generation"]
-            persisted = persist_forward_accounts(
-                session,
-                analysis["forward_accounts"],
-                observation=signal_generation["decision_observation"],
-                decisions=signal_generation["decisions"],
-            )
-            session.commit()
-            paths = [
-                export_virtual_account_day(
+        try:
+            with SessionLocal() as session:
+                record_forward_job_status(
                     session,
-                    args.output_dir,
-                    account_name=account_name,
-                    decision_track=DECISION_TRACK_DELAYED,
-                    session_date=record["session_date"],
+                    status="started",
+                    started_at=started_at,
+                    attempt_id=attempt_id,
+                    observed_at=observed_at,
                 )
-                for account_name, record in persisted["accounts"].items()
-            ]
+                capacity = output_capacity_status(args.output_dir)
+                if capacity["status"] != "ok":
+                    raise OSError(
+                        28,
+                        f"forward-shadow output capacity is insufficient: {capacity['free_bytes']}",
+                    )
+                session_date = decision_at.tz_convert("Asia/Tokyo").date()
+                if args.daily:
+                    audits = [
+                        audit_virtual_account_export(
+                            session,
+                            args.output_dir,
+                            account_name=account_name,
+                            decision_track=DECISION_TRACK_DELAYED,
+                            session_date=session_date,
+                        )
+                        for account_name in ("short_term", "mid_term")
+                    ]
+                    if all(audit["status"] == "ok" for audit in audits):
+                        reason = f"all DB-backed account snapshots for {session_date} are already frozen"
+                        record_forward_job_status(
+                            session,
+                            status="skipped",
+                            started_at=started_at,
+                            attempt_id=attempt_id,
+                            observed_at=observed_at,
+                            details={"reason": reason},
+                        )
+                        print(f"Forward-shadow skipped: {reason}.")
+                        return
+                    invalid = [
+                        audit["path"]
+                        for audit in audits
+                        if audit["status"] in {"json_modified", "json_unreadable"}
+                    ]
+                    if invalid:
+                        raise FileExistsError(
+                            f"immutable ledger export differs from PostgreSQL: {invalid}"
+                        )
+                    if all(audit["status"] in {"ok", "json_missing"} for audit in audits):
+                        paths = [
+                            export_virtual_account_day(
+                                session,
+                                args.output_dir,
+                                account_name=account_name,
+                                decision_track=DECISION_TRACK_DELAYED,
+                                session_date=session_date,
+                            )
+                            for account_name in ("short_term", "mid_term")
+                        ]
+                        record_forward_job_status(
+                            session,
+                            status="success",
+                            started_at=started_at,
+                            attempt_id=attempt_id,
+                            observed_at=observed_at,
+                            details={
+                                "recorded_session_date": session_date.isoformat(),
+                                "accounts": ["mid_term", "short_term"],
+                                "paths": [str(path) for path in paths],
+                                "repaired_missing_exports": True,
+                                "output_capacity": capacity,
+                            },
+                        )
+                        print("Forward-shadow repaired missing DB-backed JSON exports.")
+                        for path in paths:
+                            print(path)
+                        return
+                previous_states = load_latest_forward_account_states(
+                    session, DECISION_TRACK_DELAYED
+                )
+                analysis = load_movement_and_virtual_trade_analysis(
+                    session,
+                    score_threshold=args.score_threshold,
+                    holding_days=args.holding_days,
+                    signal_as_of=decision_at,
+                    previous_forward_states=previous_states or None,
+                    decision_track=DECISION_TRACK_DELAYED,
+                )
+                signal_generation = analysis["signal_generation"]
+                persisted = persist_forward_accounts(
+                    session,
+                    analysis["forward_accounts"],
+                    observation=signal_generation["decision_observation"],
+                    decisions=signal_generation["decisions"],
+                )
+                session.commit()
+                paths = [
+                    export_virtual_account_day(
+                        session,
+                        args.output_dir,
+                        account_name=account_name,
+                        decision_track=DECISION_TRACK_DELAYED,
+                        session_date=record["session_date"],
+                    )
+                    for account_name, record in persisted["accounts"].items()
+                ]
+                record_forward_job_status(
+                    session,
+                    status="success",
+                    started_at=started_at,
+                    attempt_id=attempt_id,
+                    observed_at=observed_at,
+                    details={
+                        "recorded_session_date": session_date.isoformat(),
+                        "accounts": sorted(persisted["accounts"]),
+                        "paths": [str(path) for path in paths],
+                        "output_capacity": capacity,
+                    },
+                )
+        except Exception as exc:
+            failure_category = classify_forward_job_exception(exc)
+            try:
+                with SessionLocal() as failure_session:
+                    record_forward_job_status(
+                        failure_session,
+                        status="error",
+                        started_at=started_at,
+                        attempt_id=attempt_id,
+                        observed_at=observed_at,
+                        details={
+                            "failure_category": failure_category,
+                            "error_type": type(exc).__name__,
+                        },
+                    )
+            except Exception:
+                pass
+            raise
     print("Forward-shadow snapshots:")
     for path in paths:
         print(path)

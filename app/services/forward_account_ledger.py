@@ -480,15 +480,14 @@ def load_latest_forward_account_states(
     return restored
 
 
-def export_virtual_account_day(
+def build_virtual_account_day_export(
     session: Session,
-    output_dir: str | Path,
     *,
     account_name: str,
     decision_track: str,
     session_date: date,
-) -> Path:
-    """Export a DB-backed immutable audit copy; PostgreSQL remains authoritative."""
+) -> dict:
+    """Build the canonical DB-backed audit payload without writing a file."""
 
     account = get_virtual_account_by_name(session, account_name)
     if account is None:
@@ -501,7 +500,7 @@ def export_virtual_account_day(
     if state is None:
         raise LookupError(f"virtual account state not found: {account_name} {session_date}")
     events = virtual_account_events_for_state(session, state.id)
-    payload = {
+    return {
         "export_version": LEDGER_EXPORT_VERSION,
         "record_type": "virtual_account_daily_ledger",
         "warning": "仮想記録です。実注文・投資助言・利益保証ではありません。",
@@ -557,9 +556,31 @@ def export_virtual_account_day(
             for event in events
         ],
     }
-    serialized = json.dumps(
-        json_value(payload), ensure_ascii=False, sort_keys=True, indent=2
+
+
+def serialize_virtual_account_day_export(payload: dict) -> str:
+    """Serialize an audit payload exactly as immutable JSON exports are written."""
+
+    return json.dumps(json_value(payload), ensure_ascii=False, sort_keys=True, indent=2)
+
+
+def export_virtual_account_day(
+    session: Session,
+    output_dir: str | Path,
+    *,
+    account_name: str,
+    decision_track: str,
+    session_date: date,
+) -> Path:
+    """Export a DB-backed immutable audit copy; PostgreSQL remains authoritative."""
+
+    payload = build_virtual_account_day_export(
+        session,
+        account_name=account_name,
+        decision_track=decision_track,
+        session_date=session_date,
     )
+    serialized = serialize_virtual_account_day_export(payload)
     directory = Path(output_dir) / account_name / decision_track
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{session_date.isoformat()}.json"

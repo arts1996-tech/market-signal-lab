@@ -32,6 +32,7 @@ from app.services.analysis_service import (
     list_fundamental_symbols,
     load_etf_metric_snapshots,
 )
+from app.services.forward_account_monitor import load_forward_account_monitor
 
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -127,6 +128,11 @@ def load_demo_portfolio() -> dict:
     return run_demo_portfolio_environment()
 
 
+@st.cache_data(ttl=60)
+def load_forward_monitor_data() -> dict:
+    return load_forward_account_monitor()
+
+
 PAGE_OPTIONS = [
     "市場ダッシュボード",
     "短期分析",
@@ -156,6 +162,7 @@ active_page = st.radio(
 )
 
 analysis = load_data() if active_page in {"市場ダッシュボード", "市場連動性"} else None
+forward_monitor = load_forward_monitor_data() if active_page == "システム管理" else None
 if analysis is not None:
     analysis_status = build_analysis_status(analysis["prices"], analysis["data_quality_warnings"])
     data_quality_warnings = analysis["data_quality_warnings"]
@@ -172,6 +179,17 @@ elif is_demo and active_page == "仮想投資評価":
     data_quality_warnings = [
         {"message": "合成価格・合成ニュースだけを使用する検証画面です。実データではありません。"}
     ]
+elif forward_monitor is not None:
+    analysis_status = {
+        "mode": "live",
+        "source_policy": "operations_monitor",
+        "period_start": None,
+        "period_end": forward_monitor.get("expected_session_date"),
+        "latest_fetched_at": forward_monitor.get("checked_at"),
+        "price_bases": [],
+        "warning_count": len(forward_monitor.get("warnings", [])),
+    }
+    data_quality_warnings = []
 else:
     status_data = load_status_data()
     analysis_status = status_data["status"]
@@ -744,7 +762,7 @@ if active_page == "仮想投資評価":
             "追記専用DB台帳と再起動後の復元基盤まで実装済みです。"
             "Mac定期ジョブも遅延研究系統としてDBへ日次記録しますが、"
             "現在判断や正式な前向き検証期間には算入しません。"
-            "欠測・再試行の運用監視はNOW-P0-5で追加します。"
+            "欠測・3回再試行・DB／Docker／容量／JSON監査の状態はシステム管理画面で確認できます。"
         )
         forward_accounts = virtual_data["forward_accounts"]
         for account in forward_accounts["accounts"].values():
@@ -1063,14 +1081,74 @@ if active_page == "日米波及分析":
             )
 
 if active_page == "システム管理":
-    with SessionLocal() as session:
-        fetch_logs = latest_fetch_logs(session)
-        job_runs = latest_job_runs(session)
-        operations_runs = latest_job_runs(session, limit=5, job_name="check_operations")
-        collector_runs = latest_job_runs(
-            session, limit=1, job_name="collect_jquants_all_prices"
+    if forward_monitor["database_available"]:
+        with SessionLocal() as session:
+            fetch_logs = latest_fetch_logs(session)
+            job_runs = latest_job_runs(session)
+            operations_runs = latest_job_runs(session, limit=5, job_name="check_operations")
+            collector_runs = latest_job_runs(
+                session, limit=1, job_name="collect_jquants_all_prices"
+            )
+            correlation_logs = latest_correlation_results(session, analysis_status=None)
+    else:
+        fetch_logs = []
+        job_runs = []
+        operations_runs = []
+        collector_runs = []
+        correlation_logs = []
+
+    st.subheader("前向き仮想口座の日次監視")
+    st.caption(
+        "Macの遅延研究系統（delayed_historical）です。現在価格による投資判断や実注文ではありません。"
+    )
+    if not forward_monitor["database_available"]:
+        st.error("PostgreSQLへ接続できません。DB停止として記録・表示しています。")
+    monitor_cols = st.columns(4)
+    recorded_count = sum(account["recorded"] for account in forward_monitor["accounts"])
+    monitor_cols[0].metric("確認対象営業日", forward_monitor.get("expected_session_date") or "-")
+    monitor_cols[1].metric("短期・中期の記録", f"{recorded_count}/2")
+    monitor_cols[2].metric("最終成功", format_jst(forward_monitor.get("latest_success_at")))
+    monitor_cols[3].metric(
+        "当日失敗回数", forward_monitor.get("failed_attempts_for_expected_session", 0)
+    )
+    warning_labels = {
+        "missing_business_sessions": "短期・中期の記録がそろっていない営業日があります。",
+        "three_retries_failed": "当日の3回の再試行がすべて失敗しました。翌日に後付け生成しません。",
+        "unfinished_job_attempt": "開始後30分以上、完了状態のないジョブがあります。",
+        "output_capacity_insufficient": "JSON保存先の空き容量が安全基準を下回っています。",
+        "json_audit_problem": "DB正本とJSON監査コピーの欠落・改変・読込異常を検出しました。",
+        "docker_unavailable": "Docker Desktop停止またはDocker接続失敗を検出しました。",
+        "database_unavailable": "PostgreSQL停止またはDB接続失敗を検出しました。",
+        "forward_job_failed": "DockerとDB以外の理由で前向き記録ジョブが失敗しました。",
+        "execution_failed": "前向き記録の分析または保存処理が失敗しました。",
+        "json_modified": "不変JSONがDB正本と異なります。自動上書きは行いません。",
+    }
+    for warning in forward_monitor.get("warnings", []):
+        st.warning(warning_labels.get(warning, f"運用警告: {warning}"))
+    if forward_monitor["accounts"]:
+        st.dataframe(
+            pd.DataFrame(forward_monitor["accounts"]).rename(
+                columns={
+                    "account_name": "口座",
+                    "expected_session_date": "対象営業日",
+                    "recorded": "DB記録済み",
+                    "latest_recorded_session": "最終記録営業日",
+                    "json_status": "JSON監査",
+                    "json_path": "JSONパス",
+                }
+            ),
+            use_container_width=True,
         )
-        correlation_logs = latest_correlation_results(session, analysis_status=None)
+    if forward_monitor.get("missing_session_dates"):
+        st.caption(
+            "欠測営業日: " + ", ".join(forward_monitor["missing_session_dates"])
+        )
+    capacity = forward_monitor.get("output_capacity", {})
+    if capacity:
+        st.caption(
+            f"監査コピー保存先: 空き {capacity.get('free_bytes', 0) / (1024 ** 3):.1f} GiB / "
+            f"使用率 {capacity.get('used_ratio', 0):.1%}"
+        )
 
     latest_operations = operations_runs[0].details if operations_runs else {}
     latest_collector = collector_runs[0].details if collector_runs else {}

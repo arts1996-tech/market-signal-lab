@@ -6,16 +6,8 @@
   <string>com.arts1996.market-signal-lab-forward-shadow</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/usr/local/bin/docker</string>
-    <string>compose</string>
-    <string>run</string>
-    <string>--rm</string>
-    <string>app</string>
-    <string>python</string>
-    <string>jobs/run_forward_shadow.py</string>
-    <string>--daily</string>
-    <string>--not-before-jst</string>
-    <string>18:30</string>
+    <string>/bin/zsh</string>
+    <string>/Users/tsurusumu/Projects/market-signal-lab/docker/macos/run-forward-shadow.zsh</string>
   </array>
   <key>WorkingDirectory</key>
   <string>/Users/tsurusumu/Projects/market-signal-lab</string>
