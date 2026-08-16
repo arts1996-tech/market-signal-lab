@@ -8,7 +8,7 @@
 
 > **現在の利用上の重要事項:** 現時点の仮想口座と候補スコアは、実際の売買判断や投資額決定の主な根拠にできる成熟度には達していません。正直な評価、利用してよい範囲、実投資支援前の必須品質ゲートは [docs/19_investment_decision_readiness_assessment.md](docs/19_investment_decision_readiness_assessment.md) を参照してください。
 
-> **現行ToDoの正本:** 今後の最優先事項、実装順序、未完了項目、完了条件は [docs/22_current_priority_todo.md](docs/22_current_priority_todo.md) に一本化しています。過去文書に残る「次の作業」より、この文書を優先します。`NOW-P0-1`〜`NOW-P0-5`と`NOW-P1-1`〜`NOW-P1-3`の実装は完了しました。前向き口座の最初の実営業日を監視しながら、次は全対象銘柄のバッチ分析とUI表示上限を分離する`NOW-P1-4`です。
+> **現行ToDoの正本:** 今後の最優先事項、実装順序、未完了項目、完了条件は [docs/22_current_priority_todo.md](docs/22_current_priority_todo.md) に一本化しています。過去文書に残る「次の作業」より、この文書を優先します。`NOW-P0-1`〜`NOW-P0-5`と`NOW-P1-1`〜`NOW-P1-4`の実装は完了しました。前向き口座の最初の実営業日を監視しながら、次は財務・SEC・ETFジョブを共通サービスへ統合する`NOW-P1-5`です。
 
 GitHub: https://github.com/arts1996-tech/market-signal-lab
 
@@ -288,12 +288,17 @@ docker compose exec app python jobs/collect_jquants_listed_info.py --limit 20
 docker compose exec app python jobs/collect_jquants_daily.py --code 86970 --date 20260401 --name "JPX" --asset-type stock
 docker compose exec app python jobs/collect_jquants_daily_batch.py --date 20260401 --limit 3
 docker compose exec app python jobs/run_mid_term_analysis.py
+docker compose exec app python jobs/run_asset_analysis.py
 docker compose exec app python jobs/run_backtest.py
 ```
 
 `run_mid_term_analysis.py`は、分析時刻までに開示された財務だけを選び、売上・営業利益・EPS成長、営業利益率、ROE、自己資本比率、営業CFを計算します。価格が連続して63・126・252営業日そろう場合だけ3・6・12か月モメンタムと52週高値乖離を計算し、不足、古さ、通貨・単位不明を警告します。利用可能な指標がない場合は`success`にせず`insufficient_data`として`job_runs`へ保存します。通常モードの`run_backtest.py`も実データ用ウォークフォワード検証へ接続済みです。デモバックテストは別途、明示したデモモードで実行できます。
 
 Streamlitの「銘柄・ETF分析」では、テクニカルの30営業日品質ゲートが未達でも、保存済み財務があれば財務欄を確認できます。履歴と最新スナップショットには取得元、取得時刻、開示時刻、期間末、通貨、単位を表示します。PBRは提供元から`book_value_per_share`を取得できた場合だけ計算し、自己資本から推定しません。ROEと営業利益率は百分率で表示し、未取得値は`-`のままです。
+
+`run_asset_analysis.py`は、調整済み価格が30営業日以上ある全銘柄をDBから件数上限なしで読み、東証カレンダー上の最新連続30営業日を満たす全銘柄へ技術注目度と変動候補スコアを計算します。実行単位と銘柄別結果は`asset_analysis_runs`／`asset_analysis_results`へ入力版、分析ルール版、source方針、通常／デモ区分とともに保存します。同じ入力版の再実行は既存結果を再利用します。
+
+「銘柄・ETF分析」は保存済みの最新通常データ結果だけを読み、銘柄区分、最低注目度、業種、銘柄コード・名称で絞り込めます。1ページは25／50／100／200件から選択でき、200件は表示上限であって分析母集団の上限ではありません。Mac復元DBの2026-08-16確認ではSQL上の対象3,047銘柄を全件検査し、最新連続30営業日を満たす銘柄は0件だったため`insufficient_data`です。データ収集後にジョブを再実行すると、新しい入力版で結果が追加されます。
 
 J-Quants Free planはAPI制限が5件/分のため、複数銘柄の連続取得では余裕を持って15秒以上の間隔を空けます。日付を指定する場合は、直近12週間を避け、かつFree planの取得範囲内になる過去2年程度の日付を指定します。
 一括取得は最初に `--limit 3` 程度で確認してから増やします。

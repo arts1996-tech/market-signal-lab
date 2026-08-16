@@ -42,3 +42,18 @@ def test_fundamental_view_shows_provenance_and_formats_ratios_as_percentages():
     assert "display = format_percent(value)" in source
     assert 'display = f"{value:.2f}%"' not in source
     assert "render_fundamental_summary(screening)" in source
+
+
+def test_asset_screening_reads_persisted_paged_batch_results():
+    source = Path("app/dashboard/streamlit_app.py").read_text(encoding="utf-8")
+
+    assert "load_asset_analysis_page(" in source
+    assert '"1ページの表示件数", [25, 50, 100, 200]' in source
+    assert "バッチは品質ゲート通過全銘柄を対象" in source
+    assert "load_asset_screening_analysis(session)" not in source
+
+    analysis_source = Path("app/services/analysis_service.py").read_text(
+        encoding="utf-8"
+    )
+    assert ".head(10)" not in analysis_source
+    assert "limit: int = 200" not in analysis_source

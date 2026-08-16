@@ -437,10 +437,14 @@ def load_us_japan_spillover_analysis(session: Session, base_symbol: str, target_
     }
 
 
-def load_sector_sensitivity_analysis(session: Session, base_symbol: str = "NASDAQCOM", limit: int = 200) -> dict:
+def load_sector_sensitivity_analysis(
+    session: Session, base_symbol: str = "NASDAQCOM"
+) -> dict:
     """Summarize observed spillover sensitivity by J-Quants sector and symbol."""
     asset_source = "sample" if market_price_source_policy() == "demo_only" else "jquants"
-    assets = list_assets_by_source(session, asset_source, asset_types=["stock", "etf"], limit=limit)
+    assets = list_assets_by_source(
+        session, asset_source, asset_types=["stock", "etf"], limit=None
+    )
     if not assets:
         return {"data": pd.DataFrame(), "sensitivity": {"sector": pd.DataFrame(), "symbol": pd.DataFrame()}}
     symbols = [asset.symbol for asset in assets]
@@ -464,13 +468,13 @@ def load_sector_sensitivity_analysis(session: Session, base_symbol: str = "NASDA
     return {"data": data, "sensitivity": sector_sensitivity(data)}
 
 
-def load_asset_screening_analysis(session: Session, limit: int = 200) -> dict:
-    """Load a bounded, source-policy-selected stock/ETF technical screen."""
+def load_asset_screening_analysis(session: Session) -> dict:
+    """Load an unbounded source-policy-selected stock/ETF technical screen."""
     source_policy = market_price_source_policy()
     asset_source = "sample" if source_policy == "demo_only" else "jquants"
     if source_policy == "demo_only":
         assets = list_assets_by_source(
-            session, asset_source, asset_types=["stock", "etf"], limit=limit
+            session, asset_source, asset_types=["stock", "etf"], limit=None
         )
     else:
         assets = list_assets_with_minimum_price_history(
@@ -478,7 +482,7 @@ def load_asset_screening_analysis(session: Session, limit: int = 200) -> dict:
             asset_source,
             asset_types=["stock", "etf"],
             min_history=SCREENING_MIN_HISTORY,
-            limit=limit,
+            limit=None,
             price_bases=["raw_ohlcv_with_adjusted"],
         )
     if not assets:
@@ -850,25 +854,31 @@ def load_movement_and_virtual_trade_analysis(
             .sort_values("price_time")
             .reset_index(drop=True)
         )
-    # Candidate generation is an interactive dashboard view. Bound the work
-    # while keeping the complete collection in PostgreSQL for batch analysis.
-    # Demo mode uses explicitly seeded synthetic assets; live mode remains
-    # restricted to validated J-Quants assets.
-    asset_source = "sample" if market_price_source_policy() == "demo_only" else "jquants"
-    jquants_assets = list_assets_by_source(session, asset_source, asset_types=["stock", "etf"], limit=500)
+    # Candidate output is bounded below, but the score universe must not be
+    # pre-truncated by symbol count or history rank. The persisted phase-3
+    # batch uses the same complete quality-gated universe.
+    source_policy = market_price_source_policy()
+    asset_source = "sample" if source_policy == "demo_only" else "jquants"
+    if source_policy == "demo_only":
+        jquants_assets = list_assets_by_source(
+            session, asset_source, asset_types=["stock", "etf"], limit=None
+        )
+    else:
+        jquants_assets = list_assets_with_minimum_price_history(
+            session,
+            asset_source,
+            asset_types=["stock", "etf"],
+            min_history=SCREENING_MIN_HISTORY,
+            limit=None,
+            price_bases=["raw_ohlcv_with_adjusted"],
+        )
     japan_symbols = [asset.symbol for asset in jquants_assets]
     japan_prices = (
-        market_prices_frame(session, japan_symbols, source_policy=market_price_source_policy())
+        market_prices_frame(session, japan_symbols, source_policy=source_policy)
         if japan_symbols
         else pd.DataFrame()
     )
     if not japan_prices.empty:
-        active_symbols = (
-            japan_prices.groupby("symbol").size().sort_values(ascending=False).head(10).index.tolist()
-        )
-        japan_prices = japan_prices[japan_prices["symbol"].isin(active_symbols)].copy()
-        jquants_assets = [asset for asset in jquants_assets if asset.symbol in active_symbols]
-        japan_symbols = active_symbols
         japan_prices = (
             japan_prices.sort_values(["symbol", "price_time"])
             .groupby("symbol", group_keys=False)

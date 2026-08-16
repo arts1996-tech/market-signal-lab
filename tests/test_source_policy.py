@@ -74,6 +74,28 @@ def test_screening_asset_query_requires_distinct_adjusted_sessions():
     assert "ORDER BY count(distinct(market_prices.session_date)) DESC" in sql
 
 
+def test_batch_asset_query_has_no_limit_when_requested_unbounded():
+    class _ScalarCaptureSession:
+        query = None
+
+        def scalars(self, query):
+            self.query = query
+            return []
+
+    session = _ScalarCaptureSession()
+    list_assets_with_minimum_price_history(
+        session,
+        source="jquants",
+        asset_types=["stock", "etf"],
+        min_history=30,
+        limit=None,
+        price_bases=["raw_ohlcv_with_adjusted"],
+    )
+
+    sql = str(session.query.compile(dialect=postgresql.dialect())).upper()
+    assert " LIMIT " not in sql
+
+
 def test_normal_compose_start_does_not_seed_synthetic_data():
     compose = Path("docker-compose.yml").read_text(encoding="utf-8")
     app_command = compose.split("jquants-collector:", maxsplit=1)[0]

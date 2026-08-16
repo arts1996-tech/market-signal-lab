@@ -1,4 +1,6 @@
 from app.database.models import (
+    AssetAnalysisResult,
+    AssetAnalysisRun,
     CorrelationResult,
     MarketPrice,
     SpilloverFeature,
@@ -71,6 +73,27 @@ def test_virtual_account_ledger_has_freeze_and_event_idempotency_constraints():
         "observation_input_hash",
     }.issubset(VirtualAccountDailyState.__table__.columns.keys())
     assert "decision_track" in VirtualAccountEvent.__table__.columns
+
+
+def test_asset_analysis_has_version_and_per_run_asset_constraints():
+    run_constraints = {
+        constraint.name for constraint in AssetAnalysisRun.__table__.constraints
+    }
+    result_constraints = {
+        constraint.name for constraint in AssetAnalysisResult.__table__.constraints
+    }
+
+    assert "uq_asset_analysis_run_input" in run_constraints
+    assert "uq_asset_analysis_result_asset" in result_constraints
+    assert {
+        "rule_version",
+        "data_scope",
+        "source_policy_version",
+        "input_data_version",
+        "assets_considered",
+        "eligible_asset_count",
+        "result_count",
+    }.issubset(AssetAnalysisRun.__table__.columns.keys())
 
 
 def test_chunked_splits_large_payloads():

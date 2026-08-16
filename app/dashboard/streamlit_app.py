@@ -27,10 +27,13 @@ from app.services.analysis_service import (
     load_short_term_analysis,
     load_us_japan_spillover_analysis,
     load_sector_sensitivity_analysis,
-    load_asset_screening_analysis,
     load_fundamental_snapshots,
     list_fundamental_symbols,
     load_etf_metric_snapshots,
+)
+from app.services.asset_analysis_service import (
+    asset_analysis_filter_options,
+    load_asset_analysis_page,
 )
 from app.services.forward_account_monitor import load_forward_account_monitor
 
@@ -93,10 +96,31 @@ def load_sensitivity_data(base_symbol: str) -> dict:
         return load_sector_sensitivity_analysis(session, base_symbol=base_symbol)
 
 
-@st.cache_data(ttl=600)
-def load_screening_data() -> dict:
+@st.cache_data(ttl=300)
+def load_asset_analysis_options() -> dict:
     with SessionLocal() as session:
-        return load_asset_screening_analysis(session)
+        return asset_analysis_filter_options(session)
+
+
+@st.cache_data(ttl=300)
+def load_screening_page(
+    page: int,
+    page_size: int,
+    asset_types: tuple[str, ...],
+    minimum_attention: int,
+    sectors: tuple[str, ...],
+    symbol_query: str,
+) -> dict:
+    with SessionLocal() as session:
+        return load_asset_analysis_page(
+            session,
+            page=page,
+            page_size=page_size,
+            asset_types=list(asset_types),
+            minimum_attention=minimum_attention,
+            sectors=list(sectors),
+            symbol_query=symbol_query,
+        )
 
 
 @st.cache_data(ttl=600)
@@ -441,42 +465,86 @@ if active_page == "銘柄・ETF分析":
         "J-Quants Free planの価格は約12週間遅延しています。"
         "この一覧は過去データ上の分析候補であり、現在の短期売買判断には使用できません。"
     )
-    screening = load_screening_data()["screening"]
-    if screening.empty:
-        st.warning("スクリーニングには、銘柄マスターと東証カレンダー上で連続する30営業日以上の有効なJ-Quants調整済み価格履歴が必要です。")
+    options = load_asset_analysis_options()
+    analysis_run = options["run"]
+    screening = pd.DataFrame()
+    if analysis_run is None:
+        st.warning(
+            "保存済みの全銘柄分析がありません。"
+            "`python jobs/run_asset_analysis.py`を実行後に確認してください。"
+        )
+    elif analysis_run["status"] != "success":
+        st.warning(
+            "最新の全銘柄分析はデータ不足です。"
+            f"対象 {analysis_run['assets_considered']}銘柄 / "
+            f"品質ゲート通過 {analysis_run['eligible_asset_count']}銘柄。"
+        )
     else:
         filter_cols = st.columns(3)
-        asset_type = filter_cols[0].multiselect(
-            "対象区分", ["stock", "etf"], default=["stock", "etf"]
+        selected_asset_types = filter_cols[0].multiselect(
+            "対象区分",
+            options["asset_types"],
+            default=options["asset_types"],
         )
         minimum_attention = filter_cols[1].slider(
             "最低注目度", min_value=0, max_value=100, value=50, step=5
         )
-        sector_options = sorted(screening["sector"].dropna().unique().tolist())
-        selected_sectors = filter_cols[2].multiselect("業種（未選択はすべて）", sector_options)
-        view = screening[
-            screening["asset_type"].isin(asset_type)
-            & (screening["attention_score"] >= minimum_attention)
-        ].copy()
-        if selected_sectors:
-            view = view[view["sector"].isin(selected_sectors)]
-        view["data_as_of"] = view["data_as_of"].map(
-            lambda value: "-" if pd.isna(value) else pd.Timestamp(value).strftime("%Y-%m-%d")
+        selected_sectors = filter_cols[2].multiselect(
+            "業種（未選択はすべて）", options["sectors"]
         )
-        view["attention_reasons"] = view["attention_reasons"].map(format_reason_list)
-        view["quality_warnings"] = view["quality_warnings"].map(format_reason_list)
-        view["return_20d"] = view["return_20d"].map(format_percent)
-        view["volatility_20d"] = view["volatility_20d"].map(format_percent)
-        view["rsi_14"] = view["rsi_14"].round(1)
-        st.metric("表示中の分析候補", len(view))
-        if view.empty:
-            st.info("現在の条件に一致する分析候補はありません。条件を緩めて確認してください。")
+        page_cols = st.columns(3)
+        symbol_query = page_cols[0].text_input("銘柄コード・名称")
+        page_size = page_cols[1].selectbox(
+            "1ページの表示件数", [25, 50, 100, 200], index=1
+        )
+        page_number = int(
+            page_cols[2].number_input("ページ", min_value=1, value=1, step=1)
+        )
+        page_data = load_screening_page(
+            page_number,
+            page_size,
+            tuple(selected_asset_types),
+            minimum_attention,
+            tuple(selected_sectors),
+            symbol_query,
+        )
+        screening = page_data["results"]
+        total_pages = max(1, (page_data["total"] + page_size - 1) // page_size)
+        summary_cols = st.columns(3)
+        summary_cols[0].metric(
+            "全銘柄バッチ通過", analysis_run["eligible_asset_count"]
+        )
+        summary_cols[1].metric("絞り込み結果", page_data["total"])
+        summary_cols[2].metric("ページ", f"{page_number}/{total_pages}")
+        if screening.empty:
+            st.info(
+                "現在の条件またはページに一致する分析結果はありません。"
+                "条件またはページ番号を確認してください。"
+            )
         else:
-            st.dataframe(view, use_container_width=True)
+            view = screening.copy()
+            view["data_as_of"] = view["data_as_of"].map(
+                lambda value: (
+                    "-" if pd.isna(value) else pd.Timestamp(value).strftime("%Y-%m-%d")
+                )
+            )
+            view["attention_reasons"] = view["attention_reasons"].map(
+                format_reason_list
+            )
+            view["quality_warnings"] = view["quality_warnings"].map(
+                format_reason_list
+            )
+            view["return_20d"] = view["return_20d"].map(format_percent)
+            view["volatility_20d"] = view["volatility_20d"].map(format_percent)
+            view["rsi_14"] = view["rsi_14"].round(1)
+            st.dataframe(view, use_container_width=True, hide_index=True)
         st.caption(
-            "東証カレンダー上で連続する30営業日以上の有効な調整済み価格を持つ銘柄のうち、履歴が充実した最大200銘柄を比較しています。"
-            "注目度は値動きの大きさや指標の偏りを示すもので、上昇確率や推奨順位ではありません。"
-            "50日・75日移動平均は、それぞれ必要な観測数がそろった銘柄だけで利用します。"
+            f"分析版: {analysis_run['rule_version']} / "
+            f"入力版: {analysis_run['input_data_version'][:12]}… / "
+            f"source方針: {analysis_run['source_policy_version']} / "
+            f"データ時点: {format_jst(analysis_run['data_as_of'])}。"
+            "バッチは品質ゲート通過全銘柄を対象とし、200件は画面の1ページ上限です。"
+            "注目度は上昇確率や投資推奨順位ではありません。"
         )
     selected_financial_symbol = render_fundamental_summary(screening)
     etf_symbols = (

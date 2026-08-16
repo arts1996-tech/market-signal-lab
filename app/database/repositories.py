@@ -244,7 +244,7 @@ def list_assets_with_minimum_price_history(
     source: str,
     asset_types: list[str],
     min_history: int,
-    limit: int,
+    limit: int | None,
     price_bases: list[str] | None = None,
 ) -> list[Asset]:
     """Select assets that already satisfy a distinct-session history gate."""
@@ -265,10 +265,11 @@ def list_assets_with_minimum_price_history(
             func.max(MarketPrice.session_date).desc(),
             Asset.symbol,
         )
-        .limit(limit)
     )
     if price_bases:
         query = query.where(MarketPrice.price_basis.in_(price_bases))
+    if limit is not None:
+        query = query.limit(limit)
     return list(session.scalars(query))
 
 

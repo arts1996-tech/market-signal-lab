@@ -237,6 +237,77 @@ class JobRun(Base):
     details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
 
+class AssetAnalysisRun(Base):
+    __tablename__ = "asset_analysis_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "analysis_name",
+            "data_scope",
+            "rule_version",
+            "input_data_version",
+            name="uq_asset_analysis_run_input",
+        ),
+        Index(
+            "ix_asset_analysis_runs_latest",
+            "analysis_name",
+            "data_scope",
+            "status",
+            "completed_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    analysis_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    data_scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    rule_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_data_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    data_as_of: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    assets_considered: Mapped[int] = mapped_column(Integer, nullable=False)
+    eligible_asset_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    result_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class AssetAnalysisResult(Base):
+    __tablename__ = "asset_analysis_results"
+    __table_args__ = (
+        UniqueConstraint("run_id", "asset_id", name="uq_asset_analysis_result_asset"),
+        Index("ix_asset_analysis_results_attention", "run_id", "attention_rank"),
+        Index("ix_asset_analysis_results_movement", "run_id", "movement_rank"),
+        Index(
+            "ix_asset_analysis_results_filter",
+            "run_id",
+            "asset_type",
+            "sector",
+            "attention_score",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    run_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("asset_analysis_runs.id"), nullable=False
+    )
+    asset_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("assets.id"), nullable=False
+    )
+    asset_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    sector: Mapped[str] = mapped_column(String(128), nullable=False)
+    data_as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    observations: Mapped[int] = mapped_column(Integer, nullable=False)
+    attention_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    movement_score: Mapped[int | None] = mapped_column(Integer)
+    attention_rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    movement_rank: Mapped[int | None] = mapped_column(Integer)
+    result: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class PriceCollectionTarget(Base):
     __tablename__ = "price_collection_targets"
     __table_args__ = (UniqueConstraint("source", "session_date", name="uq_price_collection_target"),)

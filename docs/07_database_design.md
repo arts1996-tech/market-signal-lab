@@ -19,6 +19,8 @@
 - correlation_results
 - regression_results
 - analysis_results
+- asset_analysis_runs
+- asset_analysis_results
 - trading_signals
 - backtest_runs
 - backtest_results
@@ -71,6 +73,8 @@
 - parameters JSONB
 - result JSONB
 - created_at
+
+`asset_analysis_runs`はフェーズ3の全銘柄バッチについて、通常／デモ区分、入力版、ルール版、source方針、データ時点、検査対象数、品質ゲート通過数、状態を保持する。`asset_analysis_results`は実行IDと銘柄の組を一意にし、注目度・変動候補スコア、順位、観測数、業種、結果JSONを保持する。バッチの母集団は無制限とし、画面はこの保存結果を最大200件ずつページ読込する。`0013_asset_analysis_results`はMac側で往復検証済みで、Raspberry Piには未適用である。
 
 ## 時刻
 - DBはUTC
