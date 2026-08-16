@@ -8,7 +8,7 @@
 
 > **現在の利用上の重要事項:** 現時点の仮想口座と候補スコアは、実際の売買判断や投資額決定の主な根拠にできる成熟度には達していません。正直な評価、利用してよい範囲、実投資支援前の必須品質ゲートは [docs/19_investment_decision_readiness_assessment.md](docs/19_investment_decision_readiness_assessment.md) を参照してください。
 
-> **現行ToDoの正本:** 今後の最優先事項、実装順序、未完了項目、完了条件は [docs/22_current_priority_todo.md](docs/22_current_priority_todo.md) に一本化しています。過去文書に残る「次の作業」より、この文書を優先します。`NOW-P0-1`〜`NOW-P0-5`と`NOW-P1-1`〜`NOW-P1-2`の実装は完了しました。前向き口座の最初の実営業日を監視しながら、次は財務画面と来歴を直す`NOW-P1-3`です。
+> **現行ToDoの正本:** 今後の最優先事項、実装順序、未完了項目、完了条件は [docs/22_current_priority_todo.md](docs/22_current_priority_todo.md) に一本化しています。過去文書に残る「次の作業」より、この文書を優先します。`NOW-P0-1`〜`NOW-P0-5`と`NOW-P1-1`〜`NOW-P1-3`の実装は完了しました。前向き口座の最初の実営業日を監視しながら、次は全対象銘柄のバッチ分析とUI表示上限を分離する`NOW-P1-4`です。
 
 GitHub: https://github.com/arts1996-tech/market-signal-lab
 
@@ -292,6 +292,8 @@ docker compose exec app python jobs/run_backtest.py
 ```
 
 `run_mid_term_analysis.py`は、分析時刻までに開示された財務だけを選び、売上・営業利益・EPS成長、営業利益率、ROE、自己資本比率、営業CFを計算します。価格が連続して63・126・252営業日そろう場合だけ3・6・12か月モメンタムと52週高値乖離を計算し、不足、古さ、通貨・単位不明を警告します。利用可能な指標がない場合は`success`にせず`insufficient_data`として`job_runs`へ保存します。通常モードの`run_backtest.py`も実データ用ウォークフォワード検証へ接続済みです。デモバックテストは別途、明示したデモモードで実行できます。
+
+Streamlitの「銘柄・ETF分析」では、テクニカルの30営業日品質ゲートが未達でも、保存済み財務があれば財務欄を確認できます。履歴と最新スナップショットには取得元、取得時刻、開示時刻、期間末、通貨、単位を表示します。PBRは提供元から`book_value_per_share`を取得できた場合だけ計算し、自己資本から推定しません。ROEと営業利益率は百分率で表示し、未取得値は`-`のままです。
 
 J-Quants Free planはAPI制限が5件/分のため、複数銘柄の連続取得では余裕を持って15秒以上の間隔を空けます。日付を指定する場合は、直近12週間を避け、かつFree planの取得範囲内になる過去2年程度の日付を指定します。
 一括取得は最初に `--limit 3` 程度で確認してから増やします。

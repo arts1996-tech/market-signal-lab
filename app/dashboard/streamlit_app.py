@@ -133,6 +133,95 @@ def load_forward_monitor_data() -> dict:
     return load_forward_account_monitor()
 
 
+def render_fundamental_summary(screening: pd.DataFrame) -> str | None:
+    """Render financial history independently from the technical quality gate."""
+    screened_symbols = screening["symbol"].tolist() if "symbol" in screening else []
+    financial_symbols = sorted(
+        set(screened_symbols) | set(load_fundamental_symbol_options())
+    )
+    st.subheader("開示済み財務サマリー")
+    if not financial_symbols:
+        st.info("財務サマリーは未取得です。")
+        return None
+
+    selected_symbol = st.selectbox("財務サマリーを表示", financial_symbols)
+    financials = load_fundamentals_data(selected_symbol)
+    if financials.empty:
+        st.info("選択銘柄の財務サマリーは未取得です。")
+        return selected_symbol
+
+    st.caption(
+        "開示日時以前の情報だけを履歴分析へ使用します。未取得項目は推測しません。"
+    )
+    history = financials.rename(
+        columns={
+            "disclosed_at": "開示時刻",
+            "period_end": "期間末",
+            "source": "取得元",
+            "fetched_at": "取得時刻",
+            "book_value_per_share": "1株当たり純資産",
+            "currency": "通貨",
+            "unit": "単位",
+        }
+    )
+    st.dataframe(history, use_container_width=True)
+
+    latest = financials.iloc[-1].to_dict()
+    provenance = pd.DataFrame(
+        [
+            {
+                "取得元": latest.get("source") or "-（未取得）",
+                "取得時刻（JST）": format_jst(latest.get("fetched_at")),
+                "開示時刻（JST）": format_jst(latest.get("disclosed_at")),
+                "期間末": latest.get("period_end") or "-（未取得）",
+                "通貨": latest.get("currency") or "-（未取得）",
+                "単位": latest.get("unit") or "-（未取得）",
+            }
+        ]
+    )
+    st.markdown("**最新スナップショットの来歴**")
+    st.dataframe(provenance, hide_index=True, use_container_width=True)
+
+    price_data = load_short_data(selected_symbol)
+    price_rows = price_data.get("prices", pd.DataFrame()).copy()
+    latest_price = None
+    latest_price_time = None
+    if not price_rows.empty and "close" in price_rows:
+        price_rows["close"] = pd.to_numeric(price_rows["close"], errors="coerce")
+        price_rows = price_rows.dropna(subset=["close"]).sort_values("price_time")
+        if not price_rows.empty:
+            latest_price = float(price_rows.iloc[-1]["close"])
+            latest_price_time = price_rows.iloc[-1].get("price_time")
+
+    derived = derive_fundamental_metrics(latest, latest_price)
+    metric_cols = st.columns(4)
+    for col, (label, key) in zip(
+        metric_cols,
+        [
+            ("PER", "per"),
+            ("PBR", "pbr"),
+            ("ROE", "roe"),
+            ("営業利益率", "operating_margin"),
+        ],
+    ):
+        value = derived.get(key)
+        if value is None:
+            display = "-"
+        elif key in {"roe", "operating_margin"}:
+            display = format_percent(value)
+        else:
+            display = f"{value:.2f}倍"
+        col.metric(label, display)
+
+    st.caption(
+        "比率は取得済みの開示情報から計算し、PER/PBRには取得済み価格だけを"
+        f"使用します。価格時点: {format_jst(latest_price_time)} / "
+        f"価格取得元: {price_data.get('source', '-')}。"
+        "1株当たり純資産、価格、その他の入力が未取得の場合は算出しません。"
+    )
+    return selected_symbol
+
+
 PAGE_OPTIONS = [
     "市場ダッシュボード",
     "短期分析",
@@ -389,50 +478,20 @@ if active_page == "銘柄・ETF分析":
             "注目度は値動きの大きさや指標の偏りを示すもので、上昇確率や推奨順位ではありません。"
             "50日・75日移動平均は、それぞれ必要な観測数がそろった銘柄だけで利用します。"
         )
-        financial_symbols = sorted(
-            set(screening["symbol"].tolist()) | set(load_fundamental_symbol_options())
-        )
-        selected_financial_symbol = st.selectbox("財務サマリーを表示", financial_symbols)
-        financials = load_fundamentals_data(selected_financial_symbol)
-        if financials.empty:
-            st.info("財務サマリーは未取得です。")
+    selected_financial_symbol = render_fundamental_summary(screening)
+    etf_symbols = (
+        set(screening.loc[screening["asset_type"] == "etf", "symbol"])
+        if not screening.empty and "asset_type" in screening
+        else set()
+    )
+    if selected_financial_symbol in etf_symbols:
+        etf_metrics = load_etf_metrics_data(selected_financial_symbol)
+        st.subheader("ETF固有指標")
+        if etf_metrics.empty:
+            st.info("ETF固有指標は未取得です。取得元に存在しない項目は推測しません。")
         else:
-            st.subheader("開示済み財務サマリー")
-            st.caption("開示日時以前の情報だけを履歴分析へ使用します。未取得項目は推測しません。")
-            st.dataframe(financials, use_container_width=True)
-            latest_financial = financials.iloc[-1].to_dict()
-            latest_price = view.loc[view["symbol"] == selected_financial_symbol, "latest_close"]
-            derived = derive_fundamental_metrics(
-                latest_financial,
-                float(latest_price.iloc[0]) if not latest_price.empty else None,
-            )
-            metric_cols = st.columns(4)
-            for col, (label, key, suffix) in zip(
-                metric_cols,
-                [
-                    ("PER", "per", "倍"),
-                    ("PBR", "pbr", "倍"),
-                    ("ROE", "roe", "%"),
-                    ("営業利益率", "operating_margin", "%"),
-                ],
-            ):
-                value = derived.get(key)
-                if value is None:
-                    display = "-"
-                elif suffix == "%":
-                    display = f"{value:.2f}%"
-                else:
-                    display = f"{value:.2f}{suffix}"
-                col.metric(label, display)
-            st.caption("表示値は取得済みの開示情報と最新価格から決定論的に算出しています。未取得項目は推測しません。")
-        if selected_financial_symbol in set(view.loc[view["asset_type"] == "etf", "symbol"]):
-            etf_metrics = load_etf_metrics_data(selected_financial_symbol)
-            st.subheader("ETF固有指標")
-            if etf_metrics.empty:
-                st.info("ETF固有指標は未取得です。取得元に存在しない項目は推測しません。")
-            else:
-                st.dataframe(etf_metrics, use_container_width=True)
-                st.caption("取得済みの提供元データのみ表示しています。")
+            st.dataframe(etf_metrics, use_container_width=True)
+            st.caption("取得済みの提供元データのみ表示しています。")
 
 if active_page == "変動候補":
     st.subheader("大きく動きそうな日本株・ETF候補")

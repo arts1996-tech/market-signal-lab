@@ -1,5 +1,6 @@
 """Validation and normalization for provider-reported phase 3 fundamentals."""
 
+import math
 from datetime import datetime
 from typing import Any
 
@@ -35,7 +36,30 @@ def _number(value: Any) -> float | None:
         result = float(value)
     except (TypeError, ValueError):
         return None
-    return result if pd.notna(result) else None
+    return result if pd.notna(result) and math.isfinite(result) else None
+
+
+def provider_reported_fundamental_details(details: Any) -> dict[str, Any]:
+    """Expose only explicitly persisted, display-safe provider details.
+
+    Missing currency, unit, and book value per share remain ``None``. In
+    particular, book value per share is never reconstructed from total equity.
+    """
+    if not isinstance(details, dict):
+        details = {}
+
+    def text_value(key: str) -> str | None:
+        value = details.get(key)
+        if not isinstance(value, str):
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+    return {
+        "book_value_per_share": _number(details.get("book_value_per_share")),
+        "currency": text_value("currency"),
+        "unit": text_value("unit"),
+    }
 
 
 def normalize_financial_summary(rows: list[dict[str, Any]]) -> pd.DataFrame:

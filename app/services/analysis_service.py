@@ -19,7 +19,10 @@ from app.analysis.decision_tracks import (
     DECISION_TRACK_DELAYED,
     prepare_decision_track_inputs,
 )
-from app.analysis.fundamentals import fundamentals_as_of
+from app.analysis.fundamentals import (
+    fundamentals_as_of,
+    provider_reported_fundamental_details,
+)
 from app.analysis.movement_candidates import build_movement_candidates
 from app.analysis.regression import rolling_ols, run_granger_test, run_ols, walk_forward_ols
 from app.analysis.spillover import TARGET_METRICS, spillover_conditional_stats, us_japan_spillover_frame
@@ -507,12 +510,34 @@ def load_fundamental_snapshots(session: Session, symbol: str, as_of=None) -> pd.
     if asset is None:
         return pd.DataFrame()
     rows = session.execute(
-        select(FundamentalSnapshot).where(FundamentalSnapshot.asset_id == asset.id).order_by(FundamentalSnapshot.disclosed_at)
+        select(FundamentalSnapshot)
+        .where(FundamentalSnapshot.asset_id == asset.id)
+        .order_by(FundamentalSnapshot.disclosed_at)
     ).scalars().all()
-    frame = pd.DataFrame([
-        {column: getattr(row, column) for column in ["disclosed_at", "period_end", "sales", "operating_profit", "net_income", "eps", "equity", "total_assets", "operating_cashflow"]}
-        for row in rows
-    ])
+    frame = pd.DataFrame(
+        [
+            {
+                **{
+                    column: getattr(row, column)
+                    for column in [
+                        "disclosed_at",
+                        "period_end",
+                        "source",
+                        "fetched_at",
+                        "sales",
+                        "operating_profit",
+                        "net_income",
+                        "eps",
+                        "equity",
+                        "total_assets",
+                        "operating_cashflow",
+                    ]
+                },
+                **provider_reported_fundamental_details(row.details),
+            }
+            for row in rows
+        ]
+    )
     return fundamentals_as_of(frame, as_of) if as_of is not None else frame
 
 

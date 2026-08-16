@@ -1,6 +1,11 @@
 import pandas as pd
 
-from app.analysis.fundamentals import derive_fundamental_metrics, fundamentals_as_of, normalize_financial_summary
+from app.analysis.fundamentals import (
+    derive_fundamental_metrics,
+    fundamentals_as_of,
+    normalize_financial_summary,
+    provider_reported_fundamental_details,
+)
 
 
 def test_normalize_financial_summary_requires_disclosure_and_converts_numbers():
@@ -13,6 +18,34 @@ def test_normalize_financial_summary_requires_disclosure_and_converts_numbers():
     assert result.iloc[0]["symbol"] == "13060"
     assert result.iloc[0]["sales"] == 1000.0
     assert result.iloc[0]["eps"] == 12.5
+
+
+def test_provider_reported_details_only_expose_valid_explicit_values():
+    assert provider_reported_fundamental_details(
+        {
+            "book_value_per_share": "125.5",
+            "currency": " JPY ",
+            "unit": "millions",
+            "equity": 999_999,
+        }
+    ) == {
+        "book_value_per_share": 125.5,
+        "currency": "JPY",
+        "unit": "millions",
+    }
+
+    assert provider_reported_fundamental_details(
+        {"book_value_per_share": "inf", "currency": 123, "unit": " "}
+    ) == {
+        "book_value_per_share": None,
+        "currency": None,
+        "unit": None,
+    }
+    assert provider_reported_fundamental_details(None) == {
+        "book_value_per_share": None,
+        "currency": None,
+        "unit": None,
+    }
 
 
 def test_fundamentals_as_of_excludes_future_disclosures():
@@ -33,6 +66,15 @@ def test_derive_fundamental_metrics_does_not_approximate_missing_book_value():
     assert result["pbr"] is None
     assert result["roe"] == 0.2
     assert result["operating_margin"] == 0.15
+
+
+def test_derive_fundamental_metrics_calculates_pbr_only_with_reported_bps():
+    result = derive_fundamental_metrics(
+        {"book_value_per_share": 125.0},
+        price=250.0,
+    )
+
+    assert result["pbr"] == 2.0
 
 
 def test_derive_fundamental_metrics_rejects_zero_and_non_finite_denominators():
