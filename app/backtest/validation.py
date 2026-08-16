@@ -2,6 +2,8 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from app.backtest.validation_registry import claim_validation_window
+
 
 @dataclass(frozen=True)
 class WalkForwardWindow:
@@ -50,6 +52,10 @@ def evaluate_frozen_strategy_walk_forward(
     *,
     minimum_train_sessions: int,
     test_sessions: int,
+    validation_registry_path=None,
+    strategy_version: str | None = None,
+    rule_hash: str | None = None,
+    evaluation_track: str = "default",
 ) -> pd.DataFrame:
     """Evaluate a frozen rule only on each unseen test window.
 
@@ -72,6 +78,20 @@ def evaluate_frozen_strategy_walk_forward(
         signal_frame["signal_date"] = pd.to_datetime(signal_frame["signal_date"], utc=True).dt.normalize()
     rows = []
     for index, window in enumerate(windows):
+        validation_claim = None
+        if validation_registry_path is not None:
+            if not strategy_version or not rule_hash:
+                raise ValueError(
+                    "strategy_version and rule_hash are required when claiming validation windows"
+                )
+            validation_claim = claim_validation_window(
+                validation_registry_path,
+                strategy_version=strategy_version,
+                rule_hash=rule_hash,
+                evaluation_track=evaluation_track,
+                test_start=window.test_start,
+                test_end=window.test_end,
+            )
         test_signals = signal_frame[
             (signal_frame["signal_date"] >= window.test_start)
             & (signal_frame["signal_date"] <= window.test_end)
@@ -93,6 +113,9 @@ def evaluate_frozen_strategy_walk_forward(
                 "benchmark_return": metrics.get("benchmark_return"),
                 "excess_return": metrics.get("excess_return"),
                 "run_id": result.get("manifest", {}).get("run_id"),
+                "validation_claim_id": (
+                    None if validation_claim is None else validation_claim["claim_id"]
+                ),
             }
         )
     return pd.DataFrame(rows)

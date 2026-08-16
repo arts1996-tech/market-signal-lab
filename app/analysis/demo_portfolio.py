@@ -10,6 +10,7 @@ from app.backtest.ohlc import (
     simulate_ohlc_portfolio,
 )
 from app.backtest.portfolio import ExecutionAssumptions
+from app.backtest.audit import stable_payload_hash
 from app.backtest.validation import evaluate_frozen_strategy_walk_forward
 from app.providers.news import DemoNewsProvider
 
@@ -138,6 +139,7 @@ def _run_account(
     fee_rate: float,
     spread_rate: float,
     lot_size: int,
+    validation_registry_path=None,
 ) -> dict:
     dates = pd.DatetimeIndex(sorted(pd.to_datetime(prices["price_time"], utc=True).unique()))
     signal_rows: list[dict] = []
@@ -220,6 +222,19 @@ def _run_account(
         ),
         minimum_train_sessions=60,
         test_sessions=20,
+        validation_registry_path=validation_registry_path,
+        strategy_version=result["manifest"]["strategy_version"],
+        rule_hash=stable_payload_hash(
+            {
+                "account_name": rule.name,
+                "strategy_version": result["manifest"]["strategy_version"],
+                "execution_version": result["manifest"]["execution_version"],
+                "assumptions": result["manifest"]["assumptions"],
+                "risk_rules": result["manifest"]["risk_rules"],
+                "account_rule": rule,
+            }
+        ),
+        evaluation_track=rule.name,
     )
     result.update(
         {
@@ -239,6 +254,7 @@ def run_demo_portfolio_environment(
     fee_rate: float = 0.001,
     spread_rate: float = 0.001,
     lot_size: int = 100,
+    validation_registry_path=None,
 ) -> dict:
     if initial_cash <= 0:
         raise ValueError("initial_cash must be positive")
@@ -251,7 +267,16 @@ def run_demo_portfolio_environment(
     symbols = prices["symbol"].drop_duplicates().tolist()
     news = DemoNewsProvider().build(dates, symbols)
     accounts = {
-        rule.name: _run_account(prices, news, rule, initial_cash, fee_rate, spread_rate, lot_size)
+        rule.name: _run_account(
+            prices,
+            news,
+            rule,
+            initial_cash,
+            fee_rate,
+            spread_rate,
+            lot_size,
+            validation_registry_path,
+        )
         for rule in DEMO_ACCOUNT_RULES
     }
     return {

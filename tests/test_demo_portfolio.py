@@ -70,6 +70,16 @@ def test_demo_portfolio_uses_shared_ohlc_engine_and_audit_manifest():
         assert account["market_impact"].require_volume is True
 
 
+def test_demo_backtest_can_explicitly_claim_validation_windows(tmp_path):
+    registry = tmp_path / "validation-windows.json"
+
+    result = run_demo_portfolio_environment(validation_registry_path=registry)
+
+    assert registry.exists()
+    for account in result["accounts"].values():
+        assert account["walk_forward"]["validation_claim_id"].notna().all()
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [

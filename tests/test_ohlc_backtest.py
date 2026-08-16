@@ -720,6 +720,64 @@ def test_validation_window_registry_allows_new_unseen_period(tmp_path):
     assert later["immutable"] is True
 
 
+def test_validation_window_registry_allows_independent_account_tracks(tmp_path):
+    registry = tmp_path / "validation-windows.json"
+    short = claim_validation_window(
+        registry,
+        strategy_version="strategy-v1",
+        rule_hash="short-rules",
+        evaluation_track="short_term",
+        test_start="2026-01-01",
+        test_end="2026-01-31",
+    )
+    mid = claim_validation_window(
+        registry,
+        strategy_version="strategy-v1",
+        rule_hash="mid-rules",
+        evaluation_track="mid_term",
+        test_start="2026-01-01",
+        test_end="2026-01-31",
+    )
+
+    assert short["evaluation_track"] == "short_term"
+    assert mid["evaluation_track"] == "mid_term"
+
+
+def test_walk_forward_claims_window_before_running_simulator(tmp_path):
+    registry = tmp_path / "validation-windows.json"
+    prices = _prices()
+    signals = pd.concat(
+        [_signal(entry_location=index) for index in range(2, 10)], ignore_index=True
+    )
+    observed_registry_state = []
+
+    def simulator(test_signals, prices_as_of_test):
+        observed_registry_state.append(json.loads(registry.read_text(encoding="utf-8")))
+        return {
+            "metrics": {
+                "total_return": 0.0,
+                "maximum_drawdown": 0.0,
+                "closed_trades": 0,
+            }
+        }
+
+    report = evaluate_frozen_strategy_walk_forward(
+        signals,
+        prices,
+        simulator,
+        minimum_train_sessions=5,
+        test_sessions=2,
+        validation_registry_path=registry,
+        strategy_version="strategy-v1",
+        rule_hash="rules-a",
+        evaluation_track="short_term",
+    )
+
+    assert observed_registry_state
+    assert report["validation_claim_id"].notna().all()
+    assert all(state for state in observed_registry_state)
+
+
 def test_forward_shadow_snapshot_is_idempotent_and_contains_warning(tmp_path):
     result = simulate_ohlc_portfolio(_signal(), _prices())
     observed_at = pd.Timestamp("2026-01-20", tz="UTC")
@@ -731,3 +789,43 @@ def test_forward_shadow_snapshot_is_idempotent_and_contains_warning(tmp_path):
     payload = json.loads(first.read_text(encoding="utf-8"))
     assert "実注文" in payload["warning"]
     assert payload["manifest"]["run_id"] == result["manifest"]["run_id"]
+
+
+def test_daily_forward_shadow_freezes_first_observation_per_japan_day(tmp_path):
+    result = simulate_ohlc_portfolio(_signal(), _prices())
+    first = write_forward_shadow_snapshot(
+        tmp_path,
+        result,
+        as_of=pd.Timestamp("2026-01-20T00:00:00Z"),
+        daily=True,
+    )
+    repeated = write_forward_shadow_snapshot(
+        tmp_path,
+        result,
+        as_of=pd.Timestamp("2026-01-20T05:00:00Z"),
+        daily=True,
+    )
+
+    assert first == repeated
+    payload = json.loads(first.read_text(encoding="utf-8"))
+    assert first.name == "2026-01-20.json"
+    assert payload["observation_cadence"] == "daily"
+    assert payload["observation_date_jst"] == "2026-01-20"
+    assert "transactions" in payload
+    assert "account_state" in payload
+
+
+def test_daily_forward_shadow_refuses_to_replace_changed_same_day_run(tmp_path):
+    first_result = simulate_ohlc_portfolio(_signal(), _prices())
+    changed_prices = _prices()
+    changed_prices.loc[changed_prices.index[-1], "close"] = 101
+    changed_result = simulate_ohlc_portfolio(_signal(), changed_prices)
+    observed_at = pd.Timestamp("2026-01-20T00:00:00Z")
+    write_forward_shadow_snapshot(
+        tmp_path, first_result, as_of=observed_at, daily=True
+    )
+
+    with pytest.raises(FileExistsError, match="already frozen"):
+        write_forward_shadow_snapshot(
+            tmp_path, changed_result, as_of=observed_at, daily=True
+        )

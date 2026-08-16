@@ -17,6 +17,13 @@ def parse_args() -> argparse.Namespace:
         "--ledger-path",
         help="Optional JSON path for the demo account ledger; never writes to PostgreSQL",
     )
+    parser.add_argument(
+        "--validation-registry-path",
+        help=(
+            "Optional Git-ignored JSON registry. When supplied, unseen windows are "
+            "claimed before evaluation and conflicting rule reuse is rejected."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -27,7 +34,9 @@ def main() -> None:
     if args.demo:
         if get_settings().market_data_mode != "demo":
             raise SystemExit("Synthetic backtest is demo-only. Set MARKET_DATA_MODE=demo.")
-        result = run_demo_portfolio_environment()
+        result = run_demo_portfolio_environment(
+            validation_registry_path=args.validation_registry_path
+        )
         if args.ledger_path:
             path = Path(args.ledger_path)
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -58,6 +67,11 @@ def main() -> None:
                 "unrealized_pnl": account["unrealized_pnl"],
                 "maximum_drawdown": account["maximum_drawdown"],
                 "transactions": len(account["transactions"]),
+                "validation_windows_claimed": int(
+                    account["walk_forward"]["validation_claim_id"].notna().sum()
+                )
+                if "validation_claim_id" in account["walk_forward"]
+                else 0,
             }
             for account_name, account in result["accounts"].items()
         }

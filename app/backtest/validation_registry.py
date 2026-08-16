@@ -12,7 +12,12 @@ class ValidationWindowConflict(ValueError):
 
 
 def _normalized_date(value) -> pd.Timestamp:
-    return pd.Timestamp(value).tz_localize("UTC") if pd.Timestamp(value).tz is None else pd.Timestamp(value).tz_convert("UTC")
+    timestamp = pd.Timestamp(value)
+    return (
+        timestamp.tz_localize("UTC")
+        if timestamp.tz is None
+        else timestamp.tz_convert("UTC")
+    )
 
 
 def _load_registry(path: Path) -> list[dict]:
@@ -29,6 +34,7 @@ def claim_validation_window(
     *,
     strategy_version: str,
     rule_hash: str,
+    evaluation_track: str = "default",
     test_start,
     test_end,
     claimed_at: datetime | None = None,
@@ -43,8 +49,8 @@ def claim_validation_window(
     registry_path = Path(path)
     start = _normalized_date(test_start).normalize()
     end = _normalized_date(test_end).normalize()
-    if not strategy_version or not rule_hash:
-        raise ValueError("strategy_version and rule_hash are required")
+    if not strategy_version or not rule_hash or not evaluation_track:
+        raise ValueError("strategy_version, rule_hash, and evaluation_track are required")
     if end < start:
         raise ValueError("test_end must not be before test_start")
 
@@ -52,6 +58,7 @@ def claim_validation_window(
     deterministic = {
         "strategy_version": strategy_version,
         "rule_hash": rule_hash,
+        "evaluation_track": evaluation_track,
         "test_start": start.isoformat(),
         "test_end": end.isoformat(),
     }
@@ -62,7 +69,8 @@ def claim_validation_window(
         existing_start = _normalized_date(entry["test_start"]).normalize()
         existing_end = _normalized_date(entry["test_end"]).normalize()
         overlaps = start <= existing_end and end >= existing_start
-        if overlaps and entry.get("rule_hash") != rule_hash:
+        same_track = entry.get("evaluation_track", "default") == evaluation_track
+        if same_track and overlaps and entry.get("rule_hash") != rule_hash:
             raise ValidationWindowConflict(
                 "validation period overlaps a window already observed by a different rule"
             )

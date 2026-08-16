@@ -200,8 +200,12 @@ MARKET_DATA_MODE=demo docker compose up --build db app
 MARKET_DATA_MODE=demo docker compose run --rm app python jobs/run_backtest.py --demo
 # 取引台帳をMacのlogs/へ保存する場合（DBには保存しない）
 MARKET_DATA_MODE=demo docker compose run --rm app python jobs/run_backtest.py --demo --ledger-path /app/logs/demo_virtual_ledger.json
+# 未見期間を口座別に確保してから評価する（同じ口座で変更後ルールによる期間再利用を拒否）
+MARKET_DATA_MODE=demo docker compose run --rm app python jobs/run_backtest.py --demo --validation-registry-path /app/data/validation/windows.json
 # 現時点のデモ結果を前向き観察JSONとして保存する（DB・実注文には書き込まない）
 MARKET_DATA_MODE=demo docker compose run --rm app python jobs/run_forward_shadow.py --demo
+# JSTの東証営業日ごとに最初の結果だけを不変保存する
+MARKET_DATA_MODE=demo docker compose run --rm app python jobs/run_forward_shadow.py --demo --daily
 ```
 
 デモモードの画面は合成データだけを表示し、投資判断には使用できません。既存DB内のサンプル行も通常モードの分析・画面からは除外されます。
@@ -308,7 +312,11 @@ FRED由来の指数データは高値、安値、出来高を含まないため�
 
 実データ評価用口座の初期設定は、250万円、1銘柄30%上限、同時保有2銘柄、100株単位、手数料0.10%、税率0%です。前営業日出来高だけを使って参加率上限と部分約定を決め、前営業日売買代金5千万円未満を除外し、売買代金帯ごとの代理スプレッド／スリッページを適用します。入力に取引停止・値幅制限・特別気配フラグがあれば約定不能として扱いますが、現在の取得元がこれらの実データを常に提供するわけではありません。税率は設定可能ですが、実際の税務を再現するものではありません。配当、企業行動、為替、空売り、上場廃止、実際の板・特別気配・値幅制限データは未完成であり、実投資判断には使用しません。
 
-画面の「現在結果を前向き観察として保存」ボタン、または`jobs/run_forward_shadow.py`で、その時点の監査ID・判断カード・成績・保有を`data/forward_shadow/`へJSON保存できます。このディレクトリはGit対象外です。通常モードでは品質ゲートを通過した実データシグナルがない場合は保存せず終了します。自動売買、証券口座、DBへの取引登録は行いません。
+画面の「現在結果を前向き観察として保存」ボタン、または`jobs/run_forward_shadow.py`で、その時点の監査ID・判断カード・成績・保有・取引・見送り理由・ベンチマーク比較を`data/forward_shadow/`へJSON保存できます。このディレクトリはGit対象外です。`--daily`ではJSTの東証営業日だけを対象に、口座ごとに最初の入力を`YYYY-MM-DD.json`へ固定します。同日の同一入力による再実行は冪等で、異なる入力による置換は拒否します。品質ゲート通過シグナルがない日も`no_eligible_signals_or_data_quality_gate`として記録し、「何も判断しなかった日」を欠落させません。自動売買、証券口座、DBへの取引登録は行いません。
+
+Macで平日18:30に上記の日次ジョブを呼ぶ`launchd`テンプレートは`docker/macos/com.arts1996.market-signal-lab-forward-shadow.plist`です。Docker Desktopが起動していることを前提とし、標準出力とエラーは`logs/`へ保存します。テンプレートはリポジトリにあるだけで、`~/Library/LaunchAgents`には未登録です。登録はMacの運用状態を変えるため、利用者の承認後にCodexが実施・確認します。
+
+`jobs/run_backtest.py --demo --validation-registry-path /app/data/validation/windows.json`を指定すると、シミュレーターを呼ぶ前に口座別の未見期間を登録します。同じ口座の重複期間を変更後ルールで再評価しようとすると停止します。短期口座と中期口座は別の評価系列です。レジストリはGit対象外であり、画面表示だけでは書き込みません。同じファイルを複数プロセスから同時更新する運用は行いません。
 
 候補抽出、短期スクリーニング、仮想評価には、日本株・ETFについて東証カレンダー上で連続する、重複しない有効な調整済み日次データが30営業日以上必要です。年単位の空白や未取得セッションをまたいで騰落率を計算しません。20日指標はこの品質ゲート通過後に利用し、50日・75日移動平均はそれぞれ必要な観測数がそろった銘柄だけで利用します。
 

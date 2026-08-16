@@ -2,7 +2,11 @@ from datetime import UTC, datetime
 
 import pandas as pd
 
-from app.analysis.market_calendar import calendar_gap_report, next_exchange_session
+from app.analysis.market_calendar import (
+    calendar_gap_report,
+    is_exchange_session,
+    next_exchange_session,
+)
 from app.providers.fred import FredMarketProvider
 from app.core.config import Settings
 from app.services.analysis_service import build_analysis_status, build_data_quality_warnings
@@ -76,3 +80,9 @@ def test_calendar_gap_report_detects_jpx_holiday_as_missing_session_only_when_ex
 
 def test_calendar_out_of_bounds_date_is_skipped():
     assert next_exchange_session(pd.Timestamp("1971-02-08", tz="UTC"), "XTKS") is None
+
+
+def test_exchange_session_preserves_japan_local_calendar_date():
+    japan_midnight = pd.Timestamp("2026-08-17", tz="Asia/Tokyo")
+
+    assert is_exchange_session(japan_midnight, "XTKS") is True

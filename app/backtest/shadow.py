@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from decimal import Decimal
 import json
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,8 @@ def _serializable(value: Any) -> Any:
         return value.isoformat()
     if isinstance(value, datetime):
         return value.astimezone(UTC).isoformat()
+    if isinstance(value, Decimal):
+        return float(value)
     if isinstance(value, dict):
         return {str(key): _serializable(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
@@ -32,6 +35,7 @@ def write_forward_shadow_snapshot(
     result: dict,
     *,
     as_of: datetime | pd.Timestamp | None = None,
+    daily: bool = False,
 ) -> Path:
     """Write one immutable, idempotent forward-shadow JSON snapshot."""
 
@@ -46,18 +50,51 @@ def write_forward_shadow_snapshot(
         observed_at = observed_at.tz_convert("UTC")
     directory = Path(output_dir)
     directory.mkdir(parents=True, exist_ok=True)
-    path = directory / f"{observed_at.strftime('%Y%m%dT%H%M%SZ')}_{run_id[:12]}.json"
+    observation_date = observed_at.tz_convert("Asia/Tokyo").strftime("%Y-%m-%d")
+    path = (
+        directory / f"{observation_date}.json"
+        if daily
+        else directory / f"{observed_at.strftime('%Y%m%dT%H%M%SZ')}_{run_id[:12]}.json"
+    )
     payload = {
         "record_type": "forward_shadow_snapshot",
         "observed_at": observed_at.isoformat(),
+        "observation_date_jst": observation_date,
+        "observation_cadence": "daily" if daily else "point_in_time",
+        "observation_status": result.get("observation_status", "evaluated"),
         "warning": "仮想記録です。実注文・投資助言・利益保証ではありません。",
         "manifest": manifest,
         "metrics": result.get("metrics", {}),
         "decision_cards": result.get("decision_cards", pd.DataFrame()),
         "positions": result.get("positions", pd.DataFrame()),
+        "transactions": result.get("transactions", pd.DataFrame()),
+        "rejected_signals": result.get("rejected_signals", pd.DataFrame()),
+        "benchmark_comparisons": result.get(
+            "benchmark_comparisons", pd.DataFrame()
+        ),
+        "account_state": {
+            key: result.get(key)
+            for key in (
+                "account_name",
+                "initial_cash",
+                "cash",
+                "equity",
+                "realized_pnl",
+                "unrealized_pnl",
+                "risk_halted",
+            )
+        },
     }
     serialized = json.dumps(_serializable(payload), ensure_ascii=False, sort_keys=True, indent=2)
     if path.exists():
+        if daily:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+            existing_run_id = existing.get("manifest", {}).get("run_id")
+            if existing_run_id == run_id:
+                return path
+            raise FileExistsError(
+                "daily snapshot is already frozen for this account and observation date"
+            )
         if path.read_text(encoding="utf-8") != serialized:
             raise FileExistsError(f"immutable snapshot already exists with different content: {path}")
         return path

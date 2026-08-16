@@ -41,7 +41,7 @@ def next_exchange_session(value: pd.Timestamp, calendar_name: str) -> pd.Timesta
 def _calendar_date(value: pd.Timestamp) -> pd.Timestamp:
     timestamp = pd.Timestamp(value)
     if timestamp.tzinfo is not None:
-        timestamp = timestamp.tz_convert(None)
+        timestamp = timestamp.tz_localize(None)
     return timestamp.normalize()
 
 

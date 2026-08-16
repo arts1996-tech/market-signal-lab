@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.arts1996.market-signal-lab-forward-shadow</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/docker</string>
+    <string>compose</string>
+    <string>run</string>
+    <string>--rm</string>
+    <string>app</string>
+    <string>python</string>
+    <string>jobs/run_forward_shadow.py</string>
+    <string>--daily</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/tsurusumu/Projects/market-signal-lab</string>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>18</integer><key>Minute</key><integer>30</integer></dict>
+  </array>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>/Users/tsurusumu/Projects/market-signal-lab/logs/forward-shadow-launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/tsurusumu/Projects/market-signal-lab/logs/forward-shadow-launchd-error.log</string>
+</dict>
+</plist>
