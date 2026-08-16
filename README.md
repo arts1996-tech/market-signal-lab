@@ -8,7 +8,7 @@
 
 > **現在の利用上の重要事項:** 現時点の仮想口座と候補スコアは、実際の売買判断や投資額決定の主な根拠にできる成熟度には達していません。正直な評価、利用してよい範囲、実投資支援前の必須品質ゲートは [docs/19_investment_decision_readiness_assessment.md](docs/19_investment_decision_readiness_assessment.md) を参照してください。
 
-> **現行ToDoの正本:** 今後の最優先事項、実装順序、未完了項目、完了条件は [docs/22_current_priority_todo.md](docs/22_current_priority_todo.md) に一本化しています。過去文書に残る「次の作業」より、この文書を優先します。`NOW-P0-1`〜`NOW-P0-5`と`NOW-P1-1`〜`NOW-P1-4`の実装は完了しました。前向き口座の最初の実営業日を監視しながら、次は財務・SEC・ETFジョブを共通サービスへ統合する`NOW-P1-5`です。
+> **現行ToDoの正本:** 今後の最優先事項、実装順序、未完了項目、完了条件は [docs/22_current_priority_todo.md](docs/22_current_priority_todo.md) に一本化しています。過去文書に残る「次の作業」より、この文書を優先します。`NOW-P0-1`〜`NOW-P0-5`と`NOW-P1-1`〜`NOW-P1-5`の実装は完了しました。前向き口座の最初の実営業日を監視しながら、次は企業行動モデルと保守的ゲートを追加する`NOW-P1-6`です。
 
 GitHub: https://github.com/arts1996-tech/market-signal-lab
 
@@ -149,7 +149,14 @@ J-Quants Free planを使う場合は `.env` の `JQUANTS_API_KEY` に設定し�
 
 米国株のSEC財務データを検証する場合は、`.env` の `SEC_USER_AGENT` にアプリ名と連絡先を設定してください。SECのFair Access要件に従うため、未設定のままSEC APIへ接続することはできません。現時点ではSEC APIの自動収集は未導入で、明示実行の単銘柄ジョブだけを提供しています。
 
-SEC財務データを明示的に1銘柄取得する場合は、User-Agentを設定したうえで次を実行します。対象銘柄が既存の`assets`にない場合、データは保存せず取得件数だけを表示します。
+J-Quants財務データを明示的に1銘柄取得する場合は、対象が既存のJ-Quants株・ETFであることを確認して実行します。現行のJ-Quants公開プラン表ではFreeの財務情報は対象外表示のため、Free契約での全銘柄自動収集は行いません。
+
+```bash
+docker compose run --rm app python jobs/collect_jquants_financial_summary.py \
+  --code 86970 --from-date 2025-01-01 --to-date 2026-03-31
+```
+
+SEC財務データを明示的に1銘柄取得する場合は、User-Agentを設定したうえで次を実行します。対象銘柄が既存のUSD建て株・ETFで、`assets.sec_cik`が指定CIKと完全一致する場合だけAPIへ接続し、別企業への誤保存を防ぎます。
 
 ```bash
 docker compose run --rm app python jobs/collect_sec_fundamentals.py --cik 0000320193 --symbol AAPL
@@ -170,6 +177,16 @@ docker compose run --rm app python jobs/import_sec_assets.py \
   --json /path/to/company_tickers_exchange.json \
   --symbols AAPL,MSFT
 ```
+
+取得元と利用条件を人が確認したETF指標JSONは、次の明示実行だけで保存します。ETFでない銘柄、未登録銘柄、壊れたJSON、無効なsourceは拒否します。自動取得元はまだ採用していません。
+
+```bash
+docker compose run --rm app python jobs/save_etf_metrics.py \
+  --file /path/to/reviewed-etf-metrics.json \
+  --source provider_reviewed
+```
+
+3ジョブは共通サービスを使い、入力検証、Repository保存、冪等再実行、`api_fetch_logs`、`job_runs`、失敗分類を同じ形式で扱います。出力の`classification`は、新規保存`new_rows_saved`、同一入力の再実行`idempotent_replay`、有効行なし`no_valid_rows`、入力・対象・外部API・DB障害の個別理由を示します。エラー時は終了コード1となり、秘密を含み得るレスポンス本文は監査ログへ保存しません。
 
 3. 初回起動またはマイグレーション変更時は、バックアップ確認後にDBマイグレーションを明示実行します。
 

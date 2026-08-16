@@ -10,6 +10,8 @@ from app.database.models import (
     ApiFetchLog,
     Asset,
     CorrelationResult,
+    EtfMetricSnapshot,
+    FundamentalSnapshot,
     JobRun,
     MarketPrice,
     PriceCollectionItem,
@@ -126,6 +128,34 @@ def upsert_market_prices(session: Session, rows: Iterable[dict]) -> int:
             )
         )
     return len(payload)
+
+
+def insert_fundamental_snapshots(session: Session, rows: Iterable[dict]) -> int:
+    """Append new provider snapshots and ignore an exact source/timing replay."""
+    payload = list(rows)
+    if not payload:
+        return 0
+    statement = (
+        pg_insert(FundamentalSnapshot)
+        .values(payload)
+        .on_conflict_do_nothing(constraint="uq_fundamental_snapshot")
+        .returning(FundamentalSnapshot.id)
+    )
+    return len(session.scalars(statement).all())
+
+
+def insert_etf_metric_snapshots(session: Session, rows: Iterable[dict]) -> int:
+    """Append reviewed ETF metrics and ignore an exact source/timing replay."""
+    payload = list(rows)
+    if not payload:
+        return 0
+    statement = (
+        pg_insert(EtfMetricSnapshot)
+        .values(payload)
+        .on_conflict_do_nothing(constraint="uq_etf_metric_snapshot")
+        .returning(EtfMetricSnapshot.id)
+    )
+    return len(session.scalars(statement).all())
 
 
 def market_prices_frame(

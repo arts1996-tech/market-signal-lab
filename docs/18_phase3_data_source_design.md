@@ -8,24 +8,24 @@
 
 | 対象 | 第1候補 | 扱い | 制約・注意 |
 | --- | --- | --- | --- |
-| 日本株・日本ETFの財務サマリー | J-Quants Financial Summary/Statements | 既存J-Quants Free planの範囲を公式条件確認後に採用候補 | 株価同様の遅延・レート制限・再配布条件を表示する |
+| 日本株・日本ETFの財務サマリー | J-Quants Financial Summary/Statements | 単銘柄入口のみ。Freeでの自動収集は保留 | 2026-08-16の公開プラン表ではFree対象外表示。契約プランと私的利用条件を確認する |
 | 日本ETFの銘柄属性 | J-Quants Listed Issue Information | 採用 | ETF区分、連動対象、名称など取得可能な項目だけ保存する |
-| 米国株・米国ETFの財務 | 未採用 | 保留 | 無料枠、利用規約、再配布条件を確認するまで導入しない |
+| 米国株・米国ETFの財務 | SEC Company Facts | 単銘柄明示実行で採用 | 識別User-Agent、Fair Access、CIK一致を必須とし、価格データには使用しない |
 | マクロ・為替 | FRED | 既存採用 | 観測値・改訂・ヴィンテージを保持し、OHLCVに見せかけない |
 
-J-Quantsの公式資料ではFinancial Summary/Statements（BS/PL/CF）が提供項目として掲載されているが、料金・利用範囲は契約条件に依存するため、実装前にFree planの現行仕様を再確認する。FREDは公式APIで観測値、改訂時点、ヴィンテージ指定を提供するため、財務の代替としてではなくマクロ系列に限定する。
+J-Quantsの公式資料ではFinancial Summary/Statements（BS/PL/CF）が提供項目として掲載されているが、2026-08-16の公開プラン表ではFree対象外表示である。契約中プランの権限を確認せずに自動収集しない。FREDは公式APIで観測値、改訂時点、ヴィンテージ指定を提供するため、財務の代替としてではなくマクロ系列に限定する。
 
 ## 実装順
 
 1. `FundamentalsProvider`と`EtfMetricsProvider`の交換可能な境界を追加する。
 2. サンプルJSONを使ったパーサー、型・範囲・単位・通貨・発表日時の検証を追加する。
 3. DB保存モデルと来歴をMac側で検証する。
-4. ユーザー承認と公式条件確認後にJ-Quants財務取得を実装する。
-5. 米国株・ETFデータは別途無料条件を確認し、同じ境界へ接続する。
+4. J-Quants財務とSEC Company Factsは単銘柄明示実行で共通サービスへ接続する。
+5. 自動全銘柄収集は公式条件を再確認し、ユーザー承認後に別タスクとして設計する。
 
 財務値、ETF経費率、NAV、構成銘柄が取得できない場合はNULLとし、価格や指標を推測しない。財務発表日時より前の分析へ将来値を混入させない。
 
-現時点では、`normalize_financial_summary`が銘柄コード・開示日時・期間末を必須検証し、既知の財務数値だけを数値化する。J-Quants財務サマリーは既存の明示実行ジョブで保存する。SECについては、Company Facts JSONの正規化、User-Agent必須の読み取りクライアント、CIKマッピング、許可リスト式の米国資産登録、単銘柄の明示保存ジョブまでをMac側で実装・検証済みである。SECの自動収集、全銘柄登録、価格データ取得、ラズパイでのSECデータ収集はまだ行わない。
+現時点では、`normalize_financial_summary`が銘柄コード・開示日時・期間末を必須検証し、既知の財務数値だけを数値化する。J-Quants財務、SEC Company Facts、レビュー済みETF JSONは`phase3_collection_service`へ統合し、入力検証、資産照合、Repositoryによる冪等保存、取得ログ、`JobRun`、失敗分類を共通化した。SECはCompany Facts取得前にUSD資産とCIKの完全一致を要求する。J-Quants／SECは単銘柄の明示保存ジョブだけを維持し、自動収集、全銘柄登録、価格データ取得、ラズパイでのSECデータ収集はまだ行わない。2026-08-16の公式条件再確認は`docs/data_sources.md`を正本とする。
 
 ## 公式確認先
 

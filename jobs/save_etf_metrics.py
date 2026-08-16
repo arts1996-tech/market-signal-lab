@@ -2,14 +2,11 @@
 
 import argparse
 import json
-from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import select
-
-from app.analysis.etf_metrics import normalize_etf_metrics
-from app.database.models import Asset, EtfMetricSnapshot
+from app.core.logging import configure_logging
 from app.database.session import SessionLocal
+from app.services.phase3_collection_service import save_reviewed_etf_metrics
 
 
 def main() -> None:
@@ -17,21 +14,12 @@ def main() -> None:
     parser.add_argument("--file", required=True, type=Path)
     parser.add_argument("--source", default="provider_reviewed")
     args = parser.parse_args()
-    rows = json.loads(args.file.read_text(encoding="utf-8"))
-    normalized = normalize_etf_metrics(rows if isinstance(rows, list) else rows.get("items", []))
-    saved = 0
+    configure_logging()
     with SessionLocal() as session:
-        for row in normalized.to_dict("records"):
-            asset = session.scalar(select(Asset).where(Asset.symbol == row["symbol"], Asset.asset_type == "etf"))
-            if asset is None:
-                continue
-            exists = session.scalar(select(EtfMetricSnapshot).where(EtfMetricSnapshot.asset_id == asset.id, EtfMetricSnapshot.observed_at == row["observed_at"], EtfMetricSnapshot.source == args.source))
-            if exists is None:
-                details = {key: value for key, value in row.items() if key not in {"symbol", "observed_at"}}
-                session.add(EtfMetricSnapshot(asset_id=asset.id, observed_at=row["observed_at"], source=args.source, details=details, fetched_at=datetime.now(UTC)))
-                saved += 1
-        session.commit()
-    print(json.dumps({"valid_rows": len(normalized), "saved_rows": saved}, ensure_ascii=False, indent=2))
+        result = save_reviewed_etf_metrics(session, args.file, args.source)
+    print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+    if result["status"] == "error":
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
