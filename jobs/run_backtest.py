@@ -7,7 +7,9 @@ from app.core.logging import configure_logging
 from app.database.session import SessionLocal
 from app.services.market_service import record_job
 from app.analysis.demo_portfolio import run_demo_portfolio_environment
+from app.backtest.audit import json_value
 from app.core.config import get_settings
+from app.services.backtest_service import run_real_walk_forward_backtest
 
 
 def parse_args() -> argparse.Namespace:
@@ -77,10 +79,28 @@ def main() -> None:
         }
         print(f"Phase-4 demo backtest summary: {summary}")
         return
-    with SessionLocal() as session:
-        details = {"status": "placeholder", "note": "Backtest engine module is ready for signal rules."}
-        record_job(session, "run_backtest", "success", started_at, details)
-    print(f"Backtest summary: {details}")
+    registry_path = args.validation_registry_path or "data/validation/live-windows.json"
+    try:
+        with SessionLocal() as session:
+            details = run_real_walk_forward_backtest(
+                session,
+                validation_registry_path=registry_path,
+            )
+            record_job(session, "run_backtest", details["status"], started_at, details)
+    except Exception as exc:
+        try:
+            with SessionLocal() as session:
+                record_job(
+                    session,
+                    "run_backtest",
+                    "error",
+                    started_at,
+                    {"error_type": type(exc).__name__},
+                )
+        except Exception:
+            pass
+        raise
+    print(json.dumps(json_value(details), ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

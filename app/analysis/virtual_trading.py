@@ -149,7 +149,8 @@ def build_virtual_trades(
     score_threshold: int = 70,
     holding_days: int = 5,
     min_observations: int = 30,
-    max_trades: int = 50,
+    max_trades: int | None = 50,
+    recent_signal_sessions: int | None = 11,
 ) -> pd.DataFrame:
     if japan_prices.empty:
         return pd.DataFrame()
@@ -175,7 +176,13 @@ def build_virtual_trades(
             continue
         indicators = short_term_indicator_frame(close)
         name = group["name"].dropna().iloc[-1] if "name" in group and not group["name"].dropna().empty else symbol
-        start_location = max(min_observations - 1, len(close) - holding_days - 11)
+        if recent_signal_sessions is None:
+            start_location = min_observations - 1
+        else:
+            start_location = max(
+                min_observations - 1,
+                len(close) - holding_days - recent_signal_sessions,
+            )
         for location in range(start_location, len(close) - holding_days):
             signal_date = close.index[location]
             row = indicators.loc[signal_date]
@@ -225,7 +232,8 @@ def build_virtual_trades(
 
     if not rows:
         return pd.DataFrame()
-    return pd.DataFrame(rows).sort_values("signal_date", ascending=False).head(max_trades)
+    result = pd.DataFrame(rows).sort_values("signal_date", ascending=False)
+    return result if max_trades is None else result.head(max_trades)
 
 
 def summarize_virtual_trade_feedback(trades: pd.DataFrame) -> dict[str, dict]:

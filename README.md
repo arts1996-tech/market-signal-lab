@@ -8,7 +8,7 @@
 
 > **現在の利用上の重要事項:** 現時点の仮想口座と候補スコアは、実際の売買判断や投資額決定の主な根拠にできる成熟度には達していません。正直な評価、利用してよい範囲、実投資支援前の必須品質ゲートは [docs/19_investment_decision_readiness_assessment.md](docs/19_investment_decision_readiness_assessment.md) を参照してください。
 
-> **現行ToDoの正本:** 今後の最優先事項、実装順序、未完了項目、完了条件は [docs/22_current_priority_todo.md](docs/22_current_priority_todo.md) に一本化しています。過去文書に残る「次の作業」より、この文書を優先します。`NOW-P0-1`〜`NOW-P0-5`の実装は完了しました。最初の実営業日の自動成功記録を監視しながら、次は偽の成功を廃止する`NOW-P1-1`です。
+> **現行ToDoの正本:** 今後の最優先事項、実装順序、未完了項目、完了条件は [docs/22_current_priority_todo.md](docs/22_current_priority_todo.md) に一本化しています。過去文書に残る「次の作業」より、この文書を優先します。`NOW-P0-1`〜`NOW-P0-5`と`NOW-P1-1`の実装は完了しました。前向き口座の最初の実営業日を監視しながら、次は中期分析ジョブを実装する`NOW-P1-2`です。
 
 GitHub: https://github.com/arts1996-tech/market-signal-lab
 
@@ -291,7 +291,7 @@ docker compose exec app python jobs/run_mid_term_analysis.py
 docker compose exec app python jobs/run_backtest.py
 ```
 
-`run_mid_term_analysis.py`と通常モードの`run_backtest.py`は、2026-08-16時点ではplaceholderであり、分析完了を意味しません。偽の`success`を廃止して実サービスへ接続する作業は、[docs/22_current_priority_todo.md](docs/22_current_priority_todo.md)の`NOW-P1-1`、`NOW-P1-2`で管理します。デモバックテストは別途、明示したデモモードで実行できます。
+`run_mid_term_analysis.py`はまだplaceholderであり、分析完了を意味しません。偽の`success`を廃止して実サービスへ接続する作業は、[docs/22_current_priority_todo.md](docs/22_current_priority_todo.md)の`NOW-P1-2`で管理します。通常モードの`run_backtest.py`は実データ用ウォークフォワード検証へ接続済みで、条件不足を`success`にせず理由付き`insufficient_data`として`job_runs`へ保存します。デモバックテストは別途、明示したデモモードで実行できます。
 
 J-Quants Free planはAPI制限が5件/分のため、複数銘柄の連続取得では余裕を持って15秒以上の間隔を空けます。日付を指定する場合は、直近12週間を避け、かつFree planの取得範囲内になる過去2年程度の日付を指定します。
 一括取得は最初に `--limit 3` 程度で確認してから増やします。
@@ -342,7 +342,9 @@ Macで平日18:30、20:30、22:30に上記の研究スナップショットを�
 
 利用者は画面上部の「システム管理」を選び、「前向き仮想口座の日次監視」で対象営業日、短期・中期の記録数、最終成功、当日失敗回数、欠測営業日、保存容量、JSON監査を確認できます。3回すべて失敗した日は警告し、翌日のデータで後付けしません。2026-08-16の非営業日試運転では`started`／`skipped`とホスト側成功を確認済みです。最初の実営業日に短期・中期の成功記録とJSONが作られることは継続監視項目です。
 
-`jobs/run_backtest.py --demo --validation-registry-path /app/data/validation/windows.json`を指定すると、シミュレーターを呼ぶ前に口座別の未見期間を登録します。同じ口座の重複期間を変更後ルールで再評価しようとすると停止します。短期口座と中期口座は別の評価系列です。レジストリはGit対象外であり、画面表示だけでは書き込みません。同じファイルを複数プロセスから同時更新する運用は行いません。
+通常の`jobs/run_backtest.py`は、全J-Quants株・ETFのうち有効な調整済みOHLCVが東証営業日で連続する銘柄だけを使います。短期は学習60＋検証20の80営業日、中期は学習120＋検証20の140営業日を最低条件とし、各250万円、日経平均ベンチマーク、手数料0.10%、税率0%、前営業日売買代金と流動性コストを使って別系列で評価します。現状のMac DBは最大11営業日のため、両方とも`insufficient_contiguous_price_history`です。結果には入力ハッシュ、ルールハッシュ、費用、リスク規則、検証窓を保存します。TOPIX・単純保有との追加比較は`NOW-P2-3`の残課題です。
+
+実データでは既定の`data/validation/live-windows.json`、デモでは`--validation-registry-path /app/data/validation/windows.json`で、シミュレーターを呼ぶ前に口座別の未見期間を登録します。同じ口座の重複期間を変更後ルールで再評価しようとすると停止します。短期口座と中期口座は別の評価系列です。レジストリはGit対象外であり、画面表示だけでは書き込みません。同じファイルを複数プロセスから同時更新する運用は行いません。
 
 候補抽出、短期スクリーニング、仮想評価には、日本株・ETFについて東証カレンダー上で連続する、重複しない有効な調整済み日次データが30営業日以上必要です。年単位の空白や未取得セッションをまたいで騰落率を計算しません。20日指標はこの品質ゲート通過後に利用し、50日・75日移動平均はそれぞれ必要な観測数がそろった銘柄だけで利用します。
 
