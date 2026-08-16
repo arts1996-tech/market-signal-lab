@@ -16,6 +16,10 @@ from app.database.models import (
     PriceCollectionTarget,
     SpilloverFeature,
     SpilloverModelResult,
+    VirtualAccount,
+    VirtualAccountDailyState,
+    VirtualAccountEvent,
+    uuid_pk,
 )
 from app.core.data_source_policy import source_priority
 
@@ -550,4 +554,144 @@ def latest_successful_job_run(session: Session, job_name: str) -> JobRun | None:
         .where(JobRun.job_name == job_name, JobRun.status == "success")
         .order_by(JobRun.finished_at.desc())
         .limit(1)
+    )
+
+
+class VirtualAccountStateConflict(RuntimeError):
+    """Raised when a frozen account/day would be replaced or become non-deterministic."""
+
+
+def get_or_create_virtual_account(session: Session, values: dict) -> VirtualAccount:
+    account_id = uuid_pk()
+    stmt = (
+        pg_insert(VirtualAccount)
+        .values(id=account_id, **values)
+        .on_conflict_do_nothing(constraint="uq_virtual_accounts_account_name")
+        .returning(VirtualAccount.id)
+    )
+    inserted_id = session.scalar(stmt)
+    lookup = (
+        VirtualAccount.id == inserted_id
+        if inserted_id
+        else VirtualAccount.account_name == values["account_name"]
+    )
+    account = session.scalar(
+        select(VirtualAccount).where(lookup)
+    )
+    if account is None:
+        raise RuntimeError("virtual account could not be created or loaded")
+    immutable_fields = ("label", "currency", "strategy_version", "state_version")
+    mismatched = [
+        field
+        for field in immutable_fields
+        if str(getattr(account, field)) != str(values[field])
+    ]
+    if float(account.initial_cash) != float(values["initial_cash"]):
+        mismatched.append("initial_cash")
+    if mismatched:
+        raise VirtualAccountStateConflict(
+            f"virtual account metadata is immutable; mismatched fields: {mismatched}"
+        )
+    return account
+
+
+def insert_virtual_account_daily_state(
+    session: Session,
+    values: dict,
+) -> tuple[VirtualAccountDailyState, bool]:
+    state_id = uuid_pk()
+    stmt = (
+        pg_insert(VirtualAccountDailyState)
+        .values(id=state_id, **values)
+        .on_conflict_do_nothing(
+            constraint="uq_virtual_account_daily_state_session"
+        )
+        .returning(VirtualAccountDailyState.id)
+    )
+    inserted_id = session.scalar(stmt)
+    if inserted_id:
+        state = session.get(VirtualAccountDailyState, inserted_id)
+        if state is None:
+            raise RuntimeError("inserted virtual account state could not be loaded")
+        return state, True
+
+    state = session.scalar(
+        select(VirtualAccountDailyState).where(
+            VirtualAccountDailyState.account_id == values["account_id"],
+            VirtualAccountDailyState.session_date == values["session_date"],
+        )
+    )
+    if state is None:
+        raise RuntimeError("existing virtual account state could not be loaded")
+    if (
+        state.input_data_version == values["input_data_version"]
+        and state.input_hash == values["input_hash"]
+    ):
+        return state, False
+    raise VirtualAccountStateConflict(
+        "virtual account day is already frozen with a different input or result"
+    )
+
+
+def insert_virtual_account_events(session: Session, rows: Iterable[dict]) -> int:
+    payload = list(rows)
+    if not payload:
+        return 0
+    stmt = pg_insert(VirtualAccountEvent).values(payload)
+    inserted_ids = session.scalars(
+        stmt.on_conflict_do_nothing(
+            constraint="uq_virtual_account_event_id"
+        ).returning(VirtualAccountEvent.id)
+    )
+    return len(list(inserted_ids))
+
+
+def latest_virtual_account_daily_state(
+    session: Session,
+    account_id: str,
+) -> VirtualAccountDailyState | None:
+    return session.scalar(
+        select(VirtualAccountDailyState)
+        .where(VirtualAccountDailyState.account_id == account_id)
+        .order_by(VirtualAccountDailyState.session_date.desc())
+        .limit(1)
+    )
+
+
+def list_virtual_accounts(session: Session) -> list[VirtualAccount]:
+    return list(session.scalars(select(VirtualAccount).order_by(VirtualAccount.account_name)))
+
+
+def get_virtual_account_by_name(
+    session: Session,
+    account_name: str,
+) -> VirtualAccount | None:
+    return session.scalar(
+        select(VirtualAccount).where(VirtualAccount.account_name == account_name)
+    )
+
+
+def virtual_account_daily_state_for_date(
+    session: Session,
+    account_id: str,
+    session_date: date,
+) -> VirtualAccountDailyState | None:
+    return session.scalar(
+        select(VirtualAccountDailyState).where(
+            VirtualAccountDailyState.account_id == account_id,
+            VirtualAccountDailyState.session_date == session_date,
+        )
+    )
+
+
+def virtual_account_events_for_state(
+    session: Session,
+    daily_state_id: str,
+) -> list[VirtualAccountEvent]:
+    return list(
+        session.scalars(
+            select(VirtualAccountEvent)
+            .where(VirtualAccountEvent.daily_state_id == daily_state_id)
+            .order_by(VirtualAccountEvent.event_at, VirtualAccountEvent.event_id)
+        )
     )

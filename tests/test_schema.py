@@ -1,4 +1,12 @@
-from app.database.models import CorrelationResult, MarketPrice, SpilloverFeature, SpilloverModelResult
+from app.database.models import (
+    CorrelationResult,
+    MarketPrice,
+    SpilloverFeature,
+    SpilloverModelResult,
+    VirtualAccount,
+    VirtualAccountDailyState,
+    VirtualAccountEvent,
+)
 from app.database.repositories import chunked
 from app.core.config import Settings
 
@@ -37,6 +45,22 @@ def test_spillover_model_result_has_duplicate_prevention_constraint():
     constraints = {constraint.name for constraint in SpilloverModelResult.__table__.constraints}
 
     assert "uq_spillover_model_result_input" in constraints
+
+
+def test_virtual_account_ledger_has_freeze_and_event_idempotency_constraints():
+    account_constraints = {
+        constraint.name for constraint in VirtualAccount.__table__.constraints
+    }
+    state_constraints = {
+        constraint.name for constraint in VirtualAccountDailyState.__table__.constraints
+    }
+    event_constraints = {
+        constraint.name for constraint in VirtualAccountEvent.__table__.constraints
+    }
+
+    assert "uq_virtual_accounts_account_name" in account_constraints
+    assert "uq_virtual_account_daily_state_session" in state_constraints
+    assert "uq_virtual_account_event_id" in event_constraints
 
 
 def test_chunked_splits_large_payloads():

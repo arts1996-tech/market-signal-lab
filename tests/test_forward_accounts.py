@@ -5,6 +5,11 @@ from app.analysis.market_calendar import exchange_calendar
 from app.backtest.forward_account import advance_forward_accounts_as_of
 from app.backtest.ohlc import MarketImpactAssumptions, PortfolioRiskRules
 from app.backtest.portfolio import ExecutionAssumptions
+from app.services.forward_account_ledger import (
+    build_virtual_account_daily_state,
+    build_virtual_account_events,
+    persist_forward_accounts,
+)
 
 
 def _sessions(count: int = 5) -> pd.DatetimeIndex:
@@ -206,3 +211,75 @@ def test_forward_account_excludes_future_prices_from_state():
         account["last_market_session"] == pd.Timestamp(dates[1], tz="UTC")
         for account in result["accounts"].values()
     )
+
+
+def test_daily_ledger_hash_is_stable_across_same_day_observation_retries():
+    dates = _sessions()
+    result = _advance(_signal(), _prices(), dates[0])
+    account = result["accounts"]["short_term"]
+
+    first = build_virtual_account_daily_state(
+        account, observed_at=dates[0] + pd.Timedelta(hours=9)
+    )
+    retried = build_virtual_account_daily_state(
+        account, observed_at=dates[0] + pd.Timedelta(hours=12)
+    )
+
+    assert first["state"]["session_date"] == retried["state"]["session_date"]
+    assert first["state"]["input_data_version"] == retried["state"]["input_data_version"]
+    assert first["state"]["input_hash"] == retried["state"]["input_hash"]
+
+
+def test_daily_ledger_emits_decision_plan_skip_execution_closure_and_balance():
+    dates = _sessions()
+    first = _advance(_signal(), _prices(), dates[0])
+    first_account = first["accounts"]["short_term"]
+    decisions = pd.DataFrame(
+        [
+            {
+                "decision_at": dates[0],
+                "symbol": "A",
+                "status": "eligible_signal",
+                "decision": "買い候補",
+            },
+            {
+                "decision_at": dates[0],
+                "symbol": "B",
+                "status": "below_score_threshold",
+                "decision": "待機",
+            },
+        ]
+    )
+    first_types = {
+        event["event_type"]
+        for event in build_virtual_account_events(
+            first_account, observed_at=dates[0], decisions=decisions
+        )
+    }
+
+    second = _advance(
+        pd.DataFrame(), _prices(), dates[1], previous_states=first["accounts"]
+    )
+    third = _advance(
+        pd.DataFrame(), _prices(), dates[2], previous_states=second["accounts"]
+    )
+    third_types = {
+        event["event_type"]
+        for event in build_virtual_account_events(
+            third["accounts"]["short_term"], observed_at=dates[2]
+        )
+    }
+
+    assert {"decision", "planned_execution", "skip", "daily_balance"}.issubset(
+        first_types
+    )
+    assert {"execution", "closure", "daily_balance"}.issubset(third_types)
+
+
+def test_ledger_requires_both_independent_accounts_before_database_write():
+    with pytest.raises(ValueError, match="short_term and mid_term"):
+        persist_forward_accounts(
+            None,
+            {"accounts": {"short_term": {}}},
+            observed_at=_sessions()[0],
+        )

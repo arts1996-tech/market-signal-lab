@@ -1,5 +1,5 @@
 from dataclasses import asdict, is_dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from hashlib import sha256
 import json
@@ -13,17 +13,20 @@ EXECUTION_VERSION = "ohlc-next-open-conservative-v2"
 DECISION_CARD_VERSION = "decision-card-v2"
 
 
-def _json_value(value: Any) -> Any:
+def json_value(value: Any) -> Any:
     if is_dataclass(value):
-        return {key: _json_value(item) for key, item in asdict(value).items()}
+        return {key: json_value(item) for key, item in asdict(value).items()}
     if isinstance(value, dict):
-        return {str(key): _json_value(item) for key, item in sorted(value.items())}
+        return {str(key): json_value(item) for key, item in sorted(value.items())}
     if isinstance(value, (list, tuple)):
-        return [_json_value(item) for item in value]
+        return [json_value(item) for item in value]
     if isinstance(value, pd.Timestamp):
         return value.isoformat()
     if isinstance(value, datetime):
-        return value.astimezone(UTC).isoformat()
+        normalized = value.replace(tzinfo=UTC) if value.tzinfo is None else value
+        return normalized.astimezone(UTC).isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
     if isinstance(value, Decimal):
         return float(value)
     try:
@@ -38,7 +41,7 @@ def _json_value(value: Any) -> Any:
 
 def stable_payload_hash(payload: Any) -> str:
     canonical = json.dumps(
-        _json_value(payload), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        json_value(payload), ensure_ascii=False, sort_keys=True, separators=(",", ":")
     )
     return sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -50,7 +53,7 @@ def frame_hash(frame: pd.DataFrame, columns: list[str] | None = None) -> str:
         column for column in (columns or list(frame.columns)) if column in frame
     ]
     records = [
-        {column: _json_value(row[column]) for column in selected_columns}
+        {column: json_value(row[column]) for column in selected_columns}
         for row in frame[selected_columns].to_dict(orient="records")
     ]
     canonical_records = sorted(
@@ -117,8 +120,8 @@ def build_run_manifest(
         "input_data_version": input_data_version or price_hash,
         "signal_hash": signal_hash,
         "price_hash": price_hash,
-        "assumptions": _json_value(assumptions),
-        "risk_rules": _json_value(risk_rules),
+        "assumptions": json_value(assumptions),
+        "risk_rules": json_value(risk_rules),
     }
     return {
         **deterministic,

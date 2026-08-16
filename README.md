@@ -8,7 +8,7 @@
 
 > **現在の利用上の重要事項:** 現時点の仮想口座と候補スコアは、実際の売買判断や投資額決定の主な根拠にできる成熟度には達していません。正直な評価、利用してよい範囲、実投資支援前の必須品質ゲートは [docs/19_investment_decision_readiness_assessment.md](docs/19_investment_decision_readiness_assessment.md) を参照してください。
 
-> **現行ToDoの正本:** 今後の最優先事項、実装順序、未完了項目、完了条件は [docs/22_current_priority_todo.md](docs/22_current_priority_todo.md) に一本化しています。過去文書に残る「次の作業」より、この文書を優先します。`NOW-P0-1`と`NOW-P0-2`は完了し、次は追記専用の口座台帳と日次状態を永続化する`NOW-P0-3`です。
+> **現行ToDoの正本:** 今後の最優先事項、実装順序、未完了項目、完了条件は [docs/22_current_priority_todo.md](docs/22_current_priority_todo.md) に一本化しています。過去文書に残る「次の作業」より、この文書を優先します。`NOW-P0-1`〜`NOW-P0-3`は完了し、次は遅延研究と現在判断をデータ上も分離する`NOW-P0-4`です。
 
 GitHub: https://github.com/arts1996-tech/market-signal-lab
 
@@ -326,7 +326,15 @@ FRED由来の指数データは高値、安値、出来高を含まないため�
 
 通常モードには、短期`forward-short-term-v1`と中期`forward-mid-term-v1`の独立口座状態があります。各250万円から開始し、短期は利益確定8%・損切り5%・最大10営業日、中期は利益確定18%・損切り10%・最大60営業日です。現金、保有、予定注文、実現／未実現／累積損益、最大ドローダウンを次の呼び出しへ渡せます。画面では「仮想投資評価」タブの「短期・中期の独立仮想口座」で確認できます。
 
-ただし、DBへの追記保存と再起動後の自動復元は`NOW-P0-3`で実装します。それまでは不変シグナル履歴と既知価格から状態を決定論的に再構築します。将来結果を使う旧1口座経路と現行JSONは「遅延価格による研究スナップショット」として残し、正式な6〜12か月の前向き検証期間へ算入しません。完成作業は[docs/22_current_priority_todo.md](docs/22_current_priority_todo.md)の`NOW-P0-3`以降を参照してください。自動売買、証券口座への接続、実注文は行いません。
+`NOW-P0-3`では、PostgreSQLへ短期・中期の口座、日次状態、判断、約定予定、約定、決済、見送り、日次残高を追記保存する基盤を追加しました。同じ口座・JST営業日の最初の状態を固定し、同一入力・同一結果の再実行だけを冪等に受け付けます。異なる後発入力による置換と、台帳行のUPDATE／DELETEは拒否します。再起動後は最新の日次状態と不変シグナル履歴を読み出し、同じ決定論的エンジンへ戻せます。DBを正本とし、JSONは`export_virtual_account_day`による監査用コピーに限定します。
+
+Mac側DBは`0011_virtual_account_ledger`まで適用済みです。新規環境では通常どおり次を実行します。
+
+```bash
+docker compose exec app alembic upgrade head
+```
+
+ただし、現在の定期ジョブと保存ボタンは引き続き「遅延価格による研究スナップショットJSON」です。新DB台帳への自動記録は、`NOW-P0-4`で`delayed_historical`と`current_market`を明示的に分離してから接続します。それまでは新台帳を正式な前向き観察期間へ算入しません。Raspberry Piには`0011`を未適用です。将来結果を使う旧1口座経路も研究用として残し、自動売買、証券口座への接続、実注文は行いません。
 
 Macで平日18:30、20:30、22:30に上記の研究スナップショットを再試行する`launchd`設定は`docker/macos/com.arts1996.market-signal-lab-forward-shadow.plist`です。ログイン時にも呼びますが、JST 18:30より前、東証非営業日、当日保存済みの場合は分析前に正常終了します。Docker Desktopが起動していることを前提とし、標準出力とエラーは`logs/`へ保存します。2026-08-16にユーザー承認のもと`~/Library/LaunchAgents/com.arts1996.market-signal-lab-forward-shadow.plist`へ登録済みです。Macが停止中またはDocker Desktopが未起動の場合は後続時刻で再試行しますが、翌日に前日分を後付け生成しません。最初の実営業日後にログと`data/forward_shadow/`を確認します。正式な継続口座完成後にラズパイを常時運用の実行主体へ切り替える手順は[docs/21_forward_shadow_operations.md](docs/21_forward_shadow_operations.md)を参照してください。
 

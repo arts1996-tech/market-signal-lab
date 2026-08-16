@@ -2,7 +2,7 @@ from datetime import date, datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -265,3 +265,97 @@ class PriceCollectionItem(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class VirtualAccount(Base):
+    __tablename__ = "virtual_accounts"
+    __table_args__ = (
+        UniqueConstraint("account_name", name="uq_virtual_accounts_account_name"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    account_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    label: Mapped[str] = mapped_column(String(64), nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), nullable=False)
+    initial_cash: Mapped[float] = mapped_column(Numeric(20, 4), nullable=False)
+    strategy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    state_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class VirtualAccountDailyState(Base):
+    __tablename__ = "virtual_account_daily_states"
+    __table_args__ = (
+        UniqueConstraint(
+            "account_id", "session_date", name="uq_virtual_account_daily_state_session"
+        ),
+        Index(
+            "ix_virtual_account_daily_states_lookup",
+            "account_id",
+            "session_date",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    account_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("virtual_accounts.id"), nullable=False
+    )
+    session_date: Mapped[date] = mapped_column(Date, nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_market_session: Mapped[date | None] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    input_data_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    cash: Mapped[float] = mapped_column(Numeric(20, 4), nullable=False)
+    equity: Mapped[float] = mapped_column(Numeric(20, 4), nullable=False)
+    realized_pnl: Mapped[float] = mapped_column(Numeric(20, 4), nullable=False)
+    unrealized_pnl: Mapped[float] = mapped_column(Numeric(20, 4), nullable=False)
+    cumulative_pnl: Mapped[float] = mapped_column(Numeric(20, 4), nullable=False)
+    maximum_drawdown: Mapped[float] = mapped_column(Numeric(12, 8), nullable=False)
+    risk_halted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    positions: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    pending_orders: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
+    signal_history: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class VirtualAccountEvent(Base):
+    __tablename__ = "virtual_account_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "account_id", "event_id", name="uq_virtual_account_event_id"
+        ),
+        Index(
+            "ix_virtual_account_events_lookup",
+            "account_id",
+            "session_date",
+            "event_type",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    account_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("virtual_accounts.id"), nullable=False
+    )
+    daily_state_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("virtual_account_daily_states.id"), nullable=False
+    )
+    session_date: Mapped[date] = mapped_column(Date, nullable=False)
+    event_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    event_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    input_data_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

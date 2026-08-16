@@ -29,6 +29,9 @@
 - gemini_runs
 - slack_conversations
 - notifications
+- virtual_accounts
+- virtual_account_daily_states
+- virtual_account_events
 
 ## assets主要項目
 - id
@@ -73,3 +76,14 @@
 - DBはUTC
 - 取引所タイムゾーンを別途保持
 - 画面はJSTを基本に、必要に応じ現地時刻を併記
+
+## 仮想口座台帳
+
+`virtual_accounts`は短期・中期それぞれの通貨、初期資金、戦略版、状態版を保持する。`virtual_account_daily_states`は口座・JST営業日ごとに最初の現金、評価額、損益、最大ドローダウン、保有、翌日注文、不変シグナル履歴を固定する。`virtual_account_events`は判断、約定予定、約定、決済、見送り、日次残高を個別の追記イベントとして保持する。
+
+- 同じ口座・営業日は一意とし、入力版と状態ハッシュが一致する再実行だけを冪等に扱う。
+- 異なる後発入力で同じ営業日を置換しない。
+- 3テーブルのUPDATE／DELETEはDB triggerで拒否する。訂正が必要な場合は、将来の明示的な訂正イベントとして設計し、既存行を変更しない。
+- 再起動後は最新の日次状態とシグナル履歴を読み、決定論的な口座エンジンへ復元する。
+- PostgreSQLを正本とする。JSONは日次状態とイベントを含む監査エクスポートであり、唯一の口座状態にしない。
+- `0011_virtual_account_ledger`はMac側で往復検証済みだが、Raspberry Piへはユーザー承認前に適用しない。

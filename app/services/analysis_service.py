@@ -807,6 +807,7 @@ def load_movement_and_virtual_trade_analysis(
     score_threshold: int = 70,
     holding_days: int = 5,
     signal_as_of=None,
+    previous_forward_states: dict[str, dict] | None = None,
 ) -> dict:
     index_prices = market_prices_frame(
         session, DEFAULT_SYMBOLS, source_policy=market_price_source_policy()
@@ -910,6 +911,7 @@ def load_movement_and_virtual_trade_analysis(
         signal_generation["signals"],
         japan_prices,
         as_of=signal_generation["decision_at"],
+        previous_states=previous_forward_states,
     )
     return {
         "index_prices": index_prices,

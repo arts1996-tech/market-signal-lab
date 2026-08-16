@@ -696,8 +696,9 @@ if active_page == "仮想投資評価":
         st.markdown("### 短期・中期の独立仮想口座")
         st.info(
             "短期・中期はそれぞれ250万円から開始し、資金移動を行いません。"
-            "日次状態を次回へ渡せる計算基盤まで実装済みです。"
-            "DBへの追記保存と画面再読み込み後の自動復元は次のNOW-P0-3で追加します。"
+            "追記専用DB台帳と再起動後の復元基盤まで実装済みです。"
+            "この画面は遅延研究データのため、DBへの自動日次記録は現在判断系統を分離する"
+            "NOW-P0-4の完了後に接続します。"
         )
         forward_accounts = virtual_data["forward_accounts"]
         for account in forward_accounts["accounts"].values():
