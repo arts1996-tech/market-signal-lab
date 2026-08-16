@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time
 import argparse
 from pathlib import Path
 
@@ -38,7 +38,43 @@ def parse_args() -> argparse.Namespace:
         "--observed-at",
         help="Optional ISO-8601 observation time for controlled replay and testing.",
     )
+    parser.add_argument(
+        "--not-before-jst",
+        help="Optional HH:MM cutoff. Daily recording exits successfully before this JST time.",
+    )
     return parser.parse_args()
+
+
+def _parse_time(value: str | None) -> time | None:
+    if value is None:
+        return None
+    try:
+        hour_text, minute_text = value.split(":", maxsplit=1)
+        parsed = time(hour=int(hour_text), minute=int(minute_text))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("not-before-jst must use HH:MM") from exc
+    return parsed
+
+
+def daily_preflight_reason(
+    output_dir: str | Path,
+    account_names: list[str],
+    observed_at: pd.Timestamp,
+    *,
+    not_before_jst: str | None = None,
+) -> str | None:
+    local = observed_at.tz_convert("Asia/Tokyo")
+    local_date = local.normalize()
+    if not is_exchange_session(local_date, "XTKS"):
+        return f"{local_date.date()} is not a Tokyo Stock Exchange session"
+    cutoff = _parse_time(not_before_jst)
+    if cutoff is not None and local.time().replace(tzinfo=None) < cutoff:
+        return f"current JST time is before the {not_before_jst} recording cutoff"
+    date_label = local.strftime("%Y-%m-%d")
+    paths = [Path(output_dir) / name / f"{date_label}.json" for name in account_names]
+    if paths and all(path.exists() for path in paths):
+        return f"all account snapshots for {date_label} are already frozen"
+    return None
 
 
 def main() -> None:
@@ -49,13 +85,18 @@ def main() -> None:
         observed_at = observed_at.tz_localize("UTC")
     else:
         observed_at = observed_at.tz_convert("UTC")
-    observation_date_jst = observed_at.tz_convert("Asia/Tokyo").normalize()
-    if args.daily and not is_exchange_session(observation_date_jst, "XTKS"):
-        print(
-            f"Forward-shadow skipped: {observation_date_jst.date()} is not a Tokyo Stock Exchange session."
-        )
-        return
     settings = get_settings()
+    expected_accounts = ["short_term", "mid_term"] if args.demo else ["live_long_only"]
+    if args.daily:
+        reason = daily_preflight_reason(
+            args.output_dir,
+            expected_accounts,
+            observed_at,
+            not_before_jst=args.not_before_jst,
+        )
+        if reason:
+            print(f"Forward-shadow skipped: {reason}.")
+            return
     if args.demo:
         if settings.market_data_mode != "demo":
             raise SystemExit("Synthetic forward recording requires MARKET_DATA_MODE=demo.")

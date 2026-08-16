@@ -314,7 +314,7 @@ FRED由来の指数データは高値、安値、出来高を含まないため�
 
 画面の「現在結果を前向き観察として保存」ボタン、または`jobs/run_forward_shadow.py`で、その時点の監査ID・判断カード・成績・保有・取引・見送り理由・ベンチマーク比較を`data/forward_shadow/`へJSON保存できます。このディレクトリはGit対象外です。`--daily`ではJSTの東証営業日だけを対象に、口座ごとに最初の入力を`YYYY-MM-DD.json`へ固定します。同日の同一入力による再実行は冪等で、異なる入力による置換は拒否します。品質ゲート通過シグナルがない日も`no_eligible_signals_or_data_quality_gate`として記録し、「何も判断しなかった日」を欠落させません。自動売買、証券口座、DBへの取引登録は行いません。
 
-Macで平日18:30に上記の日次ジョブを呼ぶ`launchd`設定は`docker/macos/com.arts1996.market-signal-lab-forward-shadow.plist`です。Docker Desktopが起動していることを前提とし、標準出力とエラーは`logs/`へ保存します。2026-08-16にユーザー承認のもと`~/Library/LaunchAgents/com.arts1996.market-signal-lab-forward-shadow.plist`へ登録済みです。即時試運転は終了コード0で、日曜日のため正常に保存をスキップしました。Macが停止中またはDocker Desktopが未起動の場合は記録できないため、最初の実営業日後にログと`data/forward_shadow/`を確認します。
+Macで平日18:30、20:30、22:30に上記の日次ジョブを再試行する`launchd`設定は`docker/macos/com.arts1996.market-signal-lab-forward-shadow.plist`です。ログイン時にも呼びますが、JST 18:30より前、東証非営業日、当日保存済みの場合は分析前に正常終了します。Docker Desktopが起動していることを前提とし、標準出力とエラーは`logs/`へ保存します。2026-08-16にユーザー承認のもと`~/Library/LaunchAgents/com.arts1996.market-signal-lab-forward-shadow.plist`へ登録済みです。Macが停止中またはDocker Desktopが未起動の場合は後続時刻で再試行しますが、翌日に前日分を後付け生成しません。最初の実営業日後にログと`data/forward_shadow/`を確認します。将来ラズパイを常時運用の正式な実行主体にする際の停止・切替手順は[docs/21_forward_shadow_operations.md](docs/21_forward_shadow_operations.md)を参照してください。
 
 `jobs/run_backtest.py --demo --validation-registry-path /app/data/validation/windows.json`を指定すると、シミュレーターを呼ぶ前に口座別の未見期間を登録します。同じ口座の重複期間を変更後ルールで再評価しようとすると停止します。短期口座と中期口座は別の評価系列です。レジストリはGit対象外であり、画面表示だけでは書き込みません。同じファイルを複数プロセスから同時更新する運用は行いません。
 

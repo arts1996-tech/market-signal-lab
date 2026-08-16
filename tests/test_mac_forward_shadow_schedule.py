@@ -13,11 +13,15 @@ def test_mac_forward_shadow_schedule_is_live_daily_and_weekday_only():
 
     arguments = schedule["ProgramArguments"]
     assert arguments[0] == "/usr/local/bin/docker"
-    assert arguments[-1] == "--daily"
+    assert "--daily" in arguments
+    assert arguments[-2:] == ["--not-before-jst", "18:30"]
     assert "--demo" not in arguments
     assert schedule["WorkingDirectory"].endswith("/market-signal-lab")
     intervals = schedule["StartCalendarInterval"]
     assert {interval["Weekday"] for interval in intervals} == {2, 3, 4, 5, 6}
     assert {(interval["Hour"], interval["Minute"]) for interval in intervals} == {
-        (18, 30)
+        (18, 30),
+        (20, 30),
+        (22, 30),
     }
+    assert schedule["RunAtLoad"] is True
