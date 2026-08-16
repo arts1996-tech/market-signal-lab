@@ -1,10 +1,11 @@
 import json
+from decimal import Decimal
 
 import pandas as pd
 import pytest
 
 from app.analysis.market_calendar import exchange_calendar
-from app.backtest.audit import build_run_manifest
+from app.backtest.audit import build_run_manifest, frame_hash
 from app.backtest.ohlc import (
     MarketImpactAssumptions,
     PortfolioRiskRules,
@@ -13,6 +14,10 @@ from app.backtest.ohlc import (
 from app.backtest.portfolio import ExecutionAssumptions
 from app.backtest.shadow import write_forward_shadow_snapshot
 from app.backtest.validation import evaluate_frozen_strategy_walk_forward, walk_forward_windows
+from app.backtest.validation_registry import (
+    ValidationWindowConflict,
+    claim_validation_window,
+)
 
 
 def _sessions(count: int = 12) -> pd.DatetimeIndex:
@@ -132,6 +137,118 @@ def test_liquidity_sizing_uses_previous_volume_and_partial_fill():
     assert entry["participation_rate"] == pytest.approx(0.10)
 
 
+@pytest.mark.parametrize(
+    ("previous_volume", "expected_profile", "expected_spread"),
+    [
+        (10_000_000, "turnover_cost_v1:high", 0.0005),
+        (3_000_000, "turnover_cost_v1:medium", 0.0010),
+        (600_000, "turnover_cost_v1:low", 0.0020),
+    ],
+)
+def test_turnover_cost_model_selects_conservative_liquidity_tier(
+    previous_volume, expected_profile, expected_spread
+):
+    prices = _prices(volumes=[previous_volume] * 12)
+
+    result = simulate_ohlc_portfolio(
+        _signal(),
+        prices,
+        assumptions=ExecutionAssumptions(fee_rate=0, spread_rate=0, lot_size=1),
+        market_impact=MarketImpactAssumptions(
+            use_turnover_cost_model=True,
+            minimum_previous_turnover=50_000_000,
+            impact_rate=0,
+        ),
+    )
+
+    entry = result["transactions"].query("action == '仮想エントリー'").iloc[0]
+    assert entry["execution_cost_profile"] == expected_profile
+    assert entry["spread_rate"] == pytest.approx(expected_spread)
+    assert entry["previous_turnover"] == pytest.approx(previous_volume * 100)
+
+
+def test_turnover_cost_model_rejects_symbol_below_minimum_turnover():
+    result = simulate_ohlc_portfolio(
+        _signal(),
+        _prices(volumes=[499_999] * 12),
+        market_impact=MarketImpactAssumptions(
+            use_turnover_cost_model=True,
+            minimum_previous_turnover=50_000_000,
+        ),
+    )
+
+    assert result["transactions"].empty
+    assert set(result["rejected_signals"]["reason"]) == {"minimum_turnover_not_met"}
+
+
+def test_signal_specific_execution_costs_override_turnover_tier():
+    result = simulate_ohlc_portfolio(
+        _signal(spread_rate=0.004, base_slippage_rate=0.002, impact_rate=0),
+        _prices(volumes=[600_000] * 12),
+        assumptions=ExecutionAssumptions(fee_rate=0, spread_rate=0, lot_size=1),
+        market_impact=MarketImpactAssumptions(use_turnover_cost_model=True),
+    )
+
+    entry = result["transactions"].query("action == '仮想エントリー'").iloc[0]
+    assert entry["execution_cost_profile"] == "signal_specific_v1"
+    assert entry["spread_rate"] == pytest.approx(0.004)
+    assert entry["slippage_rate"] == pytest.approx(0.002)
+    assert entry["execution_price"] == pytest.approx(100.4)
+
+
+def test_invalid_signal_specific_execution_cost_is_rejected():
+    result = simulate_ohlc_portfolio(
+        _signal(spread_rate=0.06),
+        _prices(),
+    )
+
+    assert result["transactions"].empty
+    assert set(result["rejected_signals"]["reason"]) == {
+        "execution_cost_profile_unavailable"
+    }
+
+
+def test_special_quote_rejects_entry():
+    prices = _prices()
+    prices["special_quote"] = False
+    prices.loc[prices["price_time"] == _sessions()[2], "special_quote"] = True
+
+    result = simulate_ohlc_portfolio(_signal(), prices)
+
+    assert result["transactions"].empty
+    assert set(result["rejected_signals"]["reason"]) == {"special_quote_no_fill"}
+
+
+def test_special_quote_defers_exit_until_next_tradable_session():
+    prices = _prices()
+    dates = _sessions()
+    prices["special_quote"] = False
+    prices.loc[prices["price_time"] == dates[3], ["open", "high", "low", "close"]] = [
+        90,
+        91,
+        88,
+        89,
+    ]
+    prices.loc[prices["price_time"] == dates[3], "special_quote"] = True
+    prices.loc[prices["price_time"] == dates[4], ["open", "high", "low", "close"]] = [
+        91,
+        92,
+        90,
+        91,
+    ]
+
+    result = simulate_ohlc_portfolio(
+        _signal(maximum_holding_days=8),
+        prices,
+        assumptions=ExecutionAssumptions(fee_rate=0, spread_rate=0, lot_size=1),
+        market_impact=MarketImpactAssumptions(base_slippage_rate=0, impact_rate=0),
+    )
+
+    exit_row = result["transactions"].query("action == '損切り'").iloc[0]
+    assert exit_row["date"] == pd.Timestamp(dates[4], tz="UTC")
+    assert exit_row["execution_price"] == 91
+
+
 def test_missing_previous_volume_rejects_when_volume_is_required():
     prices = _prices()
     prices.loc[prices["price_time"] == _sessions()[1], "volume"] = float("nan")
@@ -166,6 +283,65 @@ def test_sector_concentration_caps_second_position():
     assert entries["amount"].sum() <= 500_000
 
 
+def test_position_correlation_limit_uses_only_information_available_at_signal_time():
+    dates = _sessions()
+    closes_a = [100, 101, 103, 102, 105, 107, 106, 109, 111, 114, 116, 118]
+    closes_b = [200, 202, 206, 204, 210, 214, 212, 218, 222, 190, 180, 170]
+    prices = pd.concat(
+        [
+            _prices(symbol="A", closes=closes_a),
+            _prices(symbol="B", closes=closes_b),
+        ],
+        ignore_index=True,
+    )
+    signals = pd.concat(
+        [
+            _signal(
+                "A",
+                entry_location=2,
+                maximum_holding_days=20,
+                stop_loss=-0.50,
+                take_profit=1.0,
+            ),
+            _signal(
+                "B",
+                entry_location=9,
+                sector="healthcare",
+                maximum_holding_days=20,
+                stop_loss=-0.50,
+                take_profit=1.0,
+            ),
+        ],
+        ignore_index=True,
+    )
+    result = simulate_ohlc_portfolio(
+        signals,
+        prices,
+        assumptions=ExecutionAssumptions(
+            fee_rate=0,
+            spread_rate=0,
+            lot_size=1,
+            maximum_positions=2,
+            maximum_position_rate=0.20,
+        ),
+        market_impact=MarketImpactAssumptions(base_slippage_rate=0, impact_rate=0),
+        risk_rules=PortfolioRiskRules(
+            maximum_sector_rate=1,
+            maximum_risk_per_trade_rate=0.10,
+            maximum_total_open_risk_rate=0.20,
+            maximum_position_correlation=0.80,
+            correlation_lookback_sessions=8,
+            minimum_correlation_observations=5,
+        ),
+    )
+
+    entries = result["transactions"].query("action == '仮想エントリー'")
+    assert list(entries["symbol"]) == ["A"]
+    rejected = result["rejected_signals"].set_index("symbol")
+    assert rejected.loc["B", "reason"] == "position_correlation_limit"
+    assert dates[9] > signals.loc[1, "signal_date"]
+
+
 def test_manifest_is_deterministic_except_created_at():
     signals = _signal()
     prices = _prices()
@@ -191,6 +367,53 @@ def test_manifest_is_deterministic_except_created_at():
         risk_rules=risks,
     )
     assert first["signal_hash"] == reordered["signal_hash"]
+
+
+def test_frame_hash_normalizes_postgresql_decimal_values():
+    frame = pd.DataFrame([{"symbol": "A", "close": Decimal("123.4500")}])
+
+    assert frame_hash(frame) == frame_hash(
+        pd.DataFrame([{"symbol": "A", "close": 123.45}])
+    )
+
+
+def test_manifest_hash_changes_when_execution_availability_flag_changes():
+    prices = _prices()
+    prices["special_quote"] = False
+    assumptions = ExecutionAssumptions()
+    risks = PortfolioRiskRules()
+    available = build_run_manifest(
+        _signal(), prices, account_name="short", assumptions=assumptions, risk_rules=risks
+    )
+    prices.loc[prices.index[-1], "special_quote"] = True
+    restricted = build_run_manifest(
+        _signal(), prices, account_name="short", assumptions=assumptions, risk_rules=risks
+    )
+
+    assert available["price_hash"] != restricted["price_hash"]
+    assert available["run_id"] != restricted["run_id"]
+
+
+def test_ohlc_engine_reports_multiple_benchmark_comparisons():
+    dates = _sessions()
+    primary = pd.Series([100 + index for index in range(len(dates))], index=dates)
+    simple_hold = pd.Series([100 + index * 2 for index in range(len(dates))], index=dates)
+
+    result = simulate_ohlc_portfolio(
+        _signal(),
+        _prices(),
+        benchmark=primary,
+        benchmarks={"simple_hold": simple_hold},
+    )
+
+    comparisons = result["benchmark_comparisons"].set_index("benchmark")
+    assert set(comparisons.index) == {"primary", "simple_hold"}
+    assert result["metrics"]["benchmark_return"] == pytest.approx(
+        comparisons.loc["primary", "benchmark_return"]
+    )
+    assert comparisons.loc["simple_hold", "benchmark_return"] > comparisons.loc[
+        "primary", "benchmark_return"
+    ]
 
 
 def test_limit_down_defers_stop_exit_until_a_tradable_session():
@@ -221,6 +444,11 @@ def test_limit_down_defers_stop_exit_until_a_tradable_session():
     exit_row = result["transactions"].query("action == '損切り'").iloc[0]
     assert exit_row["date"] == pd.Timestamp(dates[4], tz="UTC")
     assert exit_row["execution_price"] == 91
+    timeline = result["decision_cards"]
+    assert list(timeline["status"]) == ["entered", "exit_deferred", "closed"]
+    assert timeline["card_id"].nunique() == 1
+    assert timeline["event_id"].nunique() == 3
+    assert pd.to_datetime(timeline["event_at"], utc=True).is_monotonic_increasing
 
 
 def test_liquidity_limit_rejects_when_partial_fill_is_disabled():
@@ -441,6 +669,55 @@ def test_frozen_walk_forward_passes_only_test_signals_to_simulator():
         assert (test_signals["signal_date"] >= row.test_start).all()
         assert (test_signals["signal_date"] <= row.test_end).all()
         assert pd.to_datetime(prices_as_of_test["price_time"], utc=True).max() <= row.test_end
+
+
+def test_validation_window_registry_is_idempotent_and_blocks_reuse(tmp_path):
+    registry = tmp_path / "validation-windows.json"
+    first = claim_validation_window(
+        registry,
+        strategy_version="strategy-v1",
+        rule_hash="rules-a",
+        test_start="2026-01-01",
+        test_end="2026-01-31",
+    )
+    repeated = claim_validation_window(
+        registry,
+        strategy_version="strategy-v1",
+        rule_hash="rules-a",
+        test_start="2026-01-01",
+        test_end="2026-01-31",
+    )
+
+    assert repeated == first
+    with pytest.raises(ValidationWindowConflict):
+        claim_validation_window(
+            registry,
+            strategy_version="strategy-v2",
+            rule_hash="rules-b",
+            test_start="2026-01-15",
+            test_end="2026-02-15",
+        )
+
+
+def test_validation_window_registry_allows_new_unseen_period(tmp_path):
+    registry = tmp_path / "validation-windows.json"
+    claim_validation_window(
+        registry,
+        strategy_version="strategy-v1",
+        rule_hash="rules-a",
+        test_start="2026-01-01",
+        test_end="2026-01-31",
+    )
+
+    later = claim_validation_window(
+        registry,
+        strategy_version="strategy-v2",
+        rule_hash="rules-b",
+        test_start="2026-02-01",
+        test_end="2026-02-28",
+    )
+
+    assert later["immutable"] is True
 
 
 def test_forward_shadow_snapshot_is_idempotent_and_contains_warning(tmp_path):

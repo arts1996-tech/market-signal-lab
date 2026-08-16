@@ -1,5 +1,6 @@
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 from hashlib import sha256
 import json
 from typing import Any
@@ -7,9 +8,9 @@ from typing import Any
 import pandas as pd
 
 
-STRATEGY_VERSION = "phase4-long-only-v0.2"
-EXECUTION_VERSION = "ohlc-next-open-conservative-v1"
-DECISION_CARD_VERSION = "decision-card-v1"
+STRATEGY_VERSION = "phase4-long-only-v0.3"
+EXECUTION_VERSION = "ohlc-next-open-conservative-v2"
+DECISION_CARD_VERSION = "decision-card-v2"
 
 
 def _json_value(value: Any) -> Any:
@@ -23,6 +24,8 @@ def _json_value(value: Any) -> Any:
         return value.isoformat()
     if isinstance(value, datetime):
         return value.astimezone(UTC).isoformat()
+    if isinstance(value, Decimal):
+        return float(value)
     try:
         if pd.isna(value):
             return None
@@ -100,6 +103,11 @@ def build_run_manifest(
         "adjustment_factor",
         "available_at",
         "fetched_at",
+        "tradable",
+        "suspended",
+        "limit_up",
+        "limit_down",
+        "special_quote",
     ]
     price_hash = frame_hash(prices, price_columns)
     deterministic = {
@@ -128,6 +136,7 @@ def decision_card(
     exit_price: float | None = None,
     outcome_reason: str | None = None,
     quality_warnings: list[str] | None = None,
+    event_at: Any | None = None,
 ) -> dict:
     stop_loss = float(signal.get("stop_loss", -0.05))
     take_profit = float(signal.get("take_profit", 0.08))
@@ -141,14 +150,24 @@ def decision_card(
         "signal_date": signal.get("signal_date"),
         "entry_date": signal.get("entry_date"),
     }
+    card_id = stable_payload_hash(card_key)
+    event_time = event_at or signal.get("entry_date") or signal.get("signal_date")
+    event_key = {
+        "card_id": card_id,
+        "status": status,
+        "event_at": event_time,
+        "outcome_reason": outcome_reason,
+    }
     return {
-        "card_id": stable_payload_hash(card_key),
+        "card_id": card_id,
+        "event_id": stable_payload_hash(event_key),
         "card_version": DECISION_CARD_VERSION,
         "run_id": manifest["run_id"],
         "strategy_version": manifest["strategy_version"],
         "execution_version": manifest["execution_version"],
         "input_data_version": manifest["input_data_version"],
         "status": status,
+        "event_at": event_time,
         "symbol": signal.get("symbol"),
         "name": signal.get("name", signal.get("symbol")),
         "data_as_of": signal.get("signal_date"),

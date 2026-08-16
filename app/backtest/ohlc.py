@@ -15,6 +15,10 @@ class MarketImpactAssumptions:
     base_slippage_rate: float = 0.0005
     impact_rate: float = 0.005
     minimum_previous_turnover: float = 0.0
+    use_turnover_cost_model: bool = False
+    high_turnover_threshold: float = 1_000_000_000.0
+    medium_turnover_threshold: float = 250_000_000.0
+    low_turnover_threshold: float = 50_000_000.0
     simultaneous_hit_policy: str = "stop_first"
 
     def __post_init__(self) -> None:
@@ -24,6 +28,13 @@ class MarketImpactAssumptions:
             raise ValueError("slippage rates must be non-negative")
         if self.minimum_previous_turnover < 0:
             raise ValueError("minimum_previous_turnover must be non-negative")
+        if not (
+            self.high_turnover_threshold
+            > self.medium_turnover_threshold
+            > self.low_turnover_threshold
+            > 0
+        ):
+            raise ValueError("turnover thresholds must be positive and descending")
         if self.simultaneous_hit_policy != "stop_first":
             raise ValueError("only conservative stop_first policy is supported")
 
@@ -36,6 +47,9 @@ class PortfolioRiskRules:
     maximum_total_open_risk_rate: float = 0.05
     loss_streak_threshold: int = 3
     cooldown_sessions: int = 5
+    maximum_position_correlation: float | None = None
+    correlation_lookback_sessions: int = 60
+    minimum_correlation_observations: int = 20
 
     def __post_init__(self) -> None:
         if not 0 < self.maximum_sector_rate <= 1:
@@ -50,6 +64,12 @@ class PortfolioRiskRules:
             raise ValueError("per-trade risk cannot exceed total open risk")
         if self.loss_streak_threshold <= 0 or self.cooldown_sessions < 0:
             raise ValueError("loss_streak_threshold must be positive and cooldown non-negative")
+        if self.maximum_position_correlation is not None and not 0 < self.maximum_position_correlation <= 1:
+            raise ValueError("maximum_position_correlation must be between 0 and 1")
+        if self.correlation_lookback_sessions < 2:
+            raise ValueError("correlation_lookback_sessions must be at least 2")
+        if self.minimum_correlation_observations < 2:
+            raise ValueError("minimum_correlation_observations must be at least 2")
 
 
 def _empty_result(
@@ -73,6 +93,7 @@ def _empty_result(
         "snapshots": empty,
         "rejected_signals": empty,
         "decision_cards": empty,
+        "benchmark_comparisons": empty,
         "metrics": {
             "total_return": 0.0,
             "maximum_drawdown": 0.0,
@@ -159,6 +180,65 @@ def _valid_ohlc_bar(bar: dict) -> bool:
     return high >= max(open_price, close) and low <= min(open_price, close)
 
 
+def _optional_rate(signal: dict, key: str) -> float | None:
+    value = signal.get(key)
+    if value is None or pd.isna(value):
+        return None
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed < 0 or parsed > 0.05:
+        raise ValueError(f"{key} must be between 0 and 0.05")
+    return parsed
+
+
+def _execution_cost_profile(
+    signal: dict,
+    assumptions: ExecutionAssumptions,
+    market_impact: MarketImpactAssumptions,
+    previous_turnover: float | None,
+) -> dict:
+    explicit_spread = _optional_rate(signal, "spread_rate")
+    explicit_slippage = _optional_rate(signal, "base_slippage_rate")
+    explicit_impact = _optional_rate(signal, "impact_rate")
+    if (
+        explicit_spread is not None
+        or explicit_slippage is not None
+        or explicit_impact is not None
+    ):
+        return {
+            "profile": "signal_specific_v1",
+            "spread_rate": assumptions.spread_rate if explicit_spread is None else explicit_spread,
+            "base_slippage_rate": (
+                market_impact.base_slippage_rate
+                if explicit_slippage is None
+                else explicit_slippage
+            ),
+            "impact_rate": market_impact.impact_rate if explicit_impact is None else explicit_impact,
+        }
+    if not market_impact.use_turnover_cost_model:
+        return {
+            "profile": "fixed_cost_v1",
+            "spread_rate": assumptions.spread_rate,
+            "base_slippage_rate": market_impact.base_slippage_rate,
+            "impact_rate": market_impact.impact_rate,
+        }
+    if previous_turnover is None or not _valid_positive_number(previous_turnover):
+        raise ValueError("previous turnover is required for turnover cost model")
+    if previous_turnover >= market_impact.high_turnover_threshold:
+        spread_rate, base_slippage_rate, tier = 0.0005, 0.00025, "high"
+    elif previous_turnover >= market_impact.medium_turnover_threshold:
+        spread_rate, base_slippage_rate, tier = 0.0010, 0.00050, "medium"
+    elif previous_turnover >= market_impact.low_turnover_threshold:
+        spread_rate, base_slippage_rate, tier = 0.0020, 0.00100, "low"
+    else:
+        raise ValueError("previous turnover is below modeled liquidity tiers")
+    return {
+        "profile": f"turnover_cost_v1:{tier}",
+        "spread_rate": spread_rate,
+        "base_slippage_rate": base_slippage_rate,
+        "impact_rate": market_impact.impact_rate,
+    }
+
+
 def simulate_ohlc_portfolio(
     signals: pd.DataFrame,
     prices: pd.DataFrame,
@@ -169,6 +249,7 @@ def simulate_ohlc_portfolio(
     market_impact: MarketImpactAssumptions | None = None,
     risk_rules: PortfolioRiskRules | None = None,
     benchmark: pd.Series | None = None,
+    benchmarks: dict[str, pd.Series] | None = None,
     input_data_version: str | None = None,
 ) -> dict:
     """Simulate long-only daily OHLC signals with conservative execution.
@@ -239,7 +320,7 @@ def simulate_ohlc_portfolio(
     positions: dict[str, dict] = {}
     transactions: list[dict] = []
     rejected: list[dict] = []
-    cards: dict[str, dict] = {}
+    cards: list[dict] = []
     snapshots: list[dict] = []
     high_watermark = float(initial_cash)
     loss_streak = 0
@@ -261,8 +342,9 @@ def simulate_ohlc_portfolio(
             manifest=manifest,
             outcome_reason=reason,
             quality_warnings=[warning],
+            event_at=signal.get("entry_date") or signal.get("signal_date"),
         )
-        cards[card["card_id"]] = card
+        cards.append(card)
 
     for session_index, current_date in enumerate(sessions):
         entries = signal_frame[signal_frame["entry_date"] == current_date]
@@ -292,16 +374,49 @@ def simulate_ohlc_portfolio(
             if _is_true(bar.get("limit_up")):
                 reject(signal, "limit_up_no_fill", "ストップ高で買い約定不能として扱います")
                 continue
+            if _is_true(bar.get("special_quote")):
+                reject(signal, "special_quote_no_fill", "特別気配中は買い約定不能として扱います")
+                continue
             if symbol in positions:
                 reject(signal, "symbol_already_held", "同一銘柄の重複保有はしません")
                 continue
             if len(positions) >= assumptions.maximum_positions:
                 reject(signal, "maximum_positions_reached", "同時保有上限に到達しています")
                 continue
+            if risk_rules.maximum_position_correlation is not None and positions:
+                history = price_frame[
+                    (price_frame["price_time"] <= signal["signal_date"])
+                    & (price_frame["symbol"].isin([symbol, *positions.keys()]))
+                ].pivot(index="price_time", columns="symbol", values="close")
+                returns = history.tail(
+                    risk_rules.correlation_lookback_sessions + 1
+                ).pct_change(fill_method=None)
+                excessive_pair = None
+                for held_symbol in positions:
+                    pair = returns[[symbol, held_symbol]].dropna()
+                    if len(pair) < risk_rules.minimum_correlation_observations:
+                        continue
+                    correlation = float(pair[symbol].corr(pair[held_symbol]))
+                    if math.isfinite(correlation) and correlation >= risk_rules.maximum_position_correlation:
+                        excessive_pair = (held_symbol, correlation)
+                        break
+                if excessive_pair is not None:
+                    reject(
+                        signal,
+                        "position_correlation_limit",
+                        f"保有中の{excessive_pair[0]}との相関{excessive_pair[1]:.2f}が集中上限以上です",
+                    )
+                    continue
 
             previous = previous_bar.get((symbol, current_date))
             previous_volume = None if previous is None else previous.get("volume")
             previous_close = None if previous is None else previous.get("close")
+            previous_turnover = (
+                float(previous_volume) * float(previous_close)
+                if _valid_positive_number(previous_volume)
+                and _valid_positive_number(previous_close)
+                else None
+            )
             if market_impact.require_volume and (
                 previous_volume is None
                 or not _valid_positive_number(previous_volume)
@@ -317,12 +432,20 @@ def simulate_ohlc_portfolio(
                 ):
                     reject(signal, "missing_previous_turnover", "前営業日の売買代金を確認できません")
                     continue
-                if (
-                    float(previous_volume) * float(previous_close)
-                    < market_impact.minimum_previous_turnover
-                ):
+                if previous_turnover < market_impact.minimum_previous_turnover:
                     reject(signal, "minimum_turnover_not_met", "前営業日の売買代金が基準未満です")
                     continue
+
+            try:
+                cost_profile = _execution_cost_profile(
+                    signal,
+                    assumptions,
+                    market_impact,
+                    previous_turnover,
+                )
+            except ValueError as exc:
+                reject(signal, "execution_cost_profile_unavailable", str(exc))
+                continue
 
             sector = str(signal.get("sector") or "unknown")
             stop_loss = float(signal.get("stop_loss", -0.05))
@@ -362,7 +485,7 @@ def simulate_ohlc_portfolio(
                 // (
                     open_price
                     * assumptions.lot_size
-                    * (1 + assumptions.fee_rate + assumptions.spread_rate / 2)
+                    * (1 + assumptions.fee_rate + cost_profile["spread_rate"] / 2)
                 )
             ) * assumptions.lot_size
             quantity = desired_quantity
@@ -387,8 +510,13 @@ def simulate_ohlc_portfolio(
                 )
                 continue
 
-            slippage = market_impact.base_slippage_rate + market_impact.impact_rate * participation
-            execution_price = open_price * (1 + assumptions.spread_rate / 2 + slippage)
+            slippage = (
+                cost_profile["base_slippage_rate"]
+                + cost_profile["impact_rate"] * participation
+            )
+            execution_price = open_price * (
+                1 + cost_profile["spread_rate"] / 2 + slippage
+            )
             gross = execution_price * quantity
             fee = gross * assumptions.fee_rate
             cost = gross + fee
@@ -411,6 +539,9 @@ def simulate_ohlc_portfolio(
                 "slippage_rate": slippage,
                 "planned_risk": planned_risk,
                 "reference_quantity": quantity,
+                "spread_rate": cost_profile["spread_rate"],
+                "execution_cost_profile": cost_profile["profile"],
+                "previous_turnover": previous_turnover,
             }
             positions[symbol] = position
             transactions.append(
@@ -430,6 +561,9 @@ def simulate_ohlc_portfolio(
                     "decision_as_of": signal["signal_date"],
                     "participation_rate": participation,
                     "slippage_rate": slippage,
+                    "spread_rate": cost_profile["spread_rate"],
+                    "execution_cost_profile": cost_profile["profile"],
+                    "previous_turnover": previous_turnover,
                 }
             )
             card = decision_card(
@@ -441,8 +575,9 @@ def simulate_ohlc_portfolio(
                 status="entered",
                 manifest=manifest,
                 entry_price=execution_price,
+                event_at=current_date,
             )
-            cards[card["card_id"]] = card
+            cards.append(card)
 
         for symbol, position in list(positions.items()):
             bar = price_lookup.get((symbol, current_date))
@@ -454,8 +589,9 @@ def simulate_ohlc_portfolio(
                     entry_price=position["entry_execution_price"],
                     outcome_reason="OHLC品質不合格",
                     quality_warnings=["OHLCの欠損・非正値・大小関係異常により決済判定を見送りました"],
+                    event_at=current_date,
                 )
-                cards[card["card_id"]] = card
+                cards.append(card)
                 continue
             if ("tradable" in bar and not _is_true(bar.get("tradable"))) or _is_true(
                 bar.get("suspended")
@@ -469,8 +605,21 @@ def simulate_ohlc_portfolio(
                     entry_price=position["entry_execution_price"],
                     outcome_reason="値幅制限により売却不能",
                     quality_warnings=["ストップ安では売却できない保守的な仮定です"],
+                    event_at=current_date,
                 )
-                cards[card["card_id"]] = card
+                cards.append(card)
+                continue
+            if _is_true(bar.get("special_quote")):
+                card = decision_card(
+                    position,
+                    status="exit_deferred",
+                    manifest=manifest,
+                    entry_price=position["entry_execution_price"],
+                    outcome_reason="特別気配により売却不能",
+                    quality_warnings=["特別気配中は決済できない保守的な仮定です"],
+                    event_at=current_date,
+                )
+                cards.append(card)
                 continue
             position["held_sessions"] += 1
             open_price = float(bar["open"])
@@ -497,7 +646,9 @@ def simulate_ohlc_portfolio(
             if exit_reason is None:
                 continue
             slippage = position["slippage_rate"]
-            execution_price = float(exit_price) * (1 - assumptions.spread_rate / 2 - slippage)
+            execution_price = float(exit_price) * (
+                1 - position["spread_rate"] / 2 - slippage
+            )
             gross = execution_price * position["quantity"]
             fee = gross * assumptions.fee_rate
             pre_tax_pnl = gross - fee - position["cost"]
@@ -538,6 +689,9 @@ def simulate_ohlc_portfolio(
                     "decision_as_of": position["signal_date"],
                     "participation_rate": None,
                     "slippage_rate": slippage,
+                    "spread_rate": position["spread_rate"],
+                    "execution_cost_profile": position["execution_cost_profile"],
+                    "previous_turnover": position["previous_turnover"],
                 }
             )
             card = decision_card(
@@ -547,8 +701,9 @@ def simulate_ohlc_portfolio(
                 entry_price=position["entry_execution_price"],
                 exit_price=execution_price,
                 outcome_reason=exit_reason,
+                event_at=current_date,
             )
-            cards[card["card_id"]] = card
+            cards.append(card)
             del positions[symbol]
 
         market_value = 0.0
@@ -596,8 +751,33 @@ def simulate_ohlc_portfolio(
         if not entry_rows.empty
         else snapshot_frame.iloc[0]["date"]
     )
-    benchmark_return = _benchmark_return(
-        benchmark, benchmark_start, snapshot_frame.iloc[-1]["date"]
+    benchmark_inputs = {}
+    if benchmark is not None:
+        benchmark_inputs["primary"] = benchmark
+    benchmark_inputs.update(benchmarks or {})
+    benchmark_rows = []
+    for benchmark_name, benchmark_values in benchmark_inputs.items():
+        compared_return = _benchmark_return(
+            benchmark_values, benchmark_start, snapshot_frame.iloc[-1]["date"]
+        )
+        benchmark_rows.append(
+            {
+                "benchmark": str(benchmark_name),
+                "start": benchmark_start,
+                "end": snapshot_frame.iloc[-1]["date"],
+                "benchmark_return": compared_return,
+                "strategy_return": total_return,
+                "excess_return": (
+                    None if compared_return is None else total_return - compared_return
+                ),
+            }
+        )
+    benchmark_comparisons = pd.DataFrame(benchmark_rows)
+    primary_comparison = (
+        benchmark_comparisons.iloc[0] if not benchmark_comparisons.empty else None
+    )
+    benchmark_return = (
+        None if primary_comparison is None else primary_comparison["benchmark_return"]
     )
     metrics = {
         "total_return": total_return,
@@ -657,7 +837,8 @@ def simulate_ohlc_portfolio(
         "transactions": transaction_frame,
         "snapshots": snapshot_frame,
         "rejected_signals": pd.DataFrame(rejected),
-        "decision_cards": pd.DataFrame(cards.values()),
+        "decision_cards": pd.DataFrame(cards).sort_values("event_at").reset_index(drop=True),
+        "benchmark_comparisons": benchmark_comparisons,
         "metrics": metrics,
         "manifest": manifest,
         "assumptions": assumptions,

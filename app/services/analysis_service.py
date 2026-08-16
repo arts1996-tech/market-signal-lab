@@ -878,8 +878,15 @@ def load_movement_and_virtual_trade_analysis(
             maximum_positions=2,
             maximum_position_rate=0.30,
         ),
-        market_impact=MarketImpactAssumptions(require_volume=True),
-        risk_rules=PortfolioRiskRules(maximum_sector_rate=0.50),
+        market_impact=MarketImpactAssumptions(
+            require_volume=True,
+            minimum_previous_turnover=50_000_000,
+            use_turnover_cost_model=True,
+        ),
+        risk_rules=PortfolioRiskRules(
+            maximum_sector_rate=0.50,
+            maximum_position_correlation=0.85,
+        ),
         benchmark=benchmark,
     )
     candidates = build_movement_candidates(

@@ -32,6 +32,16 @@ DEMO_ACCOUNT_RULES = (
 )
 
 
+def _demo_benchmarks(prices: pd.DataFrame) -> tuple[pd.Series, dict[str, pd.Series]]:
+    closes = prices.pivot_table(
+        index="price_time", columns="symbol", values="close", aggfunc="last"
+    ).sort_index()
+    primary = closes["DEMOETF"].dropna()
+    normalized = closes.divide(closes.iloc[0]).dropna(how="all")
+    equal_weight = normalized.mean(axis=1) * 100.0
+    return primary, {"equal_weight_simple_hold": equal_weight}
+
+
 def generate_demo_portfolio_prices(periods: int = 180) -> pd.DataFrame:
     if periods < 80:
         raise ValueError("periods must be at least 80")
@@ -166,20 +176,24 @@ def _run_account(
         maximum_positions=rule.maximum_positions,
         maximum_position_rate=rule.maximum_position_rate,
     )
+    primary_benchmark, comparison_benchmarks = _demo_benchmarks(prices)
     result = simulate_ohlc_portfolio(
         signals,
         prices,
         initial_cash=initial_cash,
         account_name=rule.name,
         assumptions=assumptions,
-        market_impact=MarketImpactAssumptions(require_volume=True),
-        risk_rules=PortfolioRiskRules(maximum_sector_rate=0.50),
-        benchmark=(
-            prices[prices["symbol"] == "DEMOETF"]
-            .drop_duplicates("price_time")
-            .set_index("price_time")["close"]
-            .sort_index()
+        market_impact=MarketImpactAssumptions(
+            require_volume=True,
+            minimum_previous_turnover=50_000_000,
+            use_turnover_cost_model=True,
         ),
+        risk_rules=PortfolioRiskRules(
+            maximum_sector_rate=0.50,
+            maximum_position_correlation=0.85,
+        ),
+        benchmark=primary_benchmark,
+        benchmarks=comparison_benchmarks,
         input_data_version="deterministic-synthetic-demo-v2",
     )
     walk_forward = evaluate_frozen_strategy_walk_forward(
@@ -191,14 +205,17 @@ def _run_account(
             initial_cash=initial_cash,
             account_name=rule.name,
             assumptions=assumptions,
-            market_impact=MarketImpactAssumptions(require_volume=True),
-            risk_rules=PortfolioRiskRules(maximum_sector_rate=0.50),
-            benchmark=(
-                prices_as_of_test[prices_as_of_test["symbol"] == "DEMOETF"]
-                .drop_duplicates("price_time")
-                .set_index("price_time")["close"]
-                .sort_index()
+            market_impact=MarketImpactAssumptions(
+                require_volume=True,
+                minimum_previous_turnover=50_000_000,
+                use_turnover_cost_model=True,
             ),
+            risk_rules=PortfolioRiskRules(
+                maximum_sector_rate=0.50,
+                maximum_position_correlation=0.85,
+            ),
+            benchmark=_demo_benchmarks(prices_as_of_test)[0],
+            benchmarks=_demo_benchmarks(prices_as_of_test)[1],
             input_data_version="deterministic-synthetic-demo-v2",
         ),
         minimum_train_sessions=60,
@@ -244,6 +261,9 @@ def run_demo_portfolio_environment(
             "initial_cash_each": initial_cash,
             "fee_rate": fee_rate,
             "spread_rate": spread_rate,
+            "execution_cost_model": (
+                "前営業日売買代金5千万円以上を対象とする3段階の代理スプレッド・スリッページ"
+            ),
             "lot_size": lot_size,
             "tax_rate": 0.0,
             "currency": "JPY",
@@ -253,7 +273,7 @@ def run_demo_portfolio_environment(
             "maximum_volume_participation": 0.10,
             "partial_fill": True,
             "simultaneous_hit_policy": "損切りを先に成立したものとして扱う",
-            "strategy_version": "phase4-long-only-v0.2",
+            "strategy_version": "phase4-long-only-v0.3",
             "price_source": "deterministic_synthetic_demo",
             "news_source": "deterministic_synthetic_demo_scenario",
             "open_position_valuation": "当日終値。未実現損益には将来の決済手数料を含めない",

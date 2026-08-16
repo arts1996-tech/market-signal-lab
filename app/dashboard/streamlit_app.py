@@ -494,7 +494,7 @@ if active_page == "仮想投資評価":
             st.info(
                 "約定仮定: "
                 f"{assumptions['execution_rule']} / 手数料 {assumptions['fee_rate']:.2%} / "
-                f"スプレッド {assumptions['spread_rate']:.2%} / 税率 {assumptions['tax_rate']:.1%} / "
+                f"{assumptions['execution_cost_model']} / 税率 {assumptions['tax_rate']:.1%} / "
                 f"売買単位 {assumptions['lot_size']}株 / 同時保有上限 {assumptions['maximum_positions']}銘柄"
             )
             for account in demo_environment["accounts"].values():
@@ -548,10 +548,26 @@ if active_page == "仮想投資評価":
                                     "quantity",
                                     "execution_price",
                                     "realized_pnl",
+                                    "previous_turnover",
+                                    "execution_cost_profile",
+                                    "spread_rate",
+                                    "slippage_rate",
                                     "reason",
                                     "decision_as_of",
                                 ]
                             ],
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+
+                benchmark_comparisons = account["benchmark_comparisons"].copy()
+                if not benchmark_comparisons.empty:
+                    with st.expander("同期間ベンチマーク比較"):
+                        st.caption(
+                            "primaryは検証用ETF、equal_weight_simple_holdは全検証銘柄の単純保有です。"
+                        )
+                        st.dataframe(
+                            benchmark_comparisons,
                             use_container_width=True,
                             hide_index=True,
                         )
@@ -576,6 +592,8 @@ if active_page == "仮想投資評価":
                             cards[
                                 [
                                     "status",
+                                    "event_at",
+                                    "event_id",
                                     "symbol",
                                     "data_as_of",
                                     "entry_date",
