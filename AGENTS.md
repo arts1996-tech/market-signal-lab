@@ -7,8 +7,8 @@
 要件の優先順位は次のとおりです。
 
 1. 本書の製品要件、アーキテクチャ方針、投資分析ルール、セキュリティ方針、開発ロードマップ
-2. `docs/01_product_vision.md` から `docs/20_virtual_account_decision_logic.md` までの仕様・受け入れ基準・レビュー
-3. `docs/17_remediation_todo.md` の未完了ToDoと完了条件
+2. `docs/22_current_priority_todo.md` の現行ToDo、依存順、完了条件
+3. `docs/01_product_vision.md` から `docs/21_forward_shadow_operations.md` までの仕様・受け入れ基準・レビュー・運用手順
 4. `README.md` の現行環境に対応した起動・運用手順
 5. 既存コードとテストが示す現在の挙動
 
@@ -16,10 +16,11 @@
 - レビュー文書やオプション提案は、それ自体が要件変更であると明記されていない限り、必須要件と区別する。
 - 文書、コード、運用状態が矛盾する場合は勝手に削除・単純化せず、差分、影響、推奨案をユーザーへ報告してから変更する。
 - 既に実装済みの機能は、ロードマップ上の順序を理由に削除または無効化しない。以後の変更は段階的に行い、各段階で起動可能な状態を保つ。
-- 評価会議後の是正作業は `docs/17_remediation_todo.md` の優先度・依存順に従う。未完了のP0を迂回して分析機能やRaspberry Piへのフェーズ2配置を進めない。
+- 2026-07-12評価会議後の是正は完了し、`docs/17_remediation_todo.md` は履歴文書である。2026-08-16以降の未完了項目と再開順序は `docs/22_current_priority_todo.md` を唯一の正本とし、未完了のNOW-P0を迂回してニュース、LLM、現在判断、Raspberry Piへの正式前向き運用配置を進めない。
 - UI（`app/dashboard/`）は例外とする。既存画面との互換性を維持する必要はなく、製品要件に合わせて画面構成、導線、表示内容、コンポーネントを全面的に削除・置換・再設計してよい。
 - UIを刷新しても、明示的な対象変更がない限り、データ、分析ロジック、DBマイグレーション、ジョブ、秘密情報管理の既存要件は維持する。
 - 仮想口座、候補スコア、バックテスト、または実投資判断への利用可否を変更・評価する前に、`docs/19_investment_decision_readiness_assessment.md` を読む。同文書の必須品質ゲートが完了するまでは、現在の出力を実売買や投資額決定の主な根拠として扱わず、評価を自動的に引き上げない。
+- 現行の`run_forward_shadow.py`とMac LaunchAgentは、遅延価格による過去評価結果を不変JSONへ保存する研究用の暫定経路である。当日時点の新規シグナルと短期・中期口座状態を翌営業日へ引き継ぐ正式な前向き仮想口座が完成したものと扱わない。
 
 ## 2. プロダクト概要
 
@@ -367,7 +368,7 @@ docker compose run --rm app pytest
 - 2026-07-12にフェーズ2の最初の小タスクをMac側で実装した。米国前営業日のFRED終値リターンと、日本株・ETFの実J-Quants OHLCから、寄り付きギャップ・場中・日次リターンを別々に算出し、`spillover_features` に再実行可能な形で保存する。FREDの高値・安値・始値は推測しない。
 - 同日に次の小タスクとして、米国前営業日の終値リターンを説明変数にするラグ単回帰と、将来データを混ぜないローリング回帰を追加した。結果は係数、p値、95%信頼区間、R²、サンプル数、ルール版とともに `spillover_model_results` へ保存する。Mac側のテストは52件成功し、`0006_spillover_model_results` のマイグレーションSQL生成を確認済み。
 - さらにGranger検定を追加した。これは米国リターンの予測上の先行性を確認する検定であり、因果関係の証明として扱わない。30件未満では推定せず、ラグ別のF統計量・p値とルール版を `spillover_model_results` に保存する。DBスキーマ変更はなく、Mac側テストは53件成功した。
-- 2026-07-12の合同評価で、sampleと実データの混在、非連続セッションの日次リターン扱い、調整価格、J-Quantsの恒久取得不能判定と収集方式をP0/P1課題と確認した。是正ToDoは `docs/17_remediation_todo.md` を正本とする。
+- 2026-07-12の合同評価で、sampleと実データの混在、非連続セッションの日次リターン扱い、調整価格、J-Quantsの恒久取得不能判定と収集方式をP0/P1課題と確認した。当時は`docs/17_remediation_todo.md`を正本として是正し、現在は完了済み履歴として保持する。
 - P0-1として、通常Compose起動からサンプル自動投入を削除し、Repositoryの通常分析経路は`sample`を除外するよう変更した。デモは`MARKET_DATA_MODE=demo`かつ`seed_sample_data.py --demo`で明示実行する。既存のsample行は削除せず、通常分析から隔離する。
 - P0-1は開発部門エージェントの設計レビュー後にMacで確認済み。pytestは56件成功、`docker compose up -d --build`後のStreamlitヘルスチェックは`ok`、通常起動ログにsample seedの実行はない。Macのapp・db・jquants-collectorは起動中だが、Raspberry Piには一切反映していない。
 - P0-2を開発部門エージェントの設計レビュー後にMacで実装・確認済み。`source_priority_v1` は指数・為替をFRED、日本株・日本ETFをJ-Quantsのみに固定し、未登録sourceを暗黙採用しない。選択済み入力のSHA-256、source方針、来歴、価格基準（P0-3確定前の暫定値）を分析結果に保存する。`0007_analysis_input_provenance` をMacへ適用済みで、旧相関結果20件は`requires_recalculation`へ安全に移行した。pytestは58件成功、Streamlitヘルスチェックも`ok`。
@@ -395,6 +396,7 @@ docker compose run --rm app pytest
 - 2026-08-16に検証期間レジストリをウォークフォワード実行前へ接続し、短期・中期を独立系列として変更後ルールによる期間再利用を拒否するようにした。前向き観察はJSTの東証営業日ごとに最初の入力を固定し、候補なし・品質ゲート不合格の日も記録する。Mac平日18:30用launchdテンプレートは追加済みだが未登録であり、ユーザー承認なしにMacへ登録・ラズパイへ配置しない。
 - 同日ユーザー承認を受け、Macの`~/Library/LaunchAgents/com.arts1996.market-signal-lab-forward-shadow.plist`へ登録した。月〜金18:30にDocker経由で`jobs/run_forward_shadow.py --daily`を実行する。試運転は終了コード0で非営業日スキップを確認済み。Docker Desktop停止中は実行できないため、最初の実営業日後に`logs/forward-shadow-launchd*.log`と`data/forward_shadow/`を確認する。ラズパイには配置していない。
 - Mac暫定運用はログイン時（18:30以降のみ）と平日18:30・20:30・22:30の再試行へ変更した。当日保存済みならDB取得前に終了する。将来ラズパイを正式実行主体にする際は、`docs/21_forward_shadow_operations.md`に従ってMac LaunchAgentを停止し、ラズパイのsystemd timerへ一本化する。Macとラズパイを同時に正式運用せず、欠測を翌日のデータで後付け補完しない。
+- 2026-08-16の仕様・コード・ジョブ・画面・運用・テスト再監査結果を`docs/22_current_priority_todo.md`へ保存した。同文書を現行ToDoと再開順序の唯一の正本とし、`docs/17_remediation_todo.md`は完了済み是正履歴へ整理した。最優先はNOW-P0-1〜5であり、当日時点シグナル、短期・中期各250万円の継続口座、追記専用台帳、遅延研究／現在判断の分離、前向き記録監視をMacの合成データで完成させる。現行LaunchAgentの出力は遅延価格の研究スナップショットで、正式な6〜12か月の前向き期間へ算入しない。通常`run_backtest.py`と`run_mid_term_analysis.py`のplaceholder、財務表示、全銘柄バッチ、企業行動、上場廃止、為替、検証、監査、既存分析残、セキュリティ・運用課題も同文書へ漏れなく統合した。
 
 ## 17. 完了報告の形式
 

@@ -8,6 +8,8 @@
 
 > **現在の利用上の重要事項:** 現時点の仮想口座と候補スコアは、実際の売買判断や投資額決定の主な根拠にできる成熟度には達していません。正直な評価、利用してよい範囲、実投資支援前の必須品質ゲートは [docs/19_investment_decision_readiness_assessment.md](docs/19_investment_decision_readiness_assessment.md) を参照してください。
 
+> **現行ToDoの正本:** 今後の最優先事項、実装順序、未完了項目、完了条件は [docs/22_current_priority_todo.md](docs/22_current_priority_todo.md) に一本化しています。過去文書に残る「次の作業」より、この文書を優先します。最初の作業は、当日時点シグナル生成を過去評価から分離する`NOW-P0-1`です。
+
 GitHub: https://github.com/arts1996-tech/market-signal-lab
 
 ## 仕様書と読む順序
@@ -31,10 +33,12 @@ GitHub: https://github.com/arts1996-tech/market-signal-lab
 15. `docs/14_dev_ops_environment_review.md`
 16. `docs/15_cross_model_verification.md`
 17. `docs/16_slack_free_plan_review.md`
-18. `docs/17_remediation_todo.md`
+18. `docs/17_remediation_todo.md`（完了済み是正履歴）
 19. `docs/18_phase3_data_source_design.md`
 20. `docs/19_investment_decision_readiness_assessment.md`
 21. `docs/20_virtual_account_decision_logic.md`
+22. `docs/21_forward_shadow_operations.md`
+23. `docs/22_current_priority_todo.md`（現行ToDoの正本）
 
 レビュー文書とオプション提案は、必須要件と区別して扱います。文書、既存コード、実運用状態に矛盾がある場合は、機能やルールを勝手に削除せず、差分と推奨案を確認してから変更します。
 
@@ -66,7 +70,7 @@ GitHub: https://github.com/arts1996-tech/market-signal-lab
 - 仮想口座の総損益、最大ドローダウン、勝率、平均取引損益、それらの95%近似区間、日経平均の同期間騰落率との差を計算する検証指標
 - デモ・実データ評価共通のOHLCイベントエンジン、売買代金別の保守的コスト、流動性・部分約定・値幅制限／特別気配フラグ・業種／保有相関集中リスク・停止規則
 - 許容損失額と損切り幅から逆算する参考数量、全保有の計画損失上限
-- 戦略版・約定版・入力ハッシュを含む監査ID、判断カード、未見期間ウォークフォワード、Git対象外の前向き観察JSON
+- 戦略版・約定版・入力ハッシュを含む監査ID、判断カード、未見期間ウォークフォワード、Git対象外の遅延価格研究スナップショットJSON
 - 指数比較チャート、相関グラフ、取得ログ、ジョブ履歴
 - pytestによる主要ロジックのテスト
 - 画面上部の通常／デモ、データ時点、取得元、価格基準、対象期間、品質警告の共通表示
@@ -285,6 +289,8 @@ docker compose exec app python jobs/run_mid_term_analysis.py
 docker compose exec app python jobs/run_backtest.py
 ```
 
+`run_mid_term_analysis.py`と通常モードの`run_backtest.py`は、2026-08-16時点ではplaceholderであり、分析完了を意味しません。偽の`success`を廃止して実サービスへ接続する作業は、[docs/22_current_priority_todo.md](docs/22_current_priority_todo.md)の`NOW-P1-1`、`NOW-P1-2`で管理します。デモバックテストは別途、明示したデモモードで実行できます。
+
 J-Quants Free planはAPI制限が5件/分のため、複数銘柄の連続取得では余裕を持って15秒以上の間隔を空けます。日付を指定する場合は、直近12週間を避け、かつFree planの取得範囲内になる過去2年程度の日付を指定します。
 一括取得は最初に `--limit 3` 程度で確認してから増やします。
 
@@ -312,9 +318,11 @@ FRED由来の指数データは高値、安値、出来高を含まないため�
 
 実データ評価用口座の初期設定は、250万円、1銘柄30%上限、同時保有2銘柄、100株単位、手数料0.10%、税率0%です。前営業日出来高だけを使って参加率上限と部分約定を決め、前営業日売買代金5千万円未満を除外し、売買代金帯ごとの代理スプレッド／スリッページを適用します。入力に取引停止・値幅制限・特別気配フラグがあれば約定不能として扱いますが、現在の取得元がこれらの実データを常に提供するわけではありません。税率は設定可能ですが、実際の税務を再現するものではありません。配当、企業行動、為替、空売り、上場廃止、実際の板・特別気配・値幅制限データは未完成であり、実投資判断には使用しません。
 
-画面の「現在結果を前向き観察として保存」ボタン、または`jobs/run_forward_shadow.py`で、その時点の監査ID・判断カード・成績・保有・取引・見送り理由・ベンチマーク比較を`data/forward_shadow/`へJSON保存できます。このディレクトリはGit対象外です。`--daily`ではJSTの東証営業日だけを対象に、口座ごとに最初の入力を`YYYY-MM-DD.json`へ固定します。同日の同一入力による再実行は冪等で、異なる入力による置換は拒否します。品質ゲート通過シグナルがない日も`no_eligible_signals_or_data_quality_gate`として記録し、「何も判断しなかった日」を欠落させません。自動売買、証券口座、DBへの取引登録は行いません。
+画面の「現在結果を前向き観察として保存」ボタン、または`jobs/run_forward_shadow.py`で、その時点の監査ID・判断カード・成績・保有・取引・見送り理由・ベンチマーク比較を`data/forward_shadow/`へJSON保存できます。このディレクトリはGit対象外です。`--daily`ではJSTの東証営業日だけを対象に、口座ごとに最初の入力を`YYYY-MM-DD.json`へ固定します。同日の同一入力による再実行は冪等で、異なる入力による置換は拒否します。品質ゲート通過シグナルがない日も`no_eligible_signals_or_data_quality_gate`として記録します。
 
-Macで平日18:30、20:30、22:30に上記の日次ジョブを再試行する`launchd`設定は`docker/macos/com.arts1996.market-signal-lab-forward-shadow.plist`です。ログイン時にも呼びますが、JST 18:30より前、東証非営業日、当日保存済みの場合は分析前に正常終了します。Docker Desktopが起動していることを前提とし、標準出力とエラーは`logs/`へ保存します。2026-08-16にユーザー承認のもと`~/Library/LaunchAgents/com.arts1996.market-signal-lab-forward-shadow.plist`へ登録済みです。Macが停止中またはDocker Desktopが未起動の場合は後続時刻で再試行しますが、翌日に前日分を後付け生成しません。最初の実営業日後にログと`data/forward_shadow/`を確認します。将来ラズパイを常時運用の正式な実行主体にする際の停止・切替手順は[docs/21_forward_shadow_operations.md](docs/21_forward_shadow_operations.md)を参照してください。
+ただし、現在の通常モードは将来の保有期間分が既に存在する過去候補を再評価する1口座の経路であり、当日時点の新規シグナル、短期・中期各250万円の未決済保有と現金を翌営業日へ引き継ぐ正式な前向き仮想口座ではありません。現行JSONは「遅延価格による研究スナップショット」として扱い、正式な6〜12か月の前向き検証期間へ算入しません。完成作業は[docs/22_current_priority_todo.md](docs/22_current_priority_todo.md)のNOW-P0を参照してください。自動売買、証券口座、DBへの取引登録は行いません。
+
+Macで平日18:30、20:30、22:30に上記の研究スナップショットを再試行する`launchd`設定は`docker/macos/com.arts1996.market-signal-lab-forward-shadow.plist`です。ログイン時にも呼びますが、JST 18:30より前、東証非営業日、当日保存済みの場合は分析前に正常終了します。Docker Desktopが起動していることを前提とし、標準出力とエラーは`logs/`へ保存します。2026-08-16にユーザー承認のもと`~/Library/LaunchAgents/com.arts1996.market-signal-lab-forward-shadow.plist`へ登録済みです。Macが停止中またはDocker Desktopが未起動の場合は後続時刻で再試行しますが、翌日に前日分を後付け生成しません。最初の実営業日後にログと`data/forward_shadow/`を確認します。正式な継続口座完成後にラズパイを常時運用の実行主体へ切り替える手順は[docs/21_forward_shadow_operations.md](docs/21_forward_shadow_operations.md)を参照してください。
 
 `jobs/run_backtest.py --demo --validation-registry-path /app/data/validation/windows.json`を指定すると、シミュレーターを呼ぶ前に口座別の未見期間を登録します。同じ口座の重複期間を変更後ルールで再評価しようとすると停止します。短期口座と中期口座は別の評価系列です。レジストリはGit対象外であり、画面表示だけでは書き込みません。同じファイルを複数プロセスから同時更新する運用は行いません。
 
