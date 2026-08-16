@@ -28,6 +28,7 @@ from app.analysis.virtual_trading import (
     summarize_virtual_trade_feedback,
     virtual_signals_from_reference_trades,
 )
+from app.backtest.forward_account import advance_forward_accounts_as_of
 from app.backtest.ohlc import (
     MarketImpactAssumptions,
     PortfolioRiskRules,
@@ -905,12 +906,18 @@ def load_movement_and_virtual_trade_analysis(
         limit=candidate_limit,
         maximum_holding_days=holding_days,
     )
+    forward_accounts = advance_forward_accounts_as_of(
+        signal_generation["signals"],
+        japan_prices,
+        as_of=signal_generation["decision_at"],
+    )
     return {
         "index_prices": index_prices,
         "japan_prices": japan_prices,
         "asset_count": len(japan_symbols),
         "movement": candidates,
         "signal_generation": signal_generation,
+        "forward_accounts": forward_accounts,
         "virtual_trades": virtual_trades,
         "virtual_signals": virtual_signals,
         "virtual_feedback": feedback,

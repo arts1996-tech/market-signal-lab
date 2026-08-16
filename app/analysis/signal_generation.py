@@ -28,9 +28,10 @@ def _utc_timestamp(value: Any) -> pd.Timestamp:
     return timestamp.tz_convert("UTC")
 
 
-def _known_prices_as_of(prices: pd.DataFrame, as_of: pd.Timestamp) -> pd.DataFrame:
+def known_prices_as_of(prices: pd.DataFrame, as_of: Any) -> pd.DataFrame:
     """Return only observations that were knowable at ``as_of``."""
 
+    cutoff = _utc_timestamp(as_of)
     if prices.empty:
         return prices.copy()
     if "price_time" not in prices:
@@ -38,7 +39,7 @@ def _known_prices_as_of(prices: pd.DataFrame, as_of: pd.Timestamp) -> pd.DataFra
 
     frame = prices.copy()
     price_time = pd.to_datetime(frame["price_time"], utc=True, errors="coerce")
-    known = price_time.notna() & (price_time <= as_of)
+    known = price_time.notna() & (price_time <= cutoff)
     availability_column = next(
         (column for column in ("available_at", "fetched_at") if column in frame),
         None,
@@ -47,7 +48,7 @@ def _known_prices_as_of(prices: pd.DataFrame, as_of: pd.Timestamp) -> pd.DataFra
         available_at = pd.to_datetime(
             frame[availability_column], utc=True, errors="coerce"
         )
-        known &= available_at.notna() & (available_at <= as_of)
+        known &= available_at.notna() & (available_at <= cutoff)
     return frame.loc[known].copy()
 
 
@@ -88,8 +89,8 @@ def generate_signals_as_of(
         raise ValueError("stop_loss must be negative and take_profit must be positive")
 
     decision_at = _utc_timestamp(as_of)
-    known_index_prices = _known_prices_as_of(index_prices, decision_at)
-    known_japan_prices = _known_prices_as_of(japan_prices, decision_at)
+    known_index_prices = known_prices_as_of(index_prices, decision_at)
+    known_japan_prices = known_prices_as_of(japan_prices, decision_at)
     quality_warnings = _input_warnings(index_prices, japan_prices)
 
     movement = build_movement_candidates(

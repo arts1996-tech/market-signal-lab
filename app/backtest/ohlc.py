@@ -251,6 +251,8 @@ def simulate_ohlc_portfolio(
     benchmark: pd.Series | None = None,
     benchmarks: dict[str, pd.Series] | None = None,
     input_data_version: str | None = None,
+    strategy_version: str | None = None,
+    execution_version: str | None = None,
 ) -> dict:
     """Simulate long-only daily OHLC signals with conservative execution.
 
@@ -286,6 +288,8 @@ def simulate_ohlc_portfolio(
         assumptions={"execution": assumptions, "market_impact": market_impact},
         risk_rules=risk_rules,
         input_data_version=input_data_version,
+        **({"strategy_version": strategy_version} if strategy_version else {}),
+        **({"execution_version": execution_version} if execution_version else {}),
     )
     if signal_frame.empty or price_frame.empty:
         return _empty_result(
@@ -826,6 +830,11 @@ def simulate_ohlc_portfolio(
             for symbol, position in positions.items()
         ]
     )
+    decision_card_frame = pd.DataFrame(cards)
+    if not decision_card_frame.empty:
+        decision_card_frame = decision_card_frame.sort_values("event_at").reset_index(
+            drop=True
+        )
     return {
         "account_name": account_name,
         "initial_cash": float(initial_cash),
@@ -837,7 +846,7 @@ def simulate_ohlc_portfolio(
         "transactions": transaction_frame,
         "snapshots": snapshot_frame,
         "rejected_signals": pd.DataFrame(rejected),
-        "decision_cards": pd.DataFrame(cards).sort_values("event_at").reset_index(drop=True),
+        "decision_cards": decision_card_frame,
         "benchmark_comparisons": benchmark_comparisons,
         "metrics": metrics,
         "manifest": manifest,

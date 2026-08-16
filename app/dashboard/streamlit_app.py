@@ -693,6 +693,46 @@ if active_page == "仮想投資評価":
                     hide_index=True,
                 )
 
+        st.markdown("### 短期・中期の独立仮想口座")
+        st.info(
+            "短期・中期はそれぞれ250万円から開始し、資金移動を行いません。"
+            "日次状態を次回へ渡せる計算基盤まで実装済みです。"
+            "DBへの追記保存と画面再読み込み後の自動復元は次のNOW-P0-3で追加します。"
+        )
+        forward_accounts = virtual_data["forward_accounts"]
+        for account in forward_accounts["accounts"].values():
+            st.markdown(f"#### {account['label']}口座")
+            account_cols = st.columns(6)
+            account_cols[0].metric("初期資金", f"¥{account['initial_cash']:,.0f}")
+            account_cols[1].metric("現金", f"¥{account['cash']:,.0f}")
+            account_cols[2].metric("評価額", f"¥{account['equity']:,.0f}")
+            account_cols[3].metric("実現損益", f"¥{account['realized_pnl']:+,.0f}")
+            account_cols[4].metric("未実現損益", f"¥{account['unrealized_pnl']:+,.0f}")
+            account_cols[5].metric(
+                "最大ドローダウン", format_percent(account["maximum_drawdown"])
+            )
+            rule = account["account_rule"]
+            st.caption(
+                f"戦略版: {account['strategy_version']} / "
+                f"利益確定: {rule['take_profit']:.0%} / "
+                f"損切り: {rule['stop_loss']:.0%} / "
+                f"最大保有: {rule['maximum_holding_days']}営業日 / "
+                f"累積損益: ¥{account['cumulative_pnl']:+,.0f} / "
+                f"翌日注文: {len(account['pending_orders'])}件"
+            )
+            if not account["positions"].empty:
+                with st.expander(f"{account['label']}口座の保有"):
+                    st.dataframe(
+                        account["positions"], use_container_width=True, hide_index=True
+                    )
+            if not account["pending_orders"].empty:
+                with st.expander(f"{account['label']}口座の翌日注文予定"):
+                    st.dataframe(
+                        account["pending_orders"],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
         st.markdown("### 将来結果を使った過去評価")
         st.caption(
             "仮想投資の成績は未較正の参考統計として表示します。"
