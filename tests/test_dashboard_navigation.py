@@ -57,3 +57,11 @@ def test_asset_screening_reads_persisted_paged_batch_results():
     )
     assert ".head(10)" not in analysis_source
     assert "limit: int = 200" not in analysis_source
+
+
+def test_system_page_discloses_segment_sample_gate():
+    source = Path("app/dashboard/streamlit_app.py").read_text(encoding="utf-8")
+
+    assert "実データ検証の相場局面・属性別評価" in source
+    assert "30件未満の区分は成績判定せず" in source
+    assert 'job_name="run_backtest"' in source

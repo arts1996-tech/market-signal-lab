@@ -612,6 +612,8 @@ def simulate_ohlc_portfolio(
                     "spread_rate": None,
                     "execution_cost_profile": asset_lifecycle_policy.version,
                     "previous_turnover": None,
+                    "score": position.get("score"),
+                    "sector": position.get("sector", "unknown"),
                 }
             )
             asset_lifecycle_events.append(
@@ -1320,6 +1322,8 @@ def simulate_ohlc_portfolio(
                     "spread_rate": position["spread_rate"],
                     "execution_cost_profile": position["execution_cost_profile"],
                     "previous_turnover": position["previous_turnover"],
+                    "score": position.get("score"),
+                    "sector": position.get("sector", "unknown"),
                 }
             )
             card = decision_card(

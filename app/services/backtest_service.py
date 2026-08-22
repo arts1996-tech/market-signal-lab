@@ -29,6 +29,11 @@ from app.backtest.ohlc import (
     simulate_ohlc_portfolio,
 )
 from app.backtest.portfolio import ExecutionAssumptions
+from app.backtest.segmented_evaluation import (
+    SegmentedEvaluationPolicy,
+    classify_completed_trades,
+    summarize_segmented_trades,
+)
 from app.backtest.tax_accounting import TaxAccountingPolicy
 from app.backtest.validation import (
     WALK_FORWARD_PROTOCOL_VERSION,
@@ -190,6 +195,11 @@ def evaluate_real_account_walk_forward(
     prices = _valid_ohlcv(japan_prices)
     counts = _contiguous_counts(prices)
     assumptions, market_impact, risk_rules = _execution_configuration()
+    segmented_policy = SegmentedEvaluationPolicy(
+        high_turnover_threshold=market_impact.high_turnover_threshold,
+        medium_turnover_threshold=market_impact.medium_turnover_threshold,
+        low_turnover_threshold=market_impact.low_turnover_threshold,
+    )
     corporate_action_policy = CorporateActionPolicy()
     corporate_action_gate = evaluate_corporate_action_gate(
         prices,
@@ -268,6 +278,9 @@ def evaluate_real_account_walk_forward(
         "historical_signal_availability_basis": (
             "session_date_only; provider publication timestamp is not reconstructed"
         ),
+        "segmented_evaluation": summarize_segmented_trades(
+            pd.DataFrame(), policy=segmented_policy
+        ),
     }
     if not qualified_symbols:
         return {
@@ -303,9 +316,14 @@ def evaluate_real_account_walk_forward(
             "windows": [],
         }
 
+    segmented_trade_frames: list[pd.DataFrame] = []
+    simulated_window_count = 0
+
     def simulator(test_signals: pd.DataFrame, prices_as_of_test: pd.DataFrame) -> dict:
+        nonlocal simulated_window_count
+        simulated_window_count += 1
         simulation_input_data_version = frame_hash(prices_as_of_test)
-        return simulate_ohlc_portfolio(
+        simulation_result = simulate_ohlc_portfolio(
             test_signals,
             prices_as_of_test,
             initial_cash=2_500_000,
@@ -326,6 +344,15 @@ def evaluate_real_account_walk_forward(
             fx_accounting_policy=fx_accounting_policy,
             tax_accounting_policy=tax_accounting_policy,
         )
+        classified = classify_completed_trades(
+            simulation_result,
+            index_prices,
+            policy=segmented_policy,
+            validation_window=simulated_window_count,
+        )
+        if not classified.empty:
+            segmented_trade_frames.append(classified)
+        return simulation_result
 
     walk_forward = evaluate_frozen_strategy_walk_forward(
         signals,
@@ -340,6 +367,14 @@ def evaluate_real_account_walk_forward(
     )
     test_signals = int(walk_forward.get("test_signals", pd.Series(dtype=int)).sum())
     closed_trades = int(walk_forward.get("closed_trades", pd.Series(dtype=int)).sum())
+    segmented_trades = (
+        pd.concat(segmented_trade_frames, ignore_index=True)
+        if segmented_trade_frames
+        else pd.DataFrame()
+    )
+    segmented_evaluation = summarize_segmented_trades(
+        segmented_trades, policy=segmented_policy
+    )
     forward_period = {
         "status": "not_activated",
         "decision_track": "current_market",
@@ -426,6 +461,7 @@ def evaluate_real_account_walk_forward(
         "validation_window_count": len(walk_forward),
         "validation_test_signals": test_signals,
         "validation_closed_trades": closed_trades,
+        "segmented_evaluation": segmented_evaluation,
         "forward_period": json_value(forward_period),
         "windows": _window_records(walk_forward),
     }

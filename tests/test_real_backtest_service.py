@@ -125,6 +125,26 @@ def test_real_backtest_claims_unseen_windows_before_evaluation(monkeypatch, tmp_
     assert result["forward_period"]["status"] == "awaiting_observations"
     assert result["forward_period"]["validation_data_reused"] is False
     assert result["forward_period"]["activation_claim_id"]
+    segmented = result["segmented_evaluation"]
+    assert segmented["completed_trades"] == result["validation_closed_trades"]
+    assert segmented["input_hash"]
+    assert {
+        row["segment_dimension"] for row in segmented["summaries"]
+    }.issuperset(
+        {
+            "overall",
+            "market_direction",
+            "volatility_regime",
+            "fx_regime",
+            "sector",
+            "liquidity_band",
+            "score_band",
+        }
+    )
+    assert all(
+        row["performance_assessment"] == "not_assessed_small_sample"
+        for row in segmented["summaries"]
+    )
     assert registry.exists()
 
 

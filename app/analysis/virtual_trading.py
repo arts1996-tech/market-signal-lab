@@ -220,6 +220,9 @@ def build_point_in_time_historical_signals(
             name = current.get("name")
             if name is None or pd.isna(name):
                 name = symbol
+            sector = current.get("sector")
+            if sector is None or pd.isna(sector):
+                sector = "unknown"
             rows.append(
                 {
                     "signal_generation_version": HISTORICAL_SIGNAL_VERSION,
@@ -228,7 +231,7 @@ def build_point_in_time_historical_signals(
                     "entry_date": close.index[location + 1],
                     "symbol": str(symbol),
                     "name": str(name),
-                    "sector": current.get("sector", "unknown"),
+                    "sector": str(sector),
                     "score": int(score),
                     "direction": direction,
                     "side": "long" if "上方向" in direction else "observe_only",

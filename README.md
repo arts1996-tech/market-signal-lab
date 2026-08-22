@@ -8,7 +8,7 @@
 
 > **現在の利用上の重要事項:** 現時点の仮想口座と候補スコアは、実際の売買判断や投資額決定の主な根拠にできる成熟度には達していません。正直な評価、利用してよい範囲、実投資支援前の必須品質ゲートは [docs/19_investment_decision_readiness_assessment.md](docs/19_investment_decision_readiness_assessment.md) を参照してください。
 
-> **現行ToDoの正本:** 今後の最優先事項、実装順序、未完了項目、完了条件は [docs/22_current_priority_todo.md](docs/22_current_priority_todo.md) に一本化しています。過去文書に残る「次の作業」より、この文書を優先します。`NOW-P0-1`〜`NOW-P0-5`、`NOW-P1-1`〜`NOW-P1-9`、`NOW-P2-1`の実装は完了しました。前向き口座の最初の実営業日を監視しながら、次は相場局面別・属性別評価を追加する`NOW-P2-2`です。
+> **現行ToDoの正本:** 今後の最優先事項、実装順序、未完了項目、完了条件は [docs/22_current_priority_todo.md](docs/22_current_priority_todo.md) に一本化しています。過去文書に残る「次の作業」より、この文書を優先します。`NOW-P0-1`〜`NOW-P0-5`、`NOW-P1-1`〜`NOW-P1-9`、`NOW-P2-1`〜`NOW-P2-2`の実装は完了しました。前向き口座の最初の実営業日を監視しながら、次はベンチマーク比較を拡充する`NOW-P2-3`です。
 
 GitHub: https://github.com/arts1996-tech/market-signal-lab
 
@@ -388,7 +388,11 @@ Macで平日18:30、20:30、22:30に上記の研究スナップショットを�
 
 同じ口座の重複期間を変更後ルールで再評価しようとすると停止し、同じ凍結入力の再実行だけを冪等に扱います。最終の完全検証窓より後に、実行時点ですでにDBへ存在した端数期間は前向き成績へ含めず隔離します。正式な前向き期間は、凍結実行時点で観測済みだった最終営業日の次の東証営業日から開始し、その後に到着したデータを過去検証へ戻しません。短期口座と中期口座は別の評価系列です。レジストリはGit対象外であり、画面表示だけでは書き込みません。同じファイルを複数プロセスから同時更新する運用は行いません。
 
-Macで確認する場合はDockerを起動し、次を実行します。履歴不足はエラーではなく、短期・中期それぞれの`status`と`reasons`に`insufficient_data`／`insufficient_contiguous_price_history`が表示されます。必要履歴がそろった後は`validation_window_count`、各窓のハッシュ、`forward_period.forward_start`を確認します。
+`segmented-trade-evaluation-v1`は、各検証窓の決済済み仮想取引を判断日時点で分類します。日経平均の20営業日騰落が5%以上なら上昇、-5%以下なら下落、その間は横ばいとし、日次リターンの20日標準偏差1.5%以上を高ボラ、それ未満を低ボラとします。USD/JPYの20観測変化が2%以上なら円安、-2%以下なら円高、その間は中立です。業種、前営業日売買代金の10億円・2.5億円・5千万円帯、スコア70台・80台・90以上でも集計します。判断日当日の日経平均、連続履歴、鮮度を満たすUSD/JPYがない場合は補完せず`data_unavailable`です。
+
+各区分には標本数、勝率、勝率95%Wilson区間、平均取引損益率、平均損益率95%近似区間、実現損益合計を保存します。30件未満は`not_assessed_small_sample`として成績判定しません。30件以上でも、信頼区間が0をまたぐ場合は`inconclusive`です。この区分は探索的な観測であり、予測能力や利益を示しません。
+
+Macで確認する場合はDockerを起動し、次を実行します。履歴不足はエラーではなく、短期・中期それぞれの`status`と`reasons`に`insufficient_data`／`insufficient_contiguous_price_history`が表示されます。必要履歴がそろった後は`validation_window_count`、各窓のハッシュ、`forward_period.forward_start`を確認します。画面では「システム管理」→「実データ検証の相場局面・属性別評価」で、短期・中期別の履歴、検証窓、決済済み標本、区分別信頼区間を確認できます。
 
 ```bash
 docker compose exec app python jobs/run_backtest.py

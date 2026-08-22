@@ -1256,12 +1256,16 @@ if active_page == "システム管理":
             collector_runs = latest_job_runs(
                 session, limit=1, job_name="collect_jquants_all_prices"
             )
+            backtest_runs = latest_job_runs(
+                session, limit=1, job_name="run_backtest"
+            )
             correlation_logs = latest_correlation_results(session, analysis_status=None)
     else:
         fetch_logs = []
         job_runs = []
         operations_runs = []
         collector_runs = []
+        backtest_runs = []
         correlation_logs = []
 
     st.subheader("前向き仮想口座の日次監視")
@@ -1427,6 +1431,99 @@ if active_page == "システム管理":
         ],
         use_container_width=True,
     )
+
+    st.subheader("実データ検証の相場局面・属性別評価")
+    st.caption(
+        "決済済み仮想取引を、判断日時点の日経平均、20日ボラティリティ、"
+        "USD/JPY、業種、前営業日売買代金、スコア帯で集計します。"
+        "30件未満の区分は成績判定せず、件数と95%信頼区間だけを表示します。"
+    )
+    if not backtest_runs:
+        st.info("実データバックテストの実行記録がありません。")
+    else:
+        latest_backtest = backtest_runs[0]
+        st.caption(
+            f"最終実行: {format_jst(latest_backtest.finished_at or latest_backtest.started_at)} / "
+            f"状態: {latest_backtest.status}"
+        )
+        account_labels = {"short_term": "短期", "mid_term": "中期"}
+        dimension_labels = {
+            "overall": "全体",
+            "market_direction": "相場方向",
+            "volatility_regime": "ボラティリティ",
+            "fx_regime": "為替",
+            "sector": "業種",
+            "liquidity_band": "流動性",
+            "score_band": "スコア帯",
+        }
+        accounts = latest_backtest.details.get("accounts", {})
+        for account_name in ("short_term", "mid_term"):
+            account = accounts.get(account_name, {})
+            with st.expander(
+                f"{account_labels[account_name]}口座",
+                expanded=account_name == "short_term",
+            ):
+                status_cols = st.columns(4)
+                status_cols[0].metric("状態", account.get("status", "未実行"))
+                status_cols[1].metric(
+                    "連続履歴の最大",
+                    f"{account.get('maximum_contiguous_sessions', 0)}営業日",
+                )
+                status_cols[2].metric(
+                    "検証窓", account.get("validation_window_count", 0) or 0
+                )
+                segmented = account.get("segmented_evaluation") or {}
+                status_cols[3].metric(
+                    "決済済み標本", segmented.get("completed_trades", 0)
+                )
+                summaries = segmented.get("summaries", [])
+                if not summaries:
+                    reasons = account.get("reasons", [])
+                    st.info(
+                        "局面別評価に必要な決済済み検証取引がありません。"
+                        + (f" 理由: {', '.join(reasons)}" if reasons else "")
+                    )
+                else:
+                    view = pd.DataFrame(summaries)
+                    view["segment_dimension"] = view["segment_dimension"].map(
+                        dimension_labels
+                    ).fillna(view["segment_dimension"])
+                    view = view.rename(
+                        columns={
+                            "segment_dimension": "分類軸",
+                            "segment_label": "区分",
+                            "trade_count": "標本数",
+                            "win_rate": "勝率",
+                            "win_rate_ci95": "勝率95%CI",
+                            "average_trade_return": "平均取引損益率",
+                            "average_trade_return_ci95": "平均損益率95%CI",
+                            "total_realized_pnl": "実現損益合計",
+                            "sample_status": "標本状態",
+                            "performance_assessment": "観測上の判定",
+                        }
+                    )
+                    st.dataframe(
+                        view[
+                            [
+                                "分類軸",
+                                "区分",
+                                "標本数",
+                                "勝率",
+                                "勝率95%CI",
+                                "平均取引損益率",
+                                "平均損益率95%CI",
+                                "実現損益合計",
+                                "標本状態",
+                                "観測上の判定",
+                            ]
+                        ],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                    if segmented.get("warnings"):
+                        st.warning(
+                            "少数標本の区分は投資成績として評価していません。"
+                        )
 
     st.subheader("保存済み相関分析")
     if any(row.analysis_status == "requires_recalculation" for row in correlation_logs):

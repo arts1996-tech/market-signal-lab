@@ -12,6 +12,11 @@ from app.backtest.ohlc import (
     simulate_ohlc_portfolio,
 )
 from app.backtest.portfolio import ExecutionAssumptions, simulate_long_portfolio
+from app.backtest.segmented_evaluation import (
+    SegmentedEvaluationPolicy,
+    classify_completed_trades,
+    summarize_segmented_trades,
+)
 from app.backtest.shadow import write_forward_shadow_snapshot
 from app.backtest.validation import evaluate_frozen_strategy_walk_forward, walk_forward_windows
 
@@ -29,4 +34,7 @@ __all__ = [
     "FORWARD_ACCOUNT_RULES",
     "ForwardAccountRule",
     "advance_forward_accounts_as_of",
+    "SegmentedEvaluationPolicy",
+    "classify_completed_trades",
+    "summarize_segmented_trades",
 ]
