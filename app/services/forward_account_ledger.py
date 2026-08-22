@@ -107,6 +107,8 @@ def build_virtual_account_daily_state(
     last_market_session = account.get("last_market_session")
     positions = _records(account.get("positions"))
     pending_orders = _records(account.get("pending_orders"))
+    pending_dividends = _records(account.get("pending_dividends"))
+    corporate_action_events = _records(account.get("corporate_action_events"))
     signal_history = _records(
         account.get("base_signal_history", account.get("signal_history"))
     )
@@ -127,6 +129,11 @@ def build_virtual_account_daily_state(
         "risk_halted": bool(account.get("risk_halted", False)),
         "positions": positions,
         "pending_orders": pending_orders,
+        "pending_dividends": pending_dividends,
+        "corporate_action_events": corporate_action_events,
+        "corporate_action_gate": json_value(account.get("corporate_action_gate", {})),
+        "quality_warnings": json_value(account.get("quality_warnings", [])),
+        "evaluation_status": account.get("evaluation_status"),
         "signal_history": signal_history,
         "decisions": decision_records,
         "observation": json_value(
@@ -183,6 +190,13 @@ def build_virtual_account_daily_state(
                 "account_rule": json_value(account.get("account_rule", {})),
                 "point_in_time_decisions": decision_records,
                 "decision_observation": json_value(observation),
+                "pending_dividends": pending_dividends,
+                "corporate_action_events": corporate_action_events,
+                "corporate_action_gate": json_value(
+                    account.get("corporate_action_gate", {})
+                ),
+                "quality_warnings": json_value(account.get("quality_warnings", [])),
+                "evaluation_status": account.get("evaluation_status"),
                 "warning": "仮想記録です。実注文・投資助言・利益保証ではありません。",
             },
         },
@@ -286,18 +300,24 @@ def build_virtual_account_events(
         event_at = record.get("date") or observed
         if _event_date(event_at) != session_date:
             continue
+        action = record.get("action")
+        event_type = (
+            "corporate_action"
+            if action in {"株式分割", "株式併合", "現金配当"}
+            else "execution"
+        )
         events.append(
             _ledger_event(
                 account_name=account_name,
                 decision_track=decision_track,
                 session_date=session_date,
-                event_type="execution",
+                event_type=event_type,
                 event_at=event_at,
                 input_data_version=input_data_version,
                 payload=record,
             )
         )
-        if record.get("action") != "仮想エントリー":
+        if action in {"利益確定", "損切り", "保有期限決済"}:
             events.append(
                 _ledger_event(
                     account_name=account_name,
@@ -309,6 +329,28 @@ def build_virtual_account_events(
                     payload=record,
                 )
             )
+
+    for record in _records(account.get("corporate_action_events")):
+        event_at = (
+            record.get("credited_at")
+            or record.get("event_date")
+            or record.get("effective_date")
+            or record.get("ex_date")
+            or observed
+        )
+        if _event_date(event_at) != session_date:
+            continue
+        events.append(
+            _ledger_event(
+                account_name=account_name,
+                decision_track=decision_track,
+                session_date=session_date,
+                event_type="corporate_action",
+                event_at=event_at,
+                input_data_version=input_data_version,
+                payload=record,
+            )
+        )
 
     for record in _records(account.get("rejected_signals")):
         event_at = record.get("entry_date") or record.get("signal_date") or observed

@@ -43,6 +43,8 @@ from app.backtest.ohlc import (
 )
 from app.backtest.portfolio import ExecutionAssumptions
 from app.database.repositories import (
+    corporate_action_coverage_frame,
+    corporate_actions_frame,
     list_assets_by_source,
     list_assets_with_minimum_price_history,
     market_prices_frame,
@@ -886,6 +888,13 @@ def load_movement_and_virtual_trade_analysis(
             .sort_values("price_time")
             .reset_index(drop=True)
         )
+    corporate_action_as_of = signal_as_of or datetime.now(UTC)
+    corporate_actions = corporate_actions_frame(
+        session, japan_symbols, as_of=corporate_action_as_of
+    )
+    corporate_action_coverage = corporate_action_coverage_frame(
+        session, japan_symbols, as_of=corporate_action_as_of
+    )
     virtual_trades = build_virtual_trades(
         index_prices,
         japan_prices,
@@ -932,6 +941,8 @@ def load_movement_and_virtual_trade_analysis(
             maximum_position_correlation=0.85,
         ),
         benchmark=benchmark,
+        corporate_actions=corporate_actions,
+        corporate_action_coverage=corporate_action_coverage,
     )
     candidates = build_movement_candidates(
         index_prices,
@@ -985,6 +996,8 @@ def load_movement_and_virtual_trade_analysis(
         japan_prices,
         as_of=signal_generation["decision_at"],
         previous_states=previous_forward_states,
+        corporate_actions=corporate_actions,
+        corporate_action_coverage=corporate_action_coverage,
     )
     return {
         "index_prices": index_prices,
@@ -997,6 +1010,8 @@ def load_movement_and_virtual_trade_analysis(
         "virtual_signals": virtual_signals,
         "virtual_feedback": feedback,
         "virtual_account": virtual_account,
+        "corporate_actions": corporate_actions,
+        "corporate_action_coverage": corporate_action_coverage,
         "score_threshold": score_threshold,
         "holding_days": holding_days,
     }

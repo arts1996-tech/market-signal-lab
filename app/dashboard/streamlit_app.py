@@ -56,6 +56,18 @@ def format_reason_list(value) -> str:
     return " / ".join(str(item) for item in value)
 
 
+def format_corporate_action_warnings(values) -> str:
+    labels = {
+        "corporate_action_coverage_unverified": "企業行動を確認できる期間情報がありません",
+        "unsupported_corporate_action_present": "合併・株式交換等の未対応イベントがあります",
+        "unconfirmed_corporate_action_present": "未確定の企業行動があります",
+        "corporate_action_announcement_time_missing": "企業行動の公表時刻を確認できません",
+        "raw_prices_required_for_explicit_corporate_action": "価格調整の二重反映を避けるための未調整OHLCが不足しています",
+        "foreign_currency_dividend_unmodeled": "外貨配当の換算を評価できません",
+    }
+    return " / ".join(labels.get(str(value), str(value)) for value in values)
+
+
 def format_jst(value) -> str:
     if value is None or pd.isna(value):
         return "-"
@@ -912,6 +924,11 @@ if active_page == "仮想投資評価":
                 f"累積損益: ¥{account['cumulative_pnl']:+,.0f} / "
                 f"翌日注文: {len(account['pending_orders'])}件"
             )
+            if account.get("quality_warnings"):
+                st.warning(
+                    "企業行動ゲート: "
+                    + format_corporate_action_warnings(account["quality_warnings"])
+                )
             if not account["positions"].empty:
                 with st.expander(f"{account['label']}口座の保有"):
                     st.dataframe(
@@ -936,6 +953,13 @@ if active_page == "仮想投資評価":
             "同一日足で利益確定と損切りに到達した場合は損切りを優先し、"
             "始値欠損は取引せず、下方向シグナルは空売りせず観察専用とします。"
         )
+        if virtual_account.get("quality_warnings"):
+            st.warning(
+                "企業行動ゲート: "
+                + format_corporate_action_warnings(
+                    virtual_account["quality_warnings"]
+                )
+            )
         if trades.empty:
             st.warning("仮想投資評価に必要な履歴データが不足しています。東証カレンダー上で最新から連続する30営業日以上の日本株・ETFデータが必要です。")
         else:

@@ -63,7 +63,7 @@ def test_demo_portfolio_uses_shared_ohlc_engine_and_audit_manifest():
     result = run_demo_portfolio_environment()
 
     for account in result["accounts"].values():
-        assert account["manifest"]["execution_version"] == "ohlc-next-open-conservative-v2"
+        assert account["manifest"]["execution_version"] == "ohlc-next-open-conservative-v3"
         assert account["manifest"]["run_id"]
         assert not account["decision_cards"].empty
         assert account["decision_cards"]["human_review_required"].all()

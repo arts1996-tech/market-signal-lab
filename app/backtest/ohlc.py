@@ -4,6 +4,16 @@ import math
 import pandas as pd
 
 from app.backtest.audit import build_run_manifest, decision_card
+from app.backtest.corporate_actions import (
+    CASH_DIVIDEND,
+    REVERSE_SPLIT,
+    STOCK_SPLIT,
+    UNSUPPORTED_ACTIONS,
+    CorporateActionPolicy,
+    evaluate_corporate_action_gate,
+    events_on,
+    known_unsupported_event_in_horizon,
+)
 from app.backtest.portfolio import ExecutionAssumptions
 
 
@@ -79,6 +89,8 @@ def _empty_result(
     assumptions: ExecutionAssumptions,
     market_impact: MarketImpactAssumptions,
     risk_rules: PortfolioRiskRules,
+    corporate_action_policy: CorporateActionPolicy,
+    corporate_action_gate: dict,
 ) -> dict:
     empty = pd.DataFrame()
     return {
@@ -110,6 +122,19 @@ def _empty_result(
         "market_impact": market_impact,
         "risk_rules": risk_rules,
         "risk_halted": False,
+        "dividend_income": 0.0,
+        "pending_dividends": empty,
+        "corporate_action_events": empty,
+        "corporate_action_policy": corporate_action_policy,
+        "corporate_action_gate": {
+            key: value
+            for key, value in corporate_action_gate.items()
+            if key not in {"actions", "coverage"}
+        },
+        "quality_warnings": list(corporate_action_gate["warnings"]),
+        "evaluation_status": (
+            "warning" if corporate_action_gate["warnings"] else "complete"
+        ),
     }
 
 
@@ -160,6 +185,22 @@ def _last_close_or_entry(
 ) -> float:
     value = price_lookup.get((symbol, session), {}).get("close")
     return entry_price if not _valid_positive_number(value) else float(value)
+
+
+def _position_mark(
+    price_lookup: dict,
+    symbol: str,
+    session: pd.Timestamp,
+    position: dict,
+    blocked_symbols: set[str],
+) -> float:
+    if symbol in blocked_symbols:
+        return float(
+            position.get("last_verified_close", position["entry_execution_price"])
+        )
+    return _last_close_or_entry(
+        price_lookup, symbol, session, position["entry_execution_price"]
+    )
 
 
 def _valid_positive_number(value) -> bool:
@@ -253,6 +294,9 @@ def simulate_ohlc_portfolio(
     input_data_version: str | None = None,
     strategy_version: str | None = None,
     execution_version: str | None = None,
+    corporate_actions: pd.DataFrame | None = None,
+    corporate_action_coverage: pd.DataFrame | None = None,
+    corporate_action_policy: CorporateActionPolicy | None = None,
 ) -> dict:
     """Simulate long-only daily OHLC signals with conservative execution.
 
@@ -266,6 +310,7 @@ def simulate_ohlc_portfolio(
     assumptions = assumptions or ExecutionAssumptions()
     market_impact = market_impact or MarketImpactAssumptions()
     risk_rules = risk_rules or PortfolioRiskRules()
+    corporate_action_policy = corporate_action_policy or CorporateActionPolicy()
     required_signals = {"signal_date", "entry_date", "symbol", "side"}
     required_prices = {"price_time", "symbol", "open", "high", "low", "close"}
     if not required_signals.issubset(signals.columns) and not signals.empty:
@@ -281,6 +326,51 @@ def simulate_ohlc_portfolio(
     for column in ("open", "high", "low", "close", "volume"):
         if column in price_frame:
             price_frame[column] = pd.to_numeric(price_frame[column], errors="coerce")
+    corporate_action_gate = evaluate_corporate_action_gate(
+        price_frame,
+        corporate_actions,
+        corporate_action_coverage,
+        corporate_action_policy,
+    )
+    action_frame = corporate_action_gate["actions"]
+    coverage_frame = corporate_action_gate["coverage"]
+    explicitly_modeled_symbols = set(
+        action_frame.loc[
+            action_frame["action_type"].isin(
+                {STOCK_SPLIT, REVERSE_SPLIT, CASH_DIVIDEND}
+            )
+            & action_frame["status"].eq("confirmed"),
+            "symbol",
+        ].tolist()
+    )
+    raw_price_unavailable_symbols: set[str] = set()
+    for symbol in explicitly_modeled_symbols:
+        symbol_rows = price_frame["symbol"] == symbol
+        bases = set(price_frame.loc[symbol_rows, "price_basis"].dropna().astype(str)) if "price_basis" in price_frame else set()
+        if "raw_ohlcv_with_adjusted" not in bases:
+            continue
+        raw_columns = ["raw_open", "raw_high", "raw_low", "raw_close"]
+        if not all(column in price_frame for column in raw_columns):
+            raw_price_unavailable_symbols.add(symbol)
+            continue
+        usable = price_frame.loc[symbol_rows, raw_columns].notna().all(axis=1)
+        if not usable.all():
+            raw_price_unavailable_symbols.add(symbol)
+            continue
+        for column in ("open", "high", "low", "close"):
+            price_frame.loc[symbol_rows, column] = pd.to_numeric(
+                price_frame.loc[symbol_rows, f"raw_{column}"], errors="coerce"
+            )
+        if "raw_volume" in price_frame:
+            raw_volume = pd.to_numeric(
+                price_frame.loc[symbol_rows, "raw_volume"], errors="coerce"
+            )
+            valid_raw_volume = raw_volume[raw_volume.notna()]
+            price_frame.loc[valid_raw_volume.index, "volume"] = valid_raw_volume
+    if raw_price_unavailable_symbols:
+        corporate_action_gate["warnings"].append(
+            "raw_prices_required_for_explicit_corporate_action"
+        )
     manifest = build_run_manifest(
         signal_frame,
         price_frame,
@@ -290,10 +380,20 @@ def simulate_ohlc_portfolio(
         input_data_version=input_data_version,
         **({"strategy_version": strategy_version} if strategy_version else {}),
         **({"execution_version": execution_version} if execution_version else {}),
+        corporate_actions=action_frame,
+        corporate_action_coverage=coverage_frame,
+        corporate_action_policy=corporate_action_policy,
     )
     if signal_frame.empty or price_frame.empty:
         return _empty_result(
-            account_name, initial_cash, manifest, assumptions, market_impact, risk_rules
+            account_name,
+            initial_cash,
+            manifest,
+            assumptions,
+            market_impact,
+            risk_rules,
+            corporate_action_policy,
+            corporate_action_gate,
         )
 
     price_frame = price_frame.sort_values(["symbol", "price_time"]).drop_duplicates(
@@ -330,6 +430,11 @@ def simulate_ohlc_portfolio(
     loss_streak = 0
     cooldown_until_index = -1
     risk_halted = False
+    dividend_income = 0.0
+    pending_dividends: list[dict] = []
+    corporate_action_events: list[dict] = []
+    blocked_symbols: set[str] = set()
+    unverified_symbols = set(corporate_action_gate["unverified_symbols"])
 
     def reject(signal: dict, reason: str, warning: str) -> None:
         rejected.append(
@@ -351,10 +456,163 @@ def simulate_ohlc_portfolio(
         cards.append(card)
 
     for session_index, current_date in enumerate(sessions):
+        session_events = sorted(
+            events_on(action_frame, current_date),
+            key=lambda event: (
+                0
+                if event["action_type"] in {STOCK_SPLIT, REVERSE_SPLIT}
+                else 1
+                if event["action_type"] == CASH_DIVIDEND
+                else 2,
+                event["action_id"],
+            ),
+        )
+        for event in session_events:
+            symbol = event["symbol"]
+            position = positions.get(symbol)
+            if position is None:
+                continue
+            action_type = event["action_type"]
+            if event.get("announced_at") is None:
+                corporate_action_gate["warnings"].append(
+                    "corporate_action_announcement_time_missing"
+                )
+            if event.get("status") != "confirmed":
+                blocked_symbols.add(symbol)
+                corporate_action_events.append(
+                    {
+                        **event,
+                        "status": "evaluation_deferred",
+                        "reason": "corporate_action_not_confirmed",
+                    }
+                )
+                continue
+            if action_type in UNSUPPORTED_ACTIONS:
+                blocked_symbols.add(symbol)
+                corporate_action_events.append(
+                    {
+                        **event,
+                        "status": "evaluation_deferred",
+                        "reason": "unsupported_corporate_action",
+                    }
+                )
+                cards.append(
+                    decision_card(
+                        position,
+                        status="valuation_deferred",
+                        manifest=manifest,
+                        entry_price=position["entry_execution_price"],
+                        outcome_reason="未対応の企業行動",
+                        quality_warnings=["合併・株式交換等のため評価を継続しません"],
+                        event_at=current_date,
+                    )
+                )
+                continue
+            if action_type in {STOCK_SPLIT, REVERSE_SPLIT}:
+                if symbol in raw_price_unavailable_symbols:
+                    blocked_symbols.add(symbol)
+                    corporate_action_events.append(
+                        {
+                            **event,
+                            "status": "evaluation_deferred",
+                            "reason": "raw_prices_unavailable",
+                        }
+                    )
+                    continue
+                ratio = float(event["ratio"])
+                old_quantity = int(position["quantity"])
+                adjusted_quantity = old_quantity * ratio
+                if not math.isclose(adjusted_quantity, round(adjusted_quantity)):
+                    blocked_symbols.add(symbol)
+                    corporate_action_events.append(
+                        {
+                            **event,
+                            "status": "evaluation_deferred",
+                            "reason": "fractional_share_cash_in_lieu_unmodeled",
+                        }
+                    )
+                    continue
+                position["quantity"] = int(round(adjusted_quantity))
+                for key in (
+                    "entry_execution_price",
+                    "stop_price",
+                    "take_profit_price",
+                ):
+                    position[key] = float(position[key]) / ratio
+                position["reference_quantity"] = position["quantity"]
+                action_label = "株式分割" if action_type == STOCK_SPLIT else "株式併合"
+                transaction = {
+                    "account": account_name,
+                    "date": current_date,
+                    "action": action_label,
+                    "symbol": symbol,
+                    "name": position.get("name", symbol),
+                    "quantity": position["quantity"],
+                    "previous_quantity": old_quantity,
+                    "ratio": ratio,
+                    "execution_price": None,
+                    "amount": 0.0,
+                    "fee": 0.0,
+                    "tax": 0.0,
+                    "realized_pnl": 0.0,
+                    "reason": f"企業行動反映: {action_type}",
+                    "decision_as_of": position["signal_date"],
+                }
+                transactions.append(transaction)
+                corporate_action_events.append({**event, "status": "applied"})
+                continue
+            if action_type == CASH_DIVIDEND:
+                if symbol in raw_price_unavailable_symbols:
+                    blocked_symbols.add(symbol)
+                    corporate_action_events.append(
+                        {
+                            **event,
+                            "status": "evaluation_deferred",
+                            "reason": "raw_prices_unavailable",
+                        }
+                    )
+                    continue
+                if event["currency"] != corporate_action_policy.account_currency:
+                    corporate_action_gate["warnings"].append(
+                        "foreign_currency_dividend_unmodeled"
+                    )
+                    corporate_action_events.append(
+                        {
+                            **event,
+                            "status": "evaluation_deferred",
+                            "reason": "foreign_currency_dividend_unmodeled",
+                        }
+                    )
+                    continue
+                pending_dividends.append(
+                    {
+                        **event,
+                        "entitled_quantity": int(position["quantity"]),
+                        "gross_amount": float(event["cash_per_share"])
+                        * int(position["quantity"]),
+                    }
+                )
+                corporate_action_events.append({**event, "status": "receivable_recorded"})
+
         entries = signal_frame[signal_frame["entry_date"] == current_date]
         for signal in entries.to_dict(orient="records"):
             symbol = str(signal["symbol"])
             bar = price_lookup.get((symbol, current_date))
+            if symbol in unverified_symbols:
+                existing_warnings = signal.get("quality_warnings", [])
+                if not isinstance(existing_warnings, list):
+                    existing_warnings = [existing_warnings]
+                signal["quality_warnings"] = [
+                    *existing_warnings,
+                    "企業行動の確認範囲が不足しています",
+                ]
+                if corporate_action_policy.missing_coverage_policy == "reject":
+                    reject(
+                        signal,
+                        "corporate_action_coverage_unverified",
+                        "企業行動を確認できない期間のためエントリーを見送ります",
+                    )
+                    continue
             if signal["side"] != "long":
                 reject(signal, "long_only_account", "下方向・方向未確定は空売りしません")
                 continue
@@ -457,6 +715,24 @@ def simulate_ohlc_portfolio(
             maximum_holding_days = int(signal.get("maximum_holding_days", 10))
             if stop_loss >= 0 or take_profit <= 0 or maximum_holding_days <= 0:
                 reject(signal, "invalid_exit_rules", "損切り・利益確定・保有期限の設定が不正です")
+                continue
+            horizon_location = min(
+                session_index + maximum_holding_days,
+                len(sessions) - 1,
+            )
+            unsupported = known_unsupported_event_in_horizon(
+                action_frame,
+                symbol=symbol,
+                signal_date=signal["signal_date"],
+                entry_date=current_date,
+                horizon_end=sessions[horizon_location],
+            )
+            if unsupported is not None:
+                reject(
+                    signal,
+                    "known_unsupported_corporate_action",
+                    "保有予定期間内に合併・株式交換等の未対応イベントがあります",
+                )
                 continue
             sector_cost = sum(
                 position["cost"]
@@ -584,6 +860,8 @@ def simulate_ohlc_portfolio(
             cards.append(card)
 
         for symbol, position in list(positions.items()):
+            if symbol in blocked_symbols:
+                continue
             bar = price_lookup.get((symbol, current_date))
             if bar is None or not _valid_ohlc_bar(bar):
                 card = decision_card(
@@ -710,12 +988,53 @@ def simulate_ohlc_portfolio(
             cards.append(card)
             del positions[symbol]
 
+        for receivable in list(pending_dividends):
+            if receivable["payable_date"] > current_date:
+                continue
+            gross_dividend = float(receivable["gross_amount"])
+            dividend_tax = gross_dividend * corporate_action_policy.dividend_tax_rate
+            net_dividend = gross_dividend - dividend_tax
+            cash += net_dividend
+            realized_pnl += net_dividend
+            dividend_income += net_dividend
+            transactions.append(
+                {
+                    "account": account_name,
+                    "date": current_date,
+                    "action": "現金配当",
+                    "symbol": receivable["symbol"],
+                    "name": positions.get(receivable["symbol"], {}).get(
+                        "name", receivable["symbol"]
+                    ),
+                    "quantity": receivable["entitled_quantity"],
+                    "execution_price": None,
+                    "amount": net_dividend,
+                    "fee": 0.0,
+                    "tax": dividend_tax,
+                    "realized_pnl": net_dividend,
+                    "reason": "権利確定済み現金配当の支払い",
+                    "decision_as_of": None,
+                    "ex_date": receivable["ex_date"],
+                    "record_date": receivable["record_date"],
+                    "payable_date": receivable["payable_date"],
+                    "cash_per_share": receivable["cash_per_share"],
+                }
+            )
+            corporate_action_events.append(
+                {**receivable, "status": "paid", "credited_at": current_date}
+            )
+            pending_dividends.remove(receivable)
+
         market_value = 0.0
         for symbol, position in positions.items():
             bar = price_lookup.get((symbol, current_date))
             valuation = position["entry_execution_price"]
             if bar is not None and pd.notna(bar.get("close")):
                 valuation = float(bar["close"])
+            if symbol in blocked_symbols:
+                valuation = float(position.get("last_verified_close", position["entry_execution_price"]))
+            else:
+                position["last_verified_close"] = valuation
             market_value += valuation * position["quantity"]
         cost_basis = sum(position["cost"] for position in positions.values())
         equity = cash + market_value
@@ -734,6 +1053,8 @@ def simulate_ohlc_portfolio(
                 "drawdown": drawdown,
                 "risk_halted": risk_halted,
                 "cooldown_until_index": cooldown_until_index,
+                "dividend_income": dividend_income,
+                "corporate_action_blocked_positions": len(blocked_symbols),
             }
         )
 
@@ -810,22 +1131,17 @@ def simulate_ohlc_portfolio(
                 "quantity": position["quantity"],
                 "entry_date": position["entry_date"],
                 "entry_price": position["entry_execution_price"],
-                "market_value": _last_close_or_entry(
-                    price_lookup,
-                    symbol,
-                    sessions[-1],
-                    position["entry_execution_price"],
+                "market_value": _position_mark(
+                    price_lookup, symbol, sessions[-1], position, blocked_symbols
                 )
                 * position["quantity"],
-                "unrealized_pnl": _last_close_or_entry(
-                    price_lookup,
-                    symbol,
-                    sessions[-1],
-                    position["entry_execution_price"],
+                "unrealized_pnl": _position_mark(
+                    price_lookup, symbol, sessions[-1], position, blocked_symbols
                 )
                 * position["quantity"]
                 - position["cost"],
                 "sector": position["sector"],
+                "corporate_action_blocked": symbol in blocked_symbols,
             }
             for symbol, position in positions.items()
         ]
@@ -854,4 +1170,25 @@ def simulate_ohlc_portfolio(
         "market_impact": market_impact,
         "risk_rules": risk_rules,
         "risk_halted": risk_halted,
+        "dividend_income": dividend_income,
+        "pending_dividends": pd.DataFrame(pending_dividends),
+        "corporate_action_events": pd.DataFrame(corporate_action_events),
+        "corporate_action_policy": corporate_action_policy,
+        "corporate_action_gate": {
+            key: value
+            for key, value in corporate_action_gate.items()
+            if key not in {"actions", "coverage"}
+        },
+        "quality_warnings": list(dict.fromkeys(corporate_action_gate["warnings"])),
+        "evaluation_status": (
+            "incomplete"
+            if blocked_symbols
+            or any(
+                event.get("status") == "evaluation_deferred"
+                for event in corporate_action_events
+            )
+            else "warning"
+            if corporate_action_gate["warnings"]
+            else "complete"
+        ),
     }

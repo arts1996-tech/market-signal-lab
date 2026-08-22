@@ -2,7 +2,7 @@ from datetime import date, datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -104,6 +104,93 @@ class EtfMetricSnapshot(Base):
     source: Mapped[str] = mapped_column(String(64), nullable=False)
     details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CorporateAction(Base):
+    __tablename__ = "corporate_actions"
+    __table_args__ = (
+        UniqueConstraint(
+            "source",
+            "source_event_id",
+            "fetched_at",
+            name="uq_corporate_action_source_event",
+        ),
+        CheckConstraint(
+            "action_type IN ('stock_split', 'reverse_split', 'cash_dividend', 'merger', 'share_exchange')",
+            name="ck_corporate_action_type",
+        ),
+        CheckConstraint(
+            "status IN ('confirmed', 'pending', 'cancelled')",
+            name="ck_corporate_action_status",
+        ),
+        CheckConstraint(
+            "(action_type != 'stock_split' OR (ratio IS NOT NULL AND ratio > 1)) AND "
+            "(action_type != 'reverse_split' OR (ratio IS NOT NULL AND ratio > 0 AND ratio < 1))",
+            name="ck_corporate_action_ratio",
+        ),
+        CheckConstraint(
+            "action_type != 'cash_dividend' OR "
+            "(ex_date IS NOT NULL AND record_date IS NOT NULL AND payable_date IS NOT NULL "
+            "AND ex_date <= record_date AND record_date <= payable_date "
+            "AND cash_per_share IS NOT NULL AND cash_per_share >= 0 AND currency IS NOT NULL)",
+            name="ck_corporate_action_dividend_terms",
+        ),
+        Index("ix_corporate_actions_asset_effective", "asset_id", "effective_date"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    asset_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("assets.id"), nullable=False)
+    action_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_event_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    announced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    effective_date: Mapped[date] = mapped_column(Date, nullable=False)
+    ex_date: Mapped[date | None] = mapped_column(Date)
+    record_date: Mapped[date | None] = mapped_column(Date)
+    payable_date: Mapped[date | None] = mapped_column(Date)
+    ratio: Mapped[float | None] = mapped_column(Numeric(18, 8))
+    cash_per_share: Mapped[float | None] = mapped_column(Numeric(18, 8))
+    currency: Mapped[str | None] = mapped_column(String(8))
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class CorporateActionCoverage(Base):
+    __tablename__ = "corporate_action_coverages"
+    __table_args__ = (
+        UniqueConstraint(
+            "asset_id",
+            "period_start",
+            "period_end",
+            "source",
+            "checked_at",
+            name="uq_corporate_action_coverage_period",
+        ),
+        CheckConstraint(
+            "period_start <= period_end",
+            name="ck_corporate_action_coverage_period",
+        ),
+        CheckConstraint(
+            "status IN ('complete', 'partial', 'unavailable')",
+            name="ck_corporate_action_coverage_status",
+        ),
+        Index(
+            "ix_corporate_action_coverages_asset_period",
+            "asset_id",
+            "period_start",
+            "period_end",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    asset_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("assets.id"), nullable=False)
+    period_start: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
 
 class ApiFetchLog(Base):

@@ -2,6 +2,8 @@ from app.database.models import (
     AssetAnalysisResult,
     AssetAnalysisRun,
     CorrelationResult,
+    CorporateAction,
+    CorporateActionCoverage,
     MarketPrice,
     SpilloverFeature,
     SpilloverModelResult,
@@ -35,6 +37,28 @@ def test_correlation_result_has_duplicate_prevention_constraint():
     constraints = {constraint.name for constraint in CorrelationResult.__table__.constraints}
 
     assert "uq_correlation_result_input" in constraints
+
+
+def test_corporate_action_tables_have_event_and_coverage_idempotency_constraints():
+    event_constraints = {
+        constraint.name for constraint in CorporateAction.__table__.constraints
+    }
+    coverage_constraints = {
+        constraint.name
+        for constraint in CorporateActionCoverage.__table__.constraints
+    }
+
+    assert "uq_corporate_action_source_event" in event_constraints
+    assert "ck_corporate_action_type" in event_constraints
+    assert "ck_corporate_action_status" in event_constraints
+    assert "ck_corporate_action_ratio" in event_constraints
+    assert "ck_corporate_action_dividend_terms" in event_constraints
+    assert "uq_corporate_action_coverage_period" in coverage_constraints
+    assert "ck_corporate_action_coverage_period" in coverage_constraints
+    assert "ck_corporate_action_coverage_status" in coverage_constraints
+    assert {"ex_date", "record_date", "payable_date", "ratio", "cash_per_share"}.issubset(
+        CorporateAction.__table__.columns.keys()
+    )
 
 
 def test_spillover_feature_has_duplicate_prevention_constraint():

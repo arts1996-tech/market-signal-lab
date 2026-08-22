@@ -291,6 +291,46 @@ def test_daily_ledger_emits_decision_plan_skip_execution_closure_and_balance():
     assert {"execution", "closure", "daily_balance"}.issubset(third_types)
 
 
+def test_daily_ledger_keeps_corporate_actions_separate_from_trade_closures():
+    dates = _sessions()
+    account = _advance(pd.DataFrame(), _prices(), dates[2])["accounts"]["short_term"]
+    account["transactions"] = pd.DataFrame(
+        [
+            {
+                "date": dates[2],
+                "action": "株式分割",
+                "symbol": "A",
+                "quantity": 200,
+                "previous_quantity": 100,
+                "ratio": 2,
+            }
+        ]
+    )
+    account["corporate_action_events"] = pd.DataFrame(
+        [
+            {
+                "event_date": dates[2],
+                "action_id": "split-1",
+                "symbol": "A",
+                "action_type": "stock_split",
+                "status": "applied",
+            }
+        ]
+    )
+
+    events = build_virtual_account_events(
+        account, observation=_observation(dates[2])
+    )
+    action_events = [event for event in events if event["event_type"] == "corporate_action"]
+
+    assert len(action_events) == 2
+    assert not any(
+        event["event_type"] == "closure"
+        and event["payload"].get("action") == "株式分割"
+        for event in events
+    )
+
+
 def test_ledger_requires_both_independent_accounts_before_database_write():
     with pytest.raises(ValueError, match="short_term and mid_term"):
         persist_forward_accounts(

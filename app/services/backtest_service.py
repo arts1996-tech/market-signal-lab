@@ -14,6 +14,10 @@ from app.analysis.virtual_trading import (
     virtual_signals_from_reference_trades,
 )
 from app.backtest.audit import frame_hash, json_value, stable_payload_hash
+from app.backtest.corporate_actions import (
+    CorporateActionPolicy,
+    evaluate_corporate_action_gate,
+)
 from app.backtest.ohlc import (
     MarketImpactAssumptions,
     PortfolioRiskRules,
@@ -22,7 +26,12 @@ from app.backtest.ohlc import (
 from app.backtest.portfolio import ExecutionAssumptions
 from app.backtest.validation import evaluate_frozen_strategy_walk_forward
 from app.core.config import get_settings
-from app.database.repositories import list_assets_by_source, market_prices_frame
+from app.database.repositories import (
+    corporate_action_coverage_frame,
+    corporate_actions_frame,
+    list_assets_by_source,
+    market_prices_frame,
+)
 
 
 @dataclass(frozen=True)
@@ -140,10 +149,19 @@ def evaluate_real_account_walk_forward(
     *,
     rule: RealBacktestRule,
     validation_registry_path: str | Path,
+    corporate_actions: pd.DataFrame | None = None,
+    corporate_action_coverage: pd.DataFrame | None = None,
 ) -> dict:
     prices = _valid_ohlcv(japan_prices)
     counts = _contiguous_counts(prices)
     assumptions, market_impact, risk_rules = _execution_configuration()
+    corporate_action_policy = CorporateActionPolicy()
+    corporate_action_gate = evaluate_corporate_action_gate(
+        prices,
+        corporate_actions,
+        corporate_action_coverage,
+        corporate_action_policy,
+    )
     input_data_version = frame_hash(prices)
     rule_hash = stable_payload_hash(
         {
@@ -151,6 +169,7 @@ def evaluate_real_account_walk_forward(
             "assumptions": assumptions,
             "market_impact": market_impact,
             "risk_rules": risk_rules,
+            "corporate_action_policy": corporate_action_policy,
         }
     )
     qualified_symbols = sorted(
@@ -173,6 +192,11 @@ def evaluate_real_account_walk_forward(
         "execution_assumptions": json_value(assumptions),
         "market_impact_assumptions": json_value(market_impact),
         "risk_rules": json_value(risk_rules),
+        "corporate_action_gate": {
+            key: json_value(value)
+            for key, value in corporate_action_gate.items()
+            if key not in {"actions", "coverage"}
+        },
     }
     if not qualified_symbols:
         return {
@@ -226,6 +250,9 @@ def evaluate_real_account_walk_forward(
             benchmark=benchmark,
             input_data_version=input_data_version,
             strategy_version=rule.strategy_version,
+            corporate_actions=corporate_actions,
+            corporate_action_coverage=corporate_action_coverage,
+            corporate_action_policy=corporate_action_policy,
         )
 
     walk_forward = evaluate_frozen_strategy_walk_forward(
@@ -284,12 +311,16 @@ def run_real_walk_forward_backtest(
         ["NIKKEI225", "NASDAQCOM", "DJIA", "SP500"],
         source_policy=source_policy,
     )
+    corporate_actions = corporate_actions_frame(session, symbols)
+    corporate_action_coverage = corporate_action_coverage_frame(session, symbols)
     accounts = {
         rule.account_name: evaluate_real_account_walk_forward(
             japan_prices,
             index_prices,
             rule=rule,
             validation_registry_path=validation_registry_path,
+            corporate_actions=corporate_actions,
+            corporate_action_coverage=corporate_action_coverage,
         )
         for rule in REAL_BACKTEST_RULES
     }

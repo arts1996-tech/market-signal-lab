@@ -9,7 +9,7 @@ import pandas as pd
 
 
 STRATEGY_VERSION = "phase4-long-only-v0.3"
-EXECUTION_VERSION = "ohlc-next-open-conservative-v2"
+EXECUTION_VERSION = "ohlc-next-open-conservative-v3"
 DECISION_CARD_VERSION = "decision-card-v2"
 
 
@@ -88,6 +88,9 @@ def build_run_manifest(
     strategy_version: str = STRATEGY_VERSION,
     execution_version: str = EXECUTION_VERSION,
     input_data_version: str | None = None,
+    corporate_actions: pd.DataFrame | None = None,
+    corporate_action_coverage: pd.DataFrame | None = None,
+    corporate_action_policy: Any | None = None,
     created_at: datetime | None = None,
 ) -> dict:
     signal_hash = frame_hash(signals)
@@ -104,6 +107,11 @@ def build_run_manifest(
         "price_basis",
         "data_quality_status",
         "adjustment_factor",
+        "raw_open",
+        "raw_high",
+        "raw_low",
+        "raw_close",
+        "raw_volume",
         "available_at",
         "fetched_at",
         "tradable",
@@ -113,6 +121,14 @@ def build_run_manifest(
         "special_quote",
     ]
     price_hash = frame_hash(prices, price_columns)
+    corporate_action_hash = frame_hash(
+        corporate_actions if corporate_actions is not None else pd.DataFrame()
+    )
+    corporate_action_coverage_hash = frame_hash(
+        corporate_action_coverage
+        if corporate_action_coverage is not None
+        else pd.DataFrame()
+    )
     deterministic = {
         "account_name": account_name,
         "strategy_version": strategy_version,
@@ -120,6 +136,9 @@ def build_run_manifest(
         "input_data_version": input_data_version or price_hash,
         "signal_hash": signal_hash,
         "price_hash": price_hash,
+        "corporate_action_hash": corporate_action_hash,
+        "corporate_action_coverage_hash": corporate_action_coverage_hash,
+        "corporate_action_policy": json_value(corporate_action_policy),
         "assumptions": json_value(assumptions),
         "risk_rules": json_value(risk_rules),
     }

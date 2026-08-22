@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session, aliased
 from app.database.models import (
     ApiFetchLog,
     Asset,
+    CorporateAction,
+    CorporateActionCoverage,
     CorrelationResult,
     EtfMetricSnapshot,
     FundamentalSnapshot,
@@ -156,6 +158,114 @@ def insert_etf_metric_snapshots(session: Session, rows: Iterable[dict]) -> int:
         .returning(EtfMetricSnapshot.id)
     )
     return len(session.scalars(statement).all())
+
+
+def insert_corporate_actions(session: Session, rows: Iterable[dict]) -> int:
+    """Append provider event revisions; an exact fetched-at replay is idempotent."""
+    payload = list(rows)
+    if not payload:
+        return 0
+    statement = (
+        pg_insert(CorporateAction)
+        .values(payload)
+        .on_conflict_do_nothing(constraint="uq_corporate_action_source_event")
+        .returning(CorporateAction.id)
+    )
+    return len(session.scalars(statement).all())
+
+
+def insert_corporate_action_coverages(session: Session, rows: Iterable[dict]) -> int:
+    """Append reviewed coverage revisions; an exact check replay is idempotent."""
+    payload = list(rows)
+    if not payload:
+        return 0
+    statement = (
+        pg_insert(CorporateActionCoverage)
+        .values(payload)
+        .on_conflict_do_nothing(constraint="uq_corporate_action_coverage_period")
+        .returning(CorporateActionCoverage.id)
+    )
+    return len(session.scalars(statement).all())
+
+
+def corporate_actions_frame(
+    session: Session,
+    symbols: list[str],
+    *,
+    as_of: datetime | None = None,
+) -> pd.DataFrame:
+    if not symbols:
+        return pd.DataFrame()
+    query = (
+        select(
+            CorporateAction.source_event_id.label("action_id"),
+            Asset.symbol,
+            CorporateAction.action_type,
+            CorporateAction.announced_at,
+            CorporateAction.effective_date,
+            CorporateAction.ex_date,
+            CorporateAction.record_date,
+            CorporateAction.payable_date,
+            CorporateAction.ratio,
+            CorporateAction.cash_per_share,
+            CorporateAction.currency,
+            CorporateAction.source,
+            CorporateAction.status,
+            CorporateAction.fetched_at,
+        )
+        .join(Asset, Asset.id == CorporateAction.asset_id)
+        .where(Asset.symbol.in_(symbols))
+        .distinct(CorporateAction.source, CorporateAction.source_event_id)
+        .order_by(
+            CorporateAction.source,
+            CorporateAction.source_event_id,
+            CorporateAction.fetched_at.desc(),
+        )
+    )
+    if as_of is not None:
+        query = query.where(
+            CorporateAction.fetched_at <= as_of,
+            or_(CorporateAction.announced_at.is_(None), CorporateAction.announced_at <= as_of),
+        )
+    return pd.DataFrame(session.execute(query).mappings().all())
+
+
+def corporate_action_coverage_frame(
+    session: Session,
+    symbols: list[str],
+    *,
+    as_of: datetime | None = None,
+) -> pd.DataFrame:
+    if not symbols:
+        return pd.DataFrame()
+    query = (
+        select(
+            Asset.symbol,
+            CorporateActionCoverage.period_start,
+            CorporateActionCoverage.period_end,
+            CorporateActionCoverage.status,
+            CorporateActionCoverage.source,
+            CorporateActionCoverage.checked_at,
+        )
+        .join(Asset, Asset.id == CorporateActionCoverage.asset_id)
+        .where(Asset.symbol.in_(symbols))
+        .distinct(
+            CorporateActionCoverage.asset_id,
+            CorporateActionCoverage.period_start,
+            CorporateActionCoverage.period_end,
+            CorporateActionCoverage.source,
+        )
+        .order_by(
+            CorporateActionCoverage.asset_id,
+            CorporateActionCoverage.period_start,
+            CorporateActionCoverage.period_end,
+            CorporateActionCoverage.source,
+            CorporateActionCoverage.checked_at.desc(),
+        )
+    )
+    if as_of is not None:
+        query = query.where(CorporateActionCoverage.checked_at <= as_of)
+    return pd.DataFrame(session.execute(query).mappings().all())
 
 
 def market_prices_frame(
