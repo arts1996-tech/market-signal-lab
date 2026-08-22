@@ -8,10 +8,13 @@ from pathlib import Path
 import pandas as pd
 from sqlalchemy.orm import Session
 
-from app.analysis.market_calendar import latest_contiguous_exchange_observations
+from app.analysis.market_calendar import (
+    latest_contiguous_exchange_observations,
+    next_exchange_session,
+)
 from app.analysis.virtual_trading import (
-    build_virtual_trades,
-    virtual_signals_from_reference_trades,
+    HISTORICAL_SIGNAL_VERSION,
+    build_point_in_time_historical_signals,
 )
 from app.backtest.audit import frame_hash, json_value, stable_payload_hash
 from app.backtest.asset_lifecycle import AssetLifecyclePolicy, evaluate_asset_lifecycle_gate
@@ -26,7 +29,15 @@ from app.backtest.ohlc import (
     simulate_ohlc_portfolio,
 )
 from app.backtest.portfolio import ExecutionAssumptions
-from app.backtest.validation import evaluate_frozen_strategy_walk_forward
+from app.backtest.tax_accounting import TaxAccountingPolicy
+from app.backtest.validation import (
+    WALK_FORWARD_PROTOCOL_VERSION,
+    evaluate_frozen_strategy_walk_forward,
+)
+from app.backtest.validation_registry import (
+    claim_forward_period,
+    forward_period_activation,
+)
 from app.core.config import get_settings
 from app.database.repositories import (
     asset_lifecycle_frame,
@@ -125,6 +136,23 @@ def _contiguous_counts(prices: pd.DataFrame) -> dict[str, int]:
     }
 
 
+def _latest_contiguous_prices(
+    prices: pd.DataFrame, counts: dict[str, int], qualified_symbols: list[str]
+) -> pd.DataFrame:
+    """Discard older disconnected history before walk-forward evaluation."""
+
+    frames = []
+    for symbol in qualified_symbols:
+        count = counts.get(symbol, 0)
+        if count <= 0:
+            continue
+        group = prices[prices["symbol"] == symbol].sort_values("price_time")
+        frames.append(group.tail(count))
+    if not frames:
+        return pd.DataFrame(columns=prices.columns)
+    return pd.concat(frames, ignore_index=True)
+
+
 def _benchmark(index_prices: pd.DataFrame) -> pd.Series | None:
     if index_prices.empty:
         return None
@@ -178,6 +206,7 @@ def evaluate_real_account_walk_forward(
     )
     fx_accounting_policy = FxAccountingPolicy()
     fx_gate = evaluate_fx_gate(prices, fx_rates, fx_accounting_policy)
+    tax_accounting_policy = TaxAccountingPolicy()
     input_data_version = frame_hash(prices)
     rule_hash = stable_payload_hash(
         {
@@ -188,6 +217,8 @@ def evaluate_real_account_walk_forward(
             "corporate_action_policy": corporate_action_policy,
             "asset_lifecycle_policy": asset_lifecycle_policy,
             "fx_accounting_policy": fx_accounting_policy,
+            "tax_accounting_policy": tax_accounting_policy,
+            "walk_forward_protocol_version": WALK_FORWARD_PROTOCOL_VERSION,
         }
     )
     qualified_symbols = sorted(
@@ -205,6 +236,7 @@ def evaluate_real_account_walk_forward(
         "observed_symbols": len(counts),
         "input_data_version": input_data_version,
         "rule_hash": rule_hash,
+        "walk_forward_protocol_version": WALK_FORWARD_PROTOCOL_VERSION,
         "validation_registry_path": str(validation_registry_path),
         "benchmark": "NIKKEI225",
         "execution_assumptions": json_value(assumptions),
@@ -225,6 +257,17 @@ def evaluate_real_account_walk_forward(
             for key, value in fx_gate.items()
             if key != "rates"
         },
+        "tax_accounting_policy": json_value(tax_accounting_policy),
+        "period_separation": {
+            "training": "expanding_historical_training",
+            "validation": "registered_unseen_historical_windows",
+            "forward": "separate_current_market_observation_after_validation",
+            "validation_reused_as_forward": False,
+        },
+        "signal_generation_version": HISTORICAL_SIGNAL_VERSION,
+        "historical_signal_availability_basis": (
+            "session_date_only; provider publication timestamp is not reconstructed"
+        ),
     }
     if not qualified_symbols:
         return {
@@ -234,7 +277,7 @@ def evaluate_real_account_walk_forward(
             "windows": [],
         }
 
-    prices = prices[prices["symbol"].isin(qualified_symbols)].copy()
+    prices = _latest_contiguous_prices(prices, counts, qualified_symbols)
     benchmark = _benchmark(index_prices)
     if benchmark is None:
         return {
@@ -243,20 +286,14 @@ def evaluate_real_account_walk_forward(
             "reasons": ["nikkei_benchmark_missing"],
             "windows": [],
         }
-    reference_trades = build_virtual_trades(
+    signals = build_point_in_time_historical_signals(
         index_prices,
         prices,
         score_threshold=rule.score_threshold,
-        holding_days=rule.maximum_holding_days,
-        min_observations=30,
-        max_trades=None,
-        recent_signal_sessions=None,
-    )
-    signals = virtual_signals_from_reference_trades(
-        reference_trades,
         stop_loss=rule.stop_loss,
         take_profit=rule.take_profit,
         maximum_holding_days=rule.maximum_holding_days,
+        min_observations=30,
     )
     if signals.empty:
         return {
@@ -267,6 +304,7 @@ def evaluate_real_account_walk_forward(
         }
 
     def simulator(test_signals: pd.DataFrame, prices_as_of_test: pd.DataFrame) -> dict:
+        simulation_input_data_version = frame_hash(prices_as_of_test)
         return simulate_ohlc_portfolio(
             test_signals,
             prices_as_of_test,
@@ -276,7 +314,7 @@ def evaluate_real_account_walk_forward(
             market_impact=market_impact,
             risk_rules=risk_rules,
             benchmark=benchmark,
-            input_data_version=input_data_version,
+            input_data_version=simulation_input_data_version,
             strategy_version=rule.strategy_version,
             corporate_actions=corporate_actions,
             corporate_action_coverage=corporate_action_coverage,
@@ -286,6 +324,7 @@ def evaluate_real_account_walk_forward(
             asset_lifecycle_policy=asset_lifecycle_policy,
             fx_rates=fx_rates,
             fx_accounting_policy=fx_accounting_policy,
+            tax_accounting_policy=tax_accounting_policy,
         )
 
     walk_forward = evaluate_frozen_strategy_walk_forward(
@@ -301,6 +340,76 @@ def evaluate_real_account_walk_forward(
     )
     test_signals = int(walk_forward.get("test_signals", pd.Series(dtype=int)).sum())
     closed_trades = int(walk_forward.get("closed_trades", pd.Series(dtype=int)).sum())
+    forward_period = {
+        "status": "not_activated",
+        "decision_track": "current_market",
+        "validation_data_reused": False,
+        "observed_sessions": 0,
+    }
+    if not walk_forward.empty:
+        validation_end = pd.Timestamp(walk_forward["test_end"].max())
+        observed_through = pd.to_datetime(
+            prices["price_time"], utc=True
+        ).max().normalize()
+        activation = forward_period_activation(
+            validation_registry_path, evaluation_track=rule.account_name
+        )
+        if activation is None:
+            forward_start = next_exchange_session(observed_through, "XTKS")
+        else:
+            validation_end = pd.Timestamp(activation["validation_end"])
+            observed_through = pd.Timestamp(
+                activation.get("observed_through", activation["validation_end"])
+            )
+            forward_start = pd.Timestamp(activation["forward_start"])
+        if forward_start is not None:
+            forward_start = pd.Timestamp(forward_start)
+            forward_start = (
+                forward_start.tz_localize("UTC")
+                if forward_start.tzinfo is None
+                else forward_start.tz_convert("UTC")
+            )
+            frozen_rule_hash = str(walk_forward.iloc[0]["frozen_rule_hash"])
+            if activation is None:
+                activation = claim_forward_period(
+                    validation_registry_path,
+                    strategy_version=rule.strategy_version,
+                    rule_hash=rule_hash,
+                    frozen_rule_hash=frozen_rule_hash,
+                    evaluation_track=rule.account_name,
+                    validation_end=validation_end,
+                    observed_through=observed_through,
+                    forward_start=forward_start,
+                    protocol_version=WALK_FORWARD_PROTOCOL_VERSION,
+                )
+            observed_forward = prices[
+                pd.to_datetime(prices["price_time"], utc=True).dt.normalize()
+                >= pd.Timestamp(forward_start)
+            ]
+            observed_forward_sessions = int(observed_forward["price_time"].nunique())
+            forward_period = {
+                "status": (
+                    "reserved_unscored"
+                    if observed_forward_sessions
+                    else "awaiting_observations"
+                ),
+                "decision_track": "current_market",
+                "validation_data_reused": False,
+                "validation_end": validation_end,
+                "historical_data_observed_through": observed_through,
+                "embargoed_sessions_after_validation": int(
+                    prices.loc[
+                        pd.to_datetime(prices["price_time"], utc=True).dt.normalize()
+                        > validation_end,
+                        "price_time",
+                    ].nunique()
+                ),
+                "forward_start": forward_start,
+                "observed_sessions": observed_forward_sessions,
+                "scored_in_historical_validation": False,
+                "frozen_rule_hash": frozen_rule_hash,
+                "activation_claim_id": activation["claim_id"],
+            }
     reasons = []
     if walk_forward.empty:
         reasons.append("no_walk_forward_windows")
@@ -317,6 +426,7 @@ def evaluate_real_account_walk_forward(
         "validation_window_count": len(walk_forward),
         "validation_test_signals": test_signals,
         "validation_closed_trades": closed_trades,
+        "forward_period": json_value(forward_period),
         "windows": _window_records(walk_forward),
     }
 

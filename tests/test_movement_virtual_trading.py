@@ -3,6 +3,8 @@ import pandas as pd
 from app.analysis.market_calendar import exchange_calendar
 from app.analysis.movement_candidates import apply_virtual_trade_feedback, build_movement_candidates
 from app.analysis.virtual_trading import (
+    HISTORICAL_SIGNAL_VERSION,
+    build_point_in_time_historical_signals,
     build_virtual_trades,
     generate_demo_phase4_data,
     simulate_virtual_account,
@@ -267,3 +269,39 @@ def test_reference_trade_adapter_never_passes_future_outcomes_to_engine():
     assert "outcome" not in signals
     assert "outcome_reasons" not in signals
     assert signals.iloc[0]["reasons"] == ["known at signal"]
+
+
+def test_historical_signal_builder_never_calculates_future_outcomes(monkeypatch):
+    index_prices = pd.DataFrame(
+        _price_rows("NASDAQCOM", [100 + i for i in range(31)], source="fred")
+        + _price_rows("NIKKEI225", [200 + i for i in range(31)], source="fred")
+    )
+    japan_prices = pd.DataFrame(
+        _price_rows("86970", [100 + i for i in range(31)])
+    )
+    monkeypatch.setattr(
+        "app.analysis.virtual_trading.movement_score",
+        lambda *_args: (80, "上方向候補", ["point-in-time"]),
+    )
+
+    signals = build_point_in_time_historical_signals(
+        index_prices,
+        japan_prices,
+        score_threshold=70,
+        stop_loss=-0.05,
+        take_profit=0.08,
+        maximum_holding_days=5,
+    )
+
+    assert len(signals) == 1
+    assert signals.iloc[0]["signal_generation_version"] == HISTORICAL_SIGNAL_VERSION
+    assert signals.iloc[0]["signal_date"] < signals.iloc[0]["entry_date"]
+    for future_field in [
+        "entry_price",
+        "exit_date",
+        "exit_price",
+        "return",
+        "outcome",
+        "realized_pnl",
+    ]:
+        assert future_field not in signals

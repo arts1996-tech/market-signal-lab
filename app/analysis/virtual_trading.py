@@ -13,6 +13,9 @@ from app.analysis.market_calendar import (
 from app.analysis.technical import short_term_indicator_frame
 
 
+HISTORICAL_SIGNAL_VERSION = "historical-point-in-time-signals-v1"
+
+
 def generate_demo_phase4_data(periods: int = 120, symbol: str = "DEMOJP") -> tuple[pd.DataFrame, pd.DataFrame]:
     """Return deterministic, in-memory data for phase-4 UI/engine checks.
 
@@ -141,6 +144,125 @@ def virtual_signals_from_reference_trades(
             }
         )
     return pd.DataFrame(rows)
+
+
+def build_point_in_time_historical_signals(
+    index_prices: pd.DataFrame,
+    japan_prices: pd.DataFrame,
+    *,
+    score_threshold: int,
+    stop_loss: float,
+    take_profit: float,
+    maximum_holding_days: int,
+    min_observations: int = 30,
+) -> pd.DataFrame:
+    """Build historical signals without calculating future outcomes.
+
+    Indicators and US-market context use rows no later than each signal date.
+    The next session date is recorded as an execution opportunity, but its open
+    and every later price are left to the portfolio simulator.
+    """
+
+    if japan_prices.empty:
+        return pd.DataFrame()
+    if not 0 <= score_threshold <= 100:
+        raise ValueError("score_threshold must be between 0 and 100")
+    if min_observations < 1 or maximum_holding_days < 1:
+        raise ValueError("observation and holding-day values must be positive")
+    if stop_loss >= 0 or take_profit <= 0:
+        raise ValueError("stop_loss must be negative and take_profit must be positive")
+
+    price_frame = japan_prices.copy()
+    price_frame["price_time"] = pd.to_datetime(
+        price_frame["price_time"], utc=True
+    ).dt.normalize()
+    price_frame["close"] = pd.to_numeric(price_frame["close"], errors="coerce")
+    rows: list[dict] = []
+    context_cache: dict[pd.Timestamp, dict] = {}
+    for symbol, group in price_frame.groupby("symbol"):
+        ordered = (
+            group.drop_duplicates("price_time", keep="last")
+            .set_index("price_time")
+            .sort_index()
+        )
+        contiguous_observations = latest_contiguous_exchange_observations(
+            ordered.index, "XTKS"
+        )
+        ordered = ordered.tail(contiguous_observations)
+        close = ordered["close"]
+        if len(close) < min_observations + 1:
+            continue
+        indicators = short_term_indicator_frame(close)
+        for location in range(min_observations - 1, len(close) - 1):
+            signal_date = close.index[location]
+            row = indicators.loc[signal_date]
+            if signal_date not in context_cache:
+                historical_index_prices = (
+                    index_prices[
+                        pd.to_datetime(index_prices["price_time"], utc=True)
+                        < signal_date
+                    ]
+                    if not index_prices.empty and "price_time" in index_prices
+                    else pd.DataFrame()
+                )
+                context_cache[signal_date] = us_japan_market_context(
+                    historical_index_prices
+                )
+            context = context_cache[signal_date]
+            score, direction, reasons = movement_score(
+                row,
+                context["average_correlation"],
+                context["us_signal"],
+            )
+            if score < score_threshold:
+                continue
+            current = ordered.iloc[location]
+            name = current.get("name")
+            if name is None or pd.isna(name):
+                name = symbol
+            rows.append(
+                {
+                    "signal_generation_version": HISTORICAL_SIGNAL_VERSION,
+                    "signal_availability_basis": "historical_session_close_proxy",
+                    "signal_date": signal_date,
+                    "entry_date": close.index[location + 1],
+                    "symbol": str(symbol),
+                    "name": str(name),
+                    "sector": current.get("sector", "unknown"),
+                    "score": int(score),
+                    "direction": direction,
+                    "side": "long" if "上方向" in direction else "observe_only",
+                    "minimum_score": score_threshold,
+                    "stop_loss": stop_loss,
+                    "take_profit": take_profit,
+                    "maximum_holding_days": maximum_holding_days,
+                    "reasons": list(reasons),
+                    "counterarguments": [
+                        "財務・イベント・板情報を完全には反映していません",
+                        "過去検証は将来の収益を保証しません",
+                    ],
+                }
+            )
+    result = pd.DataFrame(rows)
+    future_fields = {
+        "entry_price",
+        "exit_date",
+        "exit_price",
+        "return",
+        "outcome",
+        "outcome_reasons",
+        "realized_pnl",
+    }
+    leaked = future_fields.intersection(result.columns)
+    if leaked:
+        raise AssertionError(
+            f"future outcome fields leaked into historical signals: {sorted(leaked)}"
+        )
+    if result.empty:
+        return result
+    return result.sort_values(
+        ["signal_date", "score"], ascending=[True, False]
+    ).reset_index(drop=True)
 
 
 def build_virtual_trades(

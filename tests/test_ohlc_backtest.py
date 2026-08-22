@@ -16,6 +16,7 @@ from app.backtest.shadow import write_forward_shadow_snapshot
 from app.backtest.validation import evaluate_frozen_strategy_walk_forward, walk_forward_windows
 from app.backtest.validation_registry import (
     ValidationWindowConflict,
+    claim_forward_period,
     claim_validation_window,
 )
 
@@ -644,6 +645,17 @@ def test_walk_forward_windows_never_overlap_training_and_test():
     assert all(window.train_end < window.test_start for window in windows)
 
 
+def test_walk_forward_does_not_evaluate_incomplete_validation_window():
+    sessions = _sessions(10)
+
+    windows = walk_forward_windows(
+        sessions, minimum_train_sessions=5, test_sessions=3
+    )
+
+    assert len(windows) == 1
+    assert windows[0].test_end.tz_localize(None) == sessions[7]
+
+
 def test_frozen_walk_forward_passes_only_test_signals_to_simulator():
     prices = _prices()
     dates = _sessions()
@@ -741,6 +753,123 @@ def test_validation_window_registry_allows_independent_account_tracks(tmp_path):
 
     assert short["evaluation_track"] == "short_term"
     assert mid["evaluation_track"] == "mid_term"
+
+
+def test_validation_registry_treats_strategy_version_as_frozen_rule_identity(
+    tmp_path,
+):
+    registry = tmp_path / "validation-windows.json"
+    claim_validation_window(
+        registry,
+        strategy_version="strategy-v1",
+        rule_hash="same-rules",
+        test_start="2026-01-01",
+        test_end="2026-01-31",
+    )
+
+    with pytest.raises(ValidationWindowConflict, match="different frozen rule"):
+        claim_validation_window(
+            registry,
+            strategy_version="strategy-v2",
+            rule_hash="same-rules",
+            test_start="2026-01-15",
+            test_end="2026-02-15",
+        )
+
+
+def test_validation_registry_rejects_revised_training_input(tmp_path):
+    registry = tmp_path / "validation-windows.json"
+    common = {
+        "strategy_version": "strategy-v1",
+        "rule_hash": "rules-a",
+        "evaluation_track": "short_term",
+        "train_start": "2025-10-01",
+        "train_end": "2025-12-31",
+        "test_start": "2026-01-01",
+        "test_end": "2026-01-31",
+        "frozen_rule_hash": "frozen-a",
+        "protocol_version": "test-v1",
+    }
+    claim_validation_window(
+        registry, training_input_hash="training-a", **common
+    )
+
+    with pytest.raises(ValidationWindowConflict, match="training input changed"):
+        claim_validation_window(
+            registry, training_input_hash="training-revised", **common
+        )
+
+
+def test_walk_forward_excludes_entry_after_validation_end():
+    prices = _prices()
+    dates = _sessions()
+    signals = pd.DataFrame(
+        [
+            {
+                "signal_date": dates[6],
+                "entry_date": dates[7],
+                "symbol": "A",
+                "side": "long",
+            }
+        ]
+    )
+    observed = []
+
+    def simulator(test_signals, _prices_as_of_test):
+        observed.append(test_signals.copy())
+        return {"metrics": {}}
+
+    evaluate_frozen_strategy_walk_forward(
+        signals,
+        prices,
+        simulator,
+        minimum_train_sessions=5,
+        test_sessions=2,
+    )
+
+    assert observed
+    assert observed[0].empty
+
+
+def test_forward_period_cannot_be_reused_as_historical_validation(tmp_path):
+    registry = tmp_path / "validation-windows.json"
+    claim_forward_period(
+        registry,
+        strategy_version="strategy-v1",
+        rule_hash="rules-a",
+        frozen_rule_hash="frozen-a",
+        evaluation_track="short_term",
+        validation_end="2026-01-30",
+        forward_start="2026-02-02",
+        protocol_version="test-v1",
+    )
+
+    with pytest.raises(ValidationWindowConflict, match="reserved for forward"):
+        claim_validation_window(
+            registry,
+            strategy_version="strategy-v1",
+            rule_hash="rules-a",
+            evaluation_track="short_term",
+            test_start="2026-02-02",
+            test_end="2026-02-27",
+        )
+
+
+def test_forward_period_must_start_after_all_already_observed_data(tmp_path):
+    with pytest.raises(
+        ValueError, match="after all already-observed data"
+    ):
+        claim_forward_period(
+            tmp_path / "validation-windows.json",
+            strategy_version="strategy-v1",
+            rule_hash="rules-a",
+            frozen_rule_hash="frozen-a",
+            evaluation_track="short_term",
+            validation_end="2026-01-30",
+            observed_through="2026-02-06",
+            forward_start="2026-02-02",
+            protocol_version="test-v1",
+        )
 
 
 def test_walk_forward_claims_window_before_running_simulator(tmp_path):
