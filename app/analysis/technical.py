@@ -1,6 +1,32 @@
+from functools import lru_cache
+
 import pandas as pd
 
-from app.analysis.market_calendar import consecutive_weekday_returns
+from app.analysis.market_calendar import consecutive_weekday_returns, exchange_calendar
+
+
+PERIOD_FREQUENCIES = {"weekly": "W-FRI", "monthly": "M"}
+
+
+def _normalized_series(values: pd.Series) -> pd.Series:
+    normalized = pd.to_numeric(values, errors="coerce").dropna().sort_index()
+    normalized.index = pd.to_datetime(normalized.index, utc=True).normalize()
+    return normalized[~normalized.index.duplicated(keep="last")]
+
+
+@lru_cache(maxsize=256)
+def _exchange_sessions(
+    calendar_name: str,
+    start_date: str,
+    end_date: str,
+) -> tuple[pd.Timestamp, ...]:
+    try:
+        sessions = exchange_calendar(calendar_name).sessions_in_range(
+            pd.Timestamp(start_date), pd.Timestamp(end_date)
+        )
+    except ValueError:
+        return ()
+    return tuple(pd.Timestamp(value).tz_localize(None).normalize() for value in sessions)
 
 
 def daily_returns(close: pd.Series) -> pd.Series:
@@ -61,7 +87,132 @@ def atr(high: pd.Series, low: pd.Series, close: pd.Series, window: int = 14) -> 
     return true_range.rolling(window=window, min_periods=window).mean()
 
 
-def short_term_indicator_frame(close: pd.Series) -> pd.DataFrame:
+def completed_period_returns(
+    close: pd.Series,
+    period: str,
+    *,
+    calendar_name: str = "XTKS",
+) -> pd.Series:
+    """Close-to-close returns for completed exchange weeks or months only."""
+
+    if period not in PERIOD_FREQUENCIES:
+        raise ValueError("period must be 'weekly' or 'monthly'")
+    ordered = _normalized_series(close)
+    if ordered.empty:
+        return pd.Series(dtype=float)
+    frequency = PERIOD_FREQUENCIES[period]
+    naive_index = ordered.index.tz_localize(None)
+    observed_periods = naive_index.to_period(frequency)
+    first_period = observed_periods.min()
+    last_period = observed_periods.max()
+    sessions = pd.DatetimeIndex(
+        _exchange_sessions(
+            calendar_name,
+            first_period.start_time.date().isoformat(),
+            last_period.end_time.date().isoformat(),
+        )
+    )
+    if sessions.empty:
+        return pd.Series(dtype=float)
+    session_periods = sessions.to_period(frequency)
+    expected_ends = pd.Series(sessions, index=session_periods).groupby(level=0).max()
+    endpoints: dict[pd.Timestamp, float] = {}
+    for period_value in observed_periods.unique():
+        if period_value not in expected_ends.index:
+            continue
+        positions = observed_periods == period_value
+        period_values = ordered.iloc[positions]
+        observed_end = period_values.index[-1].tz_localize(None)
+        if observed_end == expected_ends.loc[period_value]:
+            endpoints[period_values.index[-1]] = float(period_values.iloc[-1])
+    endpoint_series = pd.Series(endpoints, dtype=float).sort_index()
+    return endpoint_series.pct_change(fill_method=None).dropna()
+
+
+def distance_from_rolling_high(
+    close: pd.Series,
+    high: pd.Series | None = None,
+    window: int = 252,
+) -> float | None:
+    """Return latest-close distance from a fully observed rolling price high."""
+
+    ordered = _normalized_series(close)
+    if len(ordered) < window:
+        return None
+    latest_close = ordered.tail(window)
+    if high is None:
+        high_window = latest_close
+    else:
+        normalized_high = _normalized_series(high).reindex(latest_close.index)
+        if normalized_high.isna().any() or len(normalized_high) < window:
+            return None
+        valid = (normalized_high >= latest_close) & (normalized_high > 0)
+        if not valid.all():
+            return None
+        high_window = normalized_high
+    rolling_high = float(high_window.max())
+    if rolling_high <= 0:
+        return None
+    return float(latest_close.iloc[-1] / rolling_high - 1)
+
+
+def horizon_relative_strength(
+    asset_close: pd.Series,
+    benchmark_close: pd.Series,
+    *,
+    horizon: int = 20,
+    calendar_name: str = "XTKS",
+) -> dict[str, float | int | None]:
+    """Compare exact endpoints after requiring the same complete session window."""
+
+    asset = _normalized_series(asset_close)
+    benchmark = _normalized_series(benchmark_close)
+    empty = {
+        "asset_return": None,
+        "benchmark_return": None,
+        "relative_strength": None,
+        "sessions": 0,
+    }
+    if horizon < 1 or len(asset) < horizon + 1 or benchmark.empty:
+        return empty
+    asset_window = asset.tail(horizon + 1)
+    start = asset_window.index[0].tz_localize(None)
+    end = asset_window.index[-1].tz_localize(None)
+    expected = _exchange_sessions(
+        calendar_name, start.date().isoformat(), end.date().isoformat()
+    )
+    expected_index = pd.DatetimeIndex(expected)
+    asset_dates = asset_window.index.tz_localize(None)
+    benchmark_by_date = benchmark.copy()
+    benchmark_by_date.index = benchmark_by_date.index.tz_localize(None)
+    if (
+        len(expected_index) != horizon + 1
+        or not asset_dates.equals(expected_index)
+        or not expected_index.isin(benchmark_by_date.index).all()
+    ):
+        return empty
+    benchmark_window = benchmark_by_date.reindex(expected_index)
+    if benchmark_window.isna().any():
+        return empty
+    asset_start = float(asset_window.iloc[0])
+    benchmark_start = float(benchmark_window.iloc[0])
+    if asset_start <= 0 or benchmark_start <= 0:
+        return empty
+    asset_return = float(asset_window.iloc[-1] / asset_start - 1)
+    benchmark_return = float(benchmark_window.iloc[-1] / benchmark_start - 1)
+    return {
+        "asset_return": asset_return,
+        "benchmark_return": benchmark_return,
+        "relative_strength": asset_return - benchmark_return,
+        "sessions": horizon,
+    }
+
+
+def short_term_indicator_frame(
+    close: pd.Series,
+    high: pd.Series | None = None,
+    low: pd.Series | None = None,
+) -> pd.DataFrame:
     ordered = close.sort_index()
     frame = pd.DataFrame({"close": ordered})
     for window in [5, 20, 25, 50, 75]:
@@ -76,6 +227,23 @@ def short_term_indicator_frame(close: pd.Series) -> pd.DataFrame:
     frame["return_20d"] = ordered.pct_change(20, fill_method=None)
     frame["volatility_20d"] = frame["return_1d"].rolling(20, min_periods=20).std()
     frame["drawdown"] = ordered / ordered.cummax() - 1
+    if high is not None and low is not None:
+        aligned_high = pd.to_numeric(high, errors="coerce").reindex(ordered.index)
+        aligned_low = pd.to_numeric(low, errors="coerce").reindex(ordered.index)
+        valid = (
+            aligned_high.notna()
+            & aligned_low.notna()
+            & (aligned_high >= aligned_low)
+            & (aligned_high >= ordered)
+            & (aligned_low <= ordered)
+        )
+        aligned_high = aligned_high.where(valid)
+        aligned_low = aligned_low.where(valid)
+        frame["atr_14"] = atr(aligned_high, aligned_low, ordered, 14)
+        frame["atr_pct_14"] = frame["atr_14"] / ordered.where(ordered > 0)
+    else:
+        frame["atr_14"] = pd.NA
+        frame["atr_pct_14"] = pd.NA
     return frame
 
 

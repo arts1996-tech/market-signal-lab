@@ -92,3 +92,62 @@ def test_attention_score_is_explainable_and_not_a_trade_label():
     assert any("20日騰落率" in reason for reason in snapshot["attention_reasons"])
     assert "50日・75日移動平均は未算出" in snapshot["quality_warnings"]
     assert "買い" not in snapshot["attention_label"]
+
+
+def test_screen_assets_adds_completed_returns_atr_relative_strength_and_52week():
+    sessions = exchange_calendar("XTKS").sessions_in_range(
+        "2025-01-01", "2026-06-30"
+    )[:260]
+    symbols = ["10010", "10020", "10030"]
+    assets = pd.DataFrame(
+        [
+            {
+                "symbol": symbol,
+                "name": symbol,
+                "asset_type": "stock",
+                "metadata_json": {"sector_33": "テスト業種"},
+            }
+            for symbol in symbols
+        ]
+    )
+    rows = []
+    for symbol_index, symbol in enumerate(symbols):
+        for day_index, session in enumerate(sessions):
+            close = 100 + day_index * (1 + symbol_index * 0.25)
+            rows.append(
+                {
+                    "symbol": symbol,
+                    "price_time": session,
+                    "close": close,
+                    "high": close + 2,
+                    "low": close - 1,
+                    "price_basis": "raw_ohlcv_with_adjusted",
+                }
+            )
+    prices = pd.DataFrame(rows)
+    benchmark_prices = pd.DataFrame(
+        {
+            "symbol": "NIKKEI225",
+            "price_time": sessions,
+            "close": [100 + day_index * 0.5 for day_index in range(len(sessions))],
+        }
+    )
+
+    result = screen_assets(
+        prices,
+        assets,
+        benchmark_prices=benchmark_prices,
+    )
+
+    assert len(result) == 3
+    assert result["weekly_return"].notna().all()
+    assert result["monthly_return"].notna().all()
+    assert result["atr_14"].notna().all()
+    assert result["relative_strength_vs_benchmark_20d"].notna().all()
+    assert result["relative_strength_vs_sector_20d"].notna().all()
+    assert (result["sector_peer_count"] == 2).all()
+    assert result["distance_from_52week_high"].notna().all()
+    assert all(
+        "distance_52week_insufficient_history" not in reasons
+        for reasons in result["metric_quality_reasons"]
+    )

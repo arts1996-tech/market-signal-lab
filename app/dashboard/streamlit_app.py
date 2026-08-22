@@ -512,6 +512,11 @@ if active_page == "銘柄・ETF分析":
             f"対象 {analysis_run['assets_considered']}銘柄 / "
             f"品質ゲート通過 {analysis_run['eligible_asset_count']}銘柄。"
         )
+        st.caption(
+            f"分析版: {analysis_run['rule_version']}。"
+            "週次・月次リターン、ATR、日経平均・同業種相対強度、52週高値乖離は実装済みですが、"
+            "各指標の必要履歴・OHLC・比較対象がそろうまで値を表示しません。"
+        )
     else:
         filter_cols = st.columns(3)
         selected_asset_types = filter_cols[0].multiselect(
@@ -556,6 +561,26 @@ if active_page == "銘柄・ETF分析":
             )
         else:
             view = screening.copy()
+            for column in [
+                "weekly_return",
+                "weekly_period_end",
+                "monthly_return",
+                "monthly_period_end",
+                "atr_14",
+                "atr_pct_14",
+                "benchmark_return_20d",
+                "relative_strength_vs_benchmark_20d",
+                "sector_peer_return_20d",
+                "relative_strength_vs_sector_20d",
+                "sector_peer_count",
+                "distance_from_52week_high",
+            ]:
+                if column not in view:
+                    view[column] = None
+            if "metric_quality_reasons" not in view:
+                view["metric_quality_reasons"] = [
+                    ["analysis_run_requires_recalculation"] for _ in range(len(view))
+                ]
             view["data_as_of"] = view["data_as_of"].map(
                 lambda value: (
                     "-" if pd.isna(value) else pd.Timestamp(value).strftime("%Y-%m-%d")
@@ -567,17 +592,89 @@ if active_page == "銘柄・ETF分析":
             view["quality_warnings"] = view["quality_warnings"].map(
                 format_reason_list
             )
-            view["return_20d"] = view["return_20d"].map(format_percent)
-            view["volatility_20d"] = view["volatility_20d"].map(format_percent)
+            view["metric_quality_reasons"] = view["metric_quality_reasons"].map(
+                format_reason_list
+            )
+            for column in [
+                "weekly_return",
+                "monthly_return",
+                "return_20d",
+                "volatility_20d",
+                "atr_pct_14",
+                "benchmark_return_20d",
+                "relative_strength_vs_benchmark_20d",
+                "sector_peer_return_20d",
+                "relative_strength_vs_sector_20d",
+                "distance_from_52week_high",
+            ]:
+                view[column] = view[column].map(format_percent)
+            for column in ["weekly_period_end", "monthly_period_end"]:
+                view[column] = view[column].map(
+                    lambda value: "-" if pd.isna(value) else pd.Timestamp(value).strftime("%Y-%m-%d")
+                )
             view["rsi_14"] = view["rsi_14"].round(1)
-            st.dataframe(view, use_container_width=True, hide_index=True)
+            view["atr_14"] = pd.to_numeric(view["atr_14"], errors="coerce").round(2)
+            display_columns = [
+                "symbol",
+                "name",
+                "asset_type",
+                "sector",
+                "observations",
+                "data_as_of",
+                "attention_score",
+                "attention_label",
+                "latest_close",
+                "weekly_return",
+                "weekly_period_end",
+                "monthly_return",
+                "monthly_period_end",
+                "atr_14",
+                "atr_pct_14",
+                "relative_strength_vs_benchmark_20d",
+                "relative_strength_vs_sector_20d",
+                "sector_peer_count",
+                "distance_from_52week_high",
+                "rsi_14",
+                "quality_warnings",
+            ]
+            st.dataframe(
+                view[display_columns].rename(
+                    columns={
+                        "symbol": "コード",
+                        "name": "名称",
+                        "asset_type": "区分",
+                        "sector": "業種",
+                        "observations": "連続営業日",
+                        "data_as_of": "データ時点",
+                        "attention_score": "注目度",
+                        "attention_label": "注目度区分",
+                        "latest_close": "終値",
+                        "weekly_return": "完了週リターン",
+                        "weekly_period_end": "完了週末",
+                        "monthly_return": "完了月リターン",
+                        "monthly_period_end": "完了月末",
+                        "atr_14": "ATR 14",
+                        "atr_pct_14": "ATR比率",
+                        "relative_strength_vs_benchmark_20d": "日経平均比20日",
+                        "relative_strength_vs_sector_20d": "同業種比20日",
+                        "sector_peer_count": "同業種比較数",
+                        "distance_from_52week_high": "52週高値乖離",
+                        "rsi_14": "RSI 14",
+                        "quality_warnings": "品質警告",
+                    }
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
         st.caption(
             f"分析版: {analysis_run['rule_version']} / "
             f"入力版: {analysis_run['input_data_version'][:12]}… / "
             f"source方針: {analysis_run['source_policy_version']} / "
             f"データ時点: {format_jst(analysis_run['data_as_of'])}。"
             "バッチは品質ゲート通過全銘柄を対象とし、200件は画面の1ページ上限です。"
-            "注目度は上昇確率や投資推奨順位ではありません。"
+            "週次・月次は東証カレンダー上で完了した期間の終値同士、相対強度は同一20営業日の騰落率差です。"
+            "同業種比は同じ分析日の他2銘柄以上がある場合だけ計算します。"
+            "これらの追加指標は注目度へ加点せず、上昇確率や投資推奨順位ではありません。"
         )
     selected_financial_symbol = render_fundamental_summary(screening)
     etf_symbols = (

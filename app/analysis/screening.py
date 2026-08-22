@@ -3,7 +3,12 @@
 import pandas as pd
 
 from app.analysis.market_calendar import latest_contiguous_exchange_observations
-from app.analysis.technical import short_term_indicator_frame
+from app.analysis.technical import (
+    completed_period_returns,
+    distance_from_rolling_high,
+    horizon_relative_strength,
+    short_term_indicator_frame,
+)
 
 
 SCREENING_MIN_HISTORY = 30
@@ -104,6 +109,8 @@ def screen_assets(
     prices: pd.DataFrame,
     assets: pd.DataFrame,
     min_history: int = SCREENING_MIN_HISTORY,
+    benchmark_prices: pd.DataFrame | None = None,
+    benchmark_symbol: str = "NIKKEI225",
 ) -> pd.DataFrame:
     """Build a technical screening table; fundamentals are intentionally not inferred."""
     columns = [
@@ -119,12 +126,45 @@ def screen_assets(
         "attention_reasons",
         "quality_warnings",
         "latest_close",
+        "weekly_return",
+        "weekly_period_end",
+        "monthly_return",
+        "monthly_period_end",
         "return_20d",
         "volatility_20d",
         "rsi_14",
+        "atr_14",
+        "atr_pct_14",
+        "benchmark_symbol",
+        "benchmark_return_20d",
+        "relative_strength_vs_benchmark_20d",
+        "sector_peer_return_20d",
+        "relative_strength_vs_sector_20d",
+        "sector_peer_count",
+        "distance_from_52week_high",
+        "metric_quality_reasons",
     ]
     if prices.empty or assets.empty:
         return pd.DataFrame(columns=columns)
+    benchmark_close = pd.Series(dtype=float)
+    if benchmark_prices is not None and not benchmark_prices.empty:
+        benchmark_frame = benchmark_prices.copy()
+        if "symbol" in benchmark_frame:
+            benchmark_frame = benchmark_frame[
+                benchmark_frame["symbol"] == benchmark_symbol
+            ]
+        benchmark_frame["price_time"] = pd.to_datetime(
+            benchmark_frame["price_time"], utc=True, errors="coerce"
+        ).dt.normalize()
+        benchmark_frame["close"] = pd.to_numeric(
+            benchmark_frame["close"], errors="coerce"
+        )
+        benchmark_close = (
+            benchmark_frame.dropna(subset=["price_time", "close"])
+            .drop_duplicates("price_time", keep="last")
+            .set_index("price_time")["close"]
+            .sort_index()
+        )
     rows = []
     for asset in assets.itertuples(index=False):
         sample = prices[prices["symbol"] == asset.symbol].copy()
@@ -142,8 +182,11 @@ def screen_assets(
         if contiguous_observations < min_history:
             continue
         sample = sample.tail(contiguous_observations)
-        close = sample.set_index("price_time")["close"]
-        indicators = short_term_indicator_frame(close)
+        indexed = sample.set_index("price_time")
+        close = indexed["close"]
+        high = indexed["high"] if "high" in indexed else None
+        low = indexed["low"] if "low" in indexed else None
+        indicators = short_term_indicator_frame(close, high=high, low=low)
         if indicators.empty:
             continue
         latest = indicators.dropna(subset=["close"]).iloc[-1]
@@ -154,6 +197,26 @@ def screen_assets(
             else []
         )
         attention = technical_attention_snapshot(latest, len(sample))
+        metric_quality_reasons: list[str] = []
+        weekly = completed_period_returns(close, "weekly")
+        monthly = completed_period_returns(close, "monthly")
+        benchmark = horizon_relative_strength(close, benchmark_close, horizon=20)
+        distance_52week = distance_from_rolling_high(close, high=high, window=252)
+        if weekly.empty:
+            metric_quality_reasons.append("weekly_return_insufficient_completed_periods")
+            attention["quality_warnings"].append("週次リターンに必要な完了週が不足")
+        if monthly.empty:
+            metric_quality_reasons.append("monthly_return_insufficient_completed_periods")
+            attention["quality_warnings"].append("月次リターンに必要な完了月が不足")
+        if pd.isna(latest.get("atr_14")):
+            metric_quality_reasons.append("atr_unavailable_missing_valid_ohlc")
+            attention["quality_warnings"].append("ATRに必要な有効な高値・安値が不足")
+        if benchmark["relative_strength"] is None:
+            metric_quality_reasons.append("benchmark_relative_strength_unavailable")
+            attention["quality_warnings"].append("日経平均と同じ20営業日の比較データが不足")
+        if distance_52week is None:
+            metric_quality_reasons.append("distance_52week_insufficient_history")
+            attention["quality_warnings"].append("52週高値乖離に必要な252営業日が不足")
         if total_observations > contiguous_observations:
             attention["quality_warnings"].append(
                 f"非連続の過去観測{total_observations - contiguous_observations}件を除外"
@@ -168,11 +231,48 @@ def screen_assets(
             "price_basis": ", ".join(price_bases) if price_bases else "unknown",
             **attention,
             "latest_close": float(latest["close"]),
+            "weekly_return": None if weekly.empty else float(weekly.iloc[-1]),
+            "weekly_period_end": None if weekly.empty else weekly.index[-1],
+            "monthly_return": None if monthly.empty else float(monthly.iloc[-1]),
+            "monthly_period_end": None if monthly.empty else monthly.index[-1],
             "return_20d": latest.get("return_20d"),
             "volatility_20d": latest.get("volatility_20d"),
             "rsi_14": latest.get("rsi_14"),
+            "atr_14": latest.get("atr_14"),
+            "atr_pct_14": latest.get("atr_pct_14"),
+            "benchmark_symbol": benchmark_symbol,
+            "benchmark_return_20d": benchmark["benchmark_return"],
+            "relative_strength_vs_benchmark_20d": benchmark["relative_strength"],
+            "sector_peer_return_20d": None,
+            "relative_strength_vs_sector_20d": None,
+            "sector_peer_count": 0,
+            "distance_from_52week_high": distance_52week,
+            "metric_quality_reasons": metric_quality_reasons,
         })
-    return pd.DataFrame(rows, columns=columns).sort_values(
+    result = pd.DataFrame(rows, columns=columns)
+    if not result.empty:
+        grouped = result.groupby(["sector", "data_as_of"], dropna=False)["return_20d"]
+        group_count = grouped.transform("count")
+        group_sum = grouped.transform("sum")
+        valid_sector = result["return_20d"].notna() & (group_count >= 3)
+        result.loc[valid_sector, "sector_peer_count"] = (
+            group_count[valid_sector] - 1
+        ).astype(int)
+        result.loc[valid_sector, "sector_peer_return_20d"] = (
+            group_sum[valid_sector] - result.loc[valid_sector, "return_20d"]
+        ) / (group_count[valid_sector] - 1)
+        result.loc[valid_sector, "relative_strength_vs_sector_20d"] = (
+            result.loc[valid_sector, "return_20d"]
+            - result.loc[valid_sector, "sector_peer_return_20d"]
+        )
+        for index in result.index[~valid_sector]:
+            result.at[index, "metric_quality_reasons"].append(
+                "sector_relative_strength_insufficient_peers"
+            )
+            result.at[index, "quality_warnings"].append(
+                "同じ分析日の同業種比較に必要な他銘柄が不足"
+            )
+    return result.sort_values(
         ["attention_score", "return_20d"],
         ascending=[False, False],
         na_position="last",

@@ -24,7 +24,7 @@ from app.database.repositories import (
 
 
 ASSET_ANALYSIS_NAME = "phase3_asset_screening"
-ASSET_ANALYSIS_RULE_VERSION = "phase3-all-assets-v1"
+ASSET_ANALYSIS_RULE_VERSION = "phase3-all-assets-v2"
 ASSET_ANALYSIS_PAGE_SIZE_MAX = 200
 INDEX_SYMBOLS = ["NASDAQCOM", "DJIA", "SP500", "NIKKEI225"]
 
@@ -39,7 +39,13 @@ def build_all_asset_analysis(
     index_prices: pd.DataFrame,
 ) -> dict:
     """Score every asset that passes the contiguous-session quality gate."""
-    screening = screen_assets(prices, assets, min_history=SCREENING_MIN_HISTORY)
+    screening = screen_assets(
+        prices,
+        assets,
+        min_history=SCREENING_MIN_HISTORY,
+        benchmark_prices=index_prices,
+        benchmark_symbol="NIKKEI225",
+    )
     if screening.empty:
         return {
             "results": screening,
@@ -223,6 +229,12 @@ def run_all_asset_analysis(session: Session, *, started_at: datetime | None = No
         details={
             "universe_limit": None,
             "quality_gate_minimum_contiguous_sessions": SCREENING_MIN_HISTORY,
+            "calendar_return_policy": "completed_xtks_period_close_to_close_v1",
+            "atr_policy": "adjusted_ohlc_atr14_v1",
+            "relative_strength_policy": "exact_20_session_return_difference_v1",
+            "sector_peer_minimum_total_assets": 3,
+            "distance_52week_policy": "latest_close_vs_adjusted_high_252_contiguous_v1",
+            "score_policy_unchanged": True,
             "movement_eligible_count": analysis["movement_eligible_count"],
             "quality_gate_excluded_count": len(assets) - len(results),
             "movement_insufficient_count": len(analysis["insufficient"]),

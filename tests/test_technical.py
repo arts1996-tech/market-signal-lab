@@ -4,7 +4,10 @@ import pytest
 from app.analysis.technical import (
     atr,
     bollinger_bands,
+    completed_period_returns,
     daily_returns,
+    distance_from_rolling_high,
+    horizon_relative_strength,
     macd,
     short_term_indicator_frame,
     short_term_signal_snapshot,
@@ -12,6 +15,7 @@ from app.analysis.technical import (
     simple_moving_average,
 )
 from app.analysis.market_calendar import (
+    exchange_calendar,
     is_next_exchange_session,
     next_exchange_session,
 )
@@ -87,6 +91,70 @@ def test_short_term_indicator_frame_and_snapshot():
     assert "macd" in indicators.columns
     assert 0 <= snapshot["score"] <= 100
     assert snapshot["label"]
+
+
+def test_short_term_indicator_frame_adds_atr_only_from_valid_ohlc():
+    sessions = exchange_calendar("XTKS").sessions_in_range(
+        "2026-01-05", "2026-03-31"
+    )[:30]
+    close = pd.Series(range(100, 130), index=sessions, dtype=float)
+    high = close + 2
+    low = close - 1
+
+    available = short_term_indicator_frame(close, high=high, low=low)
+    unavailable = short_term_indicator_frame(close)
+
+    assert available["atr_14"].dropna().iloc[-1] == pytest.approx(3.0)
+    assert available["atr_pct_14"].dropna().iloc[-1] == pytest.approx(3 / 129)
+    assert unavailable["atr_14"].isna().all()
+
+
+def test_completed_period_returns_excludes_incomplete_week_and_month():
+    sessions = exchange_calendar("XTKS").sessions_in_range(
+        "2026-03-01", "2026-05-13"
+    )
+    close = pd.Series(range(100, 100 + len(sessions)), index=sessions, dtype=float)
+
+    weekly = completed_period_returns(close, "weekly")
+    monthly = completed_period_returns(close, "monthly")
+
+    assert weekly.index[-1].tz_localize(None) == pd.Timestamp("2026-05-08")
+    assert monthly.index[-1].tz_localize(None) == pd.Timestamp("2026-04-30")
+    march_end = sessions[sessions.to_period("M") == pd.Period("2026-03")][-1]
+    april_end = sessions[sessions.to_period("M") == pd.Period("2026-04")][-1]
+    assert monthly.iloc[-1] == pytest.approx(close.loc[april_end] / close.loc[march_end] - 1)
+
+
+def test_relative_strength_requires_same_complete_exchange_sessions():
+    sessions = exchange_calendar("XTKS").sessions_in_range(
+        "2026-04-01", "2026-05-31"
+    )[:21]
+    asset = pd.Series(
+        [100 + index for index in range(21)], index=sessions, dtype=float
+    )
+    benchmark = pd.Series(
+        [100 + index / 2 for index in range(21)], index=sessions, dtype=float
+    )
+
+    result = horizon_relative_strength(asset, benchmark, horizon=20)
+    missing = horizon_relative_strength(asset, benchmark.drop(sessions[10]), horizon=20)
+
+    assert result["asset_return"] == pytest.approx(0.20)
+    assert result["benchmark_return"] == pytest.approx(0.10)
+    assert result["relative_strength"] == pytest.approx(0.10)
+    assert result["sessions"] == 20
+    assert missing["relative_strength"] is None
+
+
+def test_distance_from_52week_high_requires_full_window():
+    close = pd.Series(
+        range(1, 253),
+        index=pd.date_range("2025-01-01", periods=252, freq="D"),
+        dtype=float,
+    )
+
+    assert distance_from_rolling_high(close.iloc[:-1]) is None
+    assert distance_from_rolling_high(close) == pytest.approx(0.0)
 
 
 def test_short_term_signal_snapshot_handles_an_empty_frame_without_close_column():
