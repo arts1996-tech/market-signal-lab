@@ -40,6 +40,7 @@ class MarketImpactAssumptions:
     maximum_volume_participation: float = 0.10
     allow_partial_fill: bool = True
     base_slippage_rate: float = 0.0005
+    slippage_multiplier: float = 1.0
     impact_rate: float = 0.005
     minimum_previous_turnover: float = 0.0
     use_turnover_cost_model: bool = False
@@ -53,6 +54,8 @@ class MarketImpactAssumptions:
             raise ValueError("maximum_volume_participation must be between 0 and 1")
         if self.base_slippage_rate < 0 or self.impact_rate < 0:
             raise ValueError("slippage rates must be non-negative")
+        if not 0 < self.slippage_multiplier <= 3:
+            raise ValueError("slippage_multiplier must be between 0 and 3")
         if self.minimum_previous_turnover < 0:
             raise ValueError("minimum_previous_turnover must be non-negative")
         if not (
@@ -303,14 +306,18 @@ def _execution_cost_profile(
                 market_impact.base_slippage_rate
                 if explicit_slippage is None
                 else explicit_slippage
-            ),
+            )
+            * market_impact.slippage_multiplier,
             "impact_rate": market_impact.impact_rate if explicit_impact is None else explicit_impact,
         }
     if not market_impact.use_turnover_cost_model:
         return {
             "profile": "fixed_cost_v1",
             "spread_rate": assumptions.spread_rate,
-            "base_slippage_rate": market_impact.base_slippage_rate,
+            "base_slippage_rate": (
+                market_impact.base_slippage_rate
+                * market_impact.slippage_multiplier
+            ),
             "impact_rate": market_impact.impact_rate,
         }
     if previous_turnover is None or not _valid_positive_number(previous_turnover):
@@ -326,7 +333,9 @@ def _execution_cost_profile(
     return {
         "profile": f"turnover_cost_v1:{tier}",
         "spread_rate": spread_rate,
-        "base_slippage_rate": base_slippage_rate,
+        "base_slippage_rate": (
+            base_slippage_rate * market_impact.slippage_multiplier
+        ),
         "impact_rate": market_impact.impact_rate,
     }
 

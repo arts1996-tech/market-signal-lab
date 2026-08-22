@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 import pandas as pd
@@ -38,6 +38,13 @@ from app.backtest.ohlc import (
     simulate_ohlc_portfolio,
 )
 from app.backtest.portfolio import ExecutionAssumptions
+from app.backtest.robustness_evaluation import (
+    RobustnessEvaluationPolicy,
+    build_robustness_variants,
+    empty_robustness_evaluation,
+    summarize_robustness_evaluation,
+    window_variant_row,
+)
 from app.backtest.segmented_evaluation import (
     SegmentedEvaluationPolicy,
     classify_completed_trades,
@@ -215,6 +222,20 @@ def evaluate_real_account_walk_forward(
     empty_benchmarks = empty_benchmark_evaluation(
         benchmark_policy, assumptions, market_impact
     )
+    robustness_policy = RobustnessEvaluationPolicy()
+    robustness_variants = build_robustness_variants(
+        score_threshold=rule.score_threshold,
+        stop_loss=rule.stop_loss,
+        take_profit=rule.take_profit,
+        fee_rate=assumptions.fee_rate,
+        policy=robustness_policy,
+    )
+    empty_robustness = empty_robustness_evaluation(
+        robustness_policy, robustness_variants
+    )
+    candidate_signal_threshold = min(
+        variant.score_threshold for variant in robustness_variants
+    )
     input_data_version = frame_hash(prices)
     rule_hash = stable_payload_hash(
         {
@@ -227,6 +248,8 @@ def evaluate_real_account_walk_forward(
             "fx_accounting_policy": fx_accounting_policy,
             "tax_accounting_policy": tax_accounting_policy,
             "benchmark_evaluation_policy": benchmark_policy,
+            "robustness_evaluation_policy": robustness_policy,
+            "robustness_variants": robustness_variants,
             "walk_forward_protocol_version": WALK_FORWARD_PROTOCOL_VERSION,
         }
     )
@@ -255,6 +278,7 @@ def evaluate_real_account_walk_forward(
             "ELIGIBLE_UNIVERSE_EQUAL_WEIGHT",
             "CASH_JPY",
         ],
+        "candidate_signal_threshold": candidate_signal_threshold,
         "execution_assumptions": json_value(assumptions),
         "market_impact_assumptions": json_value(market_impact),
         "risk_rules": json_value(risk_rules),
@@ -288,6 +312,7 @@ def evaluate_real_account_walk_forward(
             pd.DataFrame(), policy=segmented_policy
         ),
         "benchmark_evaluation": empty_benchmarks,
+        "robustness_evaluation": empty_robustness,
     }
     if not qualified_symbols:
         return {
@@ -301,7 +326,7 @@ def evaluate_real_account_walk_forward(
     signals = build_point_in_time_historical_signals(
         index_prices,
         prices,
-        score_threshold=rule.score_threshold,
+        score_threshold=candidate_signal_threshold,
         stop_loss=rule.stop_loss,
         take_profit=rule.take_profit,
         maximum_holding_days=rule.maximum_holding_days,
@@ -317,22 +342,48 @@ def evaluate_real_account_walk_forward(
 
     segmented_trade_frames: list[pd.DataFrame] = []
     benchmark_windows: list[dict] = []
+    robustness_window_rows: list[dict] = []
     simulated_window_count = 0
 
-    def simulator(test_signals: pd.DataFrame, prices_as_of_test: pd.DataFrame) -> dict:
-        nonlocal simulated_window_count
-        simulated_window_count += 1
-        simulation_input_data_version = frame_hash(prices_as_of_test)
-        simulation_result = simulate_ohlc_portfolio(
-            test_signals,
+    def signals_for_variant(
+        candidate_signals: pd.DataFrame, variant
+    ) -> pd.DataFrame:
+        if candidate_signals.empty:
+            return candidate_signals.copy()
+        scores = pd.to_numeric(candidate_signals["score"], errors="coerce")
+        selected = candidate_signals[
+            scores.notna() & (scores >= variant.score_threshold)
+        ].copy()
+        selected["minimum_score"] = variant.score_threshold
+        selected["stop_loss"] = variant.stop_loss
+        selected["take_profit"] = variant.take_profit
+        return selected
+
+    def simulate_variant(
+        variant,
+        candidate_signals: pd.DataFrame,
+        prices_as_of_test: pd.DataFrame,
+        simulation_input_data_version: str,
+    ) -> tuple[dict, pd.DataFrame]:
+        variant_signals = signals_for_variant(candidate_signals, variant)
+        variant_assumptions = replace(assumptions, fee_rate=variant.fee_rate)
+        variant_market_impact = replace(
+            market_impact, slippage_multiplier=variant.slippage_multiplier
+        )
+        result = simulate_ohlc_portfolio(
+            variant_signals,
             prices_as_of_test,
             initial_cash=2_500_000,
             account_name=rule.account_name,
-            assumptions=assumptions,
-            market_impact=market_impact,
+            assumptions=variant_assumptions,
+            market_impact=variant_market_impact,
             risk_rules=risk_rules,
             input_data_version=simulation_input_data_version,
-            strategy_version=rule.strategy_version,
+            strategy_version=(
+                rule.strategy_version
+                if variant.variant_id == "baseline"
+                else f"{rule.strategy_version}:robustness:{variant.variant_id}"
+            ),
             corporate_actions=corporate_actions,
             corporate_action_coverage=corporate_action_coverage,
             corporate_action_policy=corporate_action_policy,
@@ -343,6 +394,43 @@ def evaluate_real_account_walk_forward(
             fx_accounting_policy=fx_accounting_policy,
             tax_accounting_policy=tax_accounting_policy,
         )
+        result["evaluated_signal_count"] = len(variant_signals)
+        return result, variant_signals
+
+    def simulator(test_signals: pd.DataFrame, prices_as_of_test: pd.DataFrame) -> dict:
+        nonlocal simulated_window_count
+        simulated_window_count += 1
+        simulation_input_data_version = frame_hash(prices_as_of_test)
+        baseline_variant = robustness_variants[0]
+        simulation_result, baseline_signals = simulate_variant(
+            baseline_variant,
+            test_signals,
+            prices_as_of_test,
+            simulation_input_data_version,
+        )
+        robustness_window_rows.append(
+            window_variant_row(
+                window=simulated_window_count,
+                variant=baseline_variant,
+                result=simulation_result,
+                signal_count=len(baseline_signals),
+            )
+        )
+        for variant in robustness_variants[1:]:
+            variant_result, variant_signals = simulate_variant(
+                variant,
+                test_signals,
+                prices_as_of_test,
+                simulation_input_data_version,
+            )
+            robustness_window_rows.append(
+                window_variant_row(
+                    window=simulated_window_count,
+                    variant=variant,
+                    result=variant_result,
+                    signal_count=len(variant_signals),
+                )
+            )
         classified = classify_completed_trades(
             simulation_result,
             index_prices,
@@ -439,6 +527,11 @@ def evaluate_real_account_walk_forward(
     )
     segmented_evaluation = summarize_segmented_trades(
         segmented_trades, policy=segmented_policy
+    )
+    robustness_evaluation = summarize_robustness_evaluation(
+        pd.DataFrame(robustness_window_rows),
+        policy=robustness_policy,
+        variants=robustness_variants,
     )
     benchmark_rows = [
         row
@@ -539,12 +632,19 @@ def evaluate_real_account_walk_forward(
         **base_details,
         "status": "success" if not reasons else "insufficient_data",
         "reasons": reasons,
-        "signal_count": len(signals),
+        "signal_count": int(
+            (
+                pd.to_numeric(signals["score"], errors="coerce")
+                >= rule.score_threshold
+            ).sum()
+        ),
+        "candidate_signal_count": len(signals),
         "validation_window_count": len(walk_forward),
         "validation_test_signals": test_signals,
         "validation_closed_trades": closed_trades,
         "segmented_evaluation": segmented_evaluation,
         "benchmark_evaluation": benchmark_evaluation,
+        "robustness_evaluation": robustness_evaluation,
         "forward_period": json_value(forward_period),
         "windows": _window_records(walk_forward),
     }

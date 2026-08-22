@@ -50,6 +50,14 @@ def format_percent(value) -> str:
     return f"{value:.2%}"
 
 
+def format_percent_interval(value) -> str:
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return "-"
+    if any(item is None or pd.isna(item) for item in value):
+        return "-"
+    return f"{float(value[0]):.2%}〜{float(value[1]):.2%}"
+
+
 def format_yen(value, *, signed: bool = False) -> str:
     if value is None or pd.isna(value):
         return "-（為替評価保留）"
@@ -1594,6 +1602,152 @@ if active_page == "システム管理":
                         st.warning(
                             "利用できない比較対象は補完せず、欠損理由を表示しています。"
                         )
+
+                st.markdown("#### 局所感度・頑健性検査")
+                st.caption(
+                    "基準ルールから利益確定、損切り、スコア閾値、手数料、"
+                    "スリッページを一度に1項目だけ小幅変更します。"
+                    "最良パラメータの探索・採用は行わず、結果の壊れやすさだけを確認します。"
+                )
+                robustness = account.get("robustness_evaluation") or {}
+                robustness_summaries = robustness.get("summaries", [])
+                if not robustness_summaries:
+                    st.info(
+                        "感度検査に使える完了済み検証窓がありません。"
+                        "必要履歴到達後も、標本が少ない間は頑健性を判定しません。"
+                    )
+                else:
+                    robustness_assessment_labels = {
+                        "not_assessed_no_validation_windows": "検証窓なし",
+                        "not_assessed_small_sample": "標本不足",
+                        "reference_baseline": "基準",
+                        "fragile_sign_flip": "符号反転あり",
+                        "materially_sensitive": "変化に敏感",
+                        "no_material_fragility_detected": "顕著な脆弱性なし",
+                        "no_material_fragility_detected_within_tested_range": (
+                            "検査範囲で顕著な脆弱性なし"
+                        ),
+                    }
+                    robustness_cols = st.columns(4)
+                    robustness_cols[0].metric(
+                        "総合判定",
+                        robustness_assessment_labels.get(
+                            robustness.get("overall_assessment"),
+                            robustness.get("overall_assessment", "未評価"),
+                        ),
+                    )
+                    robustness_cols[1].metric(
+                        "基準＋変化",
+                        robustness.get("variant_count", 0),
+                    )
+                    baseline_summary = next(
+                        (
+                            row
+                            for row in robustness_summaries
+                            if row.get("variant_id") == "baseline"
+                        ),
+                        {},
+                    )
+                    robustness_cols[2].metric(
+                        "検証窓",
+                        baseline_summary.get("validation_windows", 0),
+                    )
+                    robustness_cols[3].metric(
+                        "基準の決済標本",
+                        baseline_summary.get("closed_trades", 0),
+                    )
+                    robustness_view = pd.DataFrame(robustness_summaries)
+                    dimension_labels = {
+                        "baseline": "基準",
+                        "take_profit": "利益確定",
+                        "stop_loss": "損切り",
+                        "score_threshold": "スコア閾値",
+                        "fee_rate": "手数料",
+                        "slippage": "スリッページ",
+                    }
+                    direction_labels = {
+                        "baseline": "基準",
+                        "lower": "低く",
+                        "higher": "高く",
+                        "tighter": "狭く",
+                        "looser": "広く",
+                    }
+                    robustness_view["dimension"] = robustness_view["dimension"].map(
+                        dimension_labels
+                    ).fillna(robustness_view["dimension"])
+                    robustness_view["direction"] = robustness_view["direction"].map(
+                        direction_labels
+                    ).fillna(robustness_view["direction"])
+                    robustness_view["fragility_assessment"] = robustness_view[
+                        "fragility_assessment"
+                    ].map(robustness_assessment_labels).fillna(
+                        robustness_view["fragility_assessment"]
+                    )
+                    for column in (
+                        "stop_loss",
+                        "take_profit",
+                        "fee_rate",
+                        "mean_window_return",
+                        "worst_window_return",
+                        "mean_maximum_drawdown",
+                        "delta_mean_return_vs_baseline",
+                    ):
+                        if column in robustness_view:
+                            robustness_view[column] = robustness_view[column].map(
+                                format_percent
+                            )
+                    if "mean_window_return_ci95" in robustness_view:
+                        robustness_view["mean_window_return_ci95"] = robustness_view[
+                            "mean_window_return_ci95"
+                        ].map(format_percent_interval)
+                    robustness_view = robustness_view.rename(
+                        columns={
+                            "dimension": "変更項目",
+                            "direction": "方向",
+                            "score_threshold": "スコア閾値",
+                            "stop_loss": "損切り",
+                            "take_profit": "利益確定",
+                            "fee_rate": "手数料",
+                            "slippage_multiplier": "滑り倍率",
+                            "validation_windows": "検証窓",
+                            "signal_count": "候補数",
+                            "closed_trades": "決済数",
+                            "mean_window_return": "平均窓損益率",
+                            "mean_window_return_ci95": "平均95%CI",
+                            "worst_window_return": "最悪窓損益率",
+                            "mean_maximum_drawdown": "平均最大DD",
+                            "delta_mean_return_vs_baseline": "基準との差",
+                            "fragility_assessment": "脆弱性判定",
+                        }
+                    )
+                    st.dataframe(
+                        robustness_view[
+                            [
+                                "変更項目",
+                                "方向",
+                                "スコア閾値",
+                                "損切り",
+                                "利益確定",
+                                "手数料",
+                                "滑り倍率",
+                                "検証窓",
+                                "候補数",
+                                "決済数",
+                                "平均窓損益率",
+                                "平均95%CI",
+                                "最悪窓損益率",
+                                "平均最大DD",
+                                "基準との差",
+                                "脆弱性判定",
+                            ]
+                        ],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                st.warning(
+                    "10通りの変化を同時に見るため、偶然よく見える条件が生じます。"
+                    "この結果から条件を選んだり、同じ検証期間で再調整したりしないでください。"
+                )
 
     st.subheader("保存済み相関分析")
     if any(row.analysis_status == "requires_recalculation" for row in correlation_logs):

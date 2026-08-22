@@ -68,7 +68,9 @@ def evaluate_frozen_strategy_walk_forward(
     The simulator callable receives ``test_signals`` and ``prices_as_of_test``.
     Training rows are never passed as test signals. An optional result enricher
     receives the simulation result, exact validation prices, and frozen window
-    before metrics are recorded.
+    before metrics are recorded. A simulator that preloads a broader diagnostic
+    candidate set may return ``evaluated_signal_count`` so the base report keeps
+    the actual strategy count.
     """
 
     if prices.empty:
@@ -169,7 +171,9 @@ def evaluate_frozen_strategy_walk_forward(
                 "test_end": window.test_end,
                 "validation_sessions": int(validation_prices["price_time"].nunique()),
                 "validation_input_hash": validation_input_hash,
-                "test_signals": len(test_signals),
+                "test_signals": int(
+                    result.get("evaluated_signal_count", len(test_signals))
+                ),
                 "total_return": metrics.get("total_return"),
                 "maximum_drawdown": metrics.get("maximum_drawdown"),
                 "closed_trades": metrics.get("closed_trades"),

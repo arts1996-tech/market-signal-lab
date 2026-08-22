@@ -182,6 +182,39 @@ def test_turnover_cost_model_rejects_symbol_below_minimum_turnover():
     assert set(result["rejected_signals"]["reason"]) == {"minimum_turnover_not_met"}
 
 
+def test_slippage_multiplier_perturbs_turnover_tier_without_changing_spread():
+    prices = _prices(volumes=[10_000_000] * 12)
+    assumptions = ExecutionAssumptions(fee_rate=0, spread_rate=0, lot_size=1)
+    lower = simulate_ohlc_portfolio(
+        _signal(),
+        prices,
+        assumptions=assumptions,
+        market_impact=MarketImpactAssumptions(
+            use_turnover_cost_model=True,
+            minimum_previous_turnover=50_000_000,
+            impact_rate=0,
+            slippage_multiplier=0.75,
+        ),
+    )
+    higher = simulate_ohlc_portfolio(
+        _signal(),
+        prices,
+        assumptions=assumptions,
+        market_impact=MarketImpactAssumptions(
+            use_turnover_cost_model=True,
+            minimum_previous_turnover=50_000_000,
+            impact_rate=0,
+            slippage_multiplier=1.25,
+        ),
+    )
+    lower_entry = lower["transactions"].query("action == '仮想エントリー'").iloc[0]
+    higher_entry = higher["transactions"].query("action == '仮想エントリー'").iloc[0]
+
+    assert lower_entry["spread_rate"] == pytest.approx(higher_entry["spread_rate"])
+    assert lower_entry["slippage_rate"] < higher_entry["slippage_rate"]
+    assert lower_entry["execution_price"] < higher_entry["execution_price"]
+
+
 def test_signal_specific_execution_costs_override_turnover_tier():
     result = simulate_ohlc_portfolio(
         _signal(spread_rate=0.004, base_slippage_rate=0.002, impact_rate=0),

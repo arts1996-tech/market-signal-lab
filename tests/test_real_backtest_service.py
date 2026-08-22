@@ -115,6 +115,7 @@ def test_real_backtest_claims_unseen_windows_before_evaluation(monkeypatch, tmp_
     )
 
     assert result["status"] == "success"
+    assert result["candidate_signal_threshold"] == 65
     assert result["validation_window_count"] == 3
     assert result["validation_test_signals"] > 0
     assert result["validation_closed_trades"] > 0
@@ -175,6 +176,28 @@ def test_real_backtest_claims_unseen_windows_before_evaluation(monkeypatch, tmp_
         row["performance_assessment"] == "not_assessed_small_sample"
         for row in segmented["summaries"]
     )
+    robustness = result["robustness_evaluation"]
+    assert robustness["variant_count"] == 11
+    assert robustness["perturbation_count"] == 10
+    assert robustness["parameter_selection_performed"] is False
+    assert robustness["selected_best_variant"] is None
+    assert robustness["overall_assessment"] == "not_assessed_small_sample"
+    assert len(robustness["summaries"]) == 11
+    baseline = next(
+        row for row in robustness["summaries"] if row["variant_id"] == "baseline"
+    )
+    assert baseline["signal_count"] == result["validation_test_signals"]
+    lower_fee = next(
+        row
+        for row in robustness["summaries"]
+        if row["variant_id"] == "fee_rate_lower"
+    )
+    higher_fee = next(
+        row
+        for row in robustness["summaries"]
+        if row["variant_id"] == "fee_rate_higher"
+    )
+    assert lower_fee["mean_window_return"] >= higher_fee["mean_window_return"]
     assert registry.exists()
 
 
@@ -289,6 +312,9 @@ def test_real_backtest_keeps_new_observations_out_of_frozen_validation(
     )
 
     assert repeated["validation_window_count"] == first["validation_window_count"]
+    assert repeated["robustness_evaluation"]["input_hash"] == first[
+        "robustness_evaluation"
+    ]["input_hash"]
     assert repeated["forward_period"]["forward_start"] == first["forward_period"][
         "forward_start"
     ]
@@ -319,6 +345,7 @@ def test_real_backtest_does_not_relabel_already_observed_partial_window_as_forwa
                     "signal_date": dates[50],
                     "entry_date": dates[51],
                     "symbol": "10010",
+                    "score": 80,
                     "side": "long",
                     "maximum_holding_days": 5,
                     "reasons": ["frozen signal"],

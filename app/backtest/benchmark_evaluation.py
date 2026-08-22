@@ -35,6 +35,7 @@ def empty_benchmark_evaluation(
             "fee_rate_per_side": assumptions.fee_rate,
             "spread_rate_round_trip": assumptions.spread_rate,
             "base_slippage_rate_per_side": market_impact.base_slippage_rate,
+            "slippage_multiplier": market_impact.slippage_multiplier,
             "tax_rate": assumptions.tax_rate,
         },
         "comparison_period_basis": "registered_validation_window_start_to_end",
@@ -84,11 +85,14 @@ def _net_hold_return(
     market_impact: MarketImpactAssumptions,
 ) -> float:
     half_spread = assumptions.spread_rate / 2
+    slippage = (
+        market_impact.base_slippage_rate * market_impact.slippage_multiplier
+    )
     entry_execution = entry_price * (
-        1 + half_spread + market_impact.base_slippage_rate
+        1 + half_spread + slippage
     )
     exit_execution = exit_price * (
-        1 - half_spread - market_impact.base_slippage_rate
+        1 - half_spread - slippage
     )
     entry_cost = entry_execution * (1 + assumptions.fee_rate)
     exit_proceeds = exit_execution * (1 - assumptions.fee_rate)
