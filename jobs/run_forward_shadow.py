@@ -24,6 +24,7 @@ from app.services.forward_account_monitor import (
     output_capacity_status,
     record_forward_job_status,
 )
+from app.services.audit_integrity import AuditIntegrityError, verify_audit_chain
 
 
 def parse_args() -> argparse.Namespace:
@@ -178,6 +179,12 @@ def main() -> None:
                     raise OSError(
                         28,
                         f"forward-shadow output capacity is insufficient: {capacity['free_bytes']}",
+                    )
+                audit_integrity = verify_audit_chain(args.output_dir)
+                if audit_integrity["status"] == "invalid":
+                    raise AuditIntegrityError(
+                        "forward-account audit chain failed verification; "
+                        "run jobs/verify_audit_integrity.py before writing"
                     )
                 session_date = decision_at.tz_convert("Asia/Tokyo").date()
                 if args.daily:

@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+import json
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -1267,6 +1268,9 @@ if active_page == "システム管理":
             backtest_runs = latest_job_runs(
                 session, limit=1, job_name="run_backtest"
             )
+            audit_runs = latest_job_runs(
+                session, limit=1, job_name="verify_audit_integrity"
+            )
             correlation_logs = latest_correlation_results(session, analysis_status=None)
     else:
         fetch_logs = []
@@ -1274,6 +1278,7 @@ if active_page == "システム管理":
         operations_runs = []
         collector_runs = []
         backtest_runs = []
+        audit_runs = []
         correlation_logs = []
 
     st.subheader("前向き仮想口座の日次監視")
@@ -1301,6 +1306,7 @@ if active_page == "システム管理":
         "forward_job_failed": "DockerとDB以外の理由で前向き記録ジョブが失敗しました。",
         "execution_failed": "前向き記録の分析または保存処理が失敗しました。",
         "json_modified": "不変JSONがDB正本と異なります。自動上書きは行いません。",
+        "audit_integrity_failed": "監査チェーンの改変・欠落検知に失敗しました。追記を停止しています。",
     }
     for warning in forward_monitor.get("warnings", []):
         st.warning(warning_labels.get(warning, f"運用警告: {warning}"))
@@ -1328,6 +1334,61 @@ if active_page == "システム管理":
             f"監査コピー保存先: 空き {capacity.get('free_bytes', 0) / (1024 ** 3):.1f} GiB / "
             f"使用率 {capacity.get('used_ratio', 0):.1%}"
         )
+
+    st.subheader("監査記録の完全性")
+    st.caption(
+        "投資成績・売買判断とは分離した運用検査です。ファイル内容、連番、"
+        "前レコードハッシュ、チェーン末尾を照合します。"
+    )
+    audit_integrity = forward_monitor.get("audit_integrity", {})
+    audit_cols = st.columns(4)
+    audit_status_labels = {"ok": "正常", "empty": "対象記録なし", "invalid": "異常"}
+    audit_cols[0].metric(
+        "完全性", audit_status_labels.get(audit_integrity.get("status"), "未確認")
+    )
+    audit_cols[1].metric("チェーン記録", audit_integrity.get("record_count", 0))
+    audit_cols[2].metric("照合済みJSON", audit_integrity.get("checked_file_count", 0))
+    audit_cols[3].metric("検出異常", audit_integrity.get("anomaly_count", 0))
+    audit_category_labels = {
+        "file_hash_mismatch": "JSON内容が記録時から変更されています",
+        "file_size_mismatch": "JSONサイズが記録時から変更されています",
+        "tracked_file_missing": "チェーン登録済みJSONが削除されています",
+        "tracked_file_unreadable": "チェーン登録済みJSONを読み取れません",
+        "untracked_export": "チェーン未登録の正式JSONがあります",
+        "sequence_gap_or_reorder": "連番の欠落または順序変更があります",
+        "previous_hash_mismatch": "前レコードハッシュが一致しません",
+        "record_hash_mismatch": "チェーンレコード自体が変更されています",
+        "chain_head_missing": "チェーン末尾の照合情報がありません",
+        "chain_head_mismatch": "チェーン末尾の削除または変更を検出しました",
+        "invalid_chain_json": "チェーンに読み取れないレコードがあります",
+    }
+    if audit_integrity.get("status") == "invalid":
+        st.error("監査記録の改変・削除・順序欠落の可能性があります。自動追記を停止します。")
+        anomaly_rows = [
+            {
+                "異常": audit_category_labels.get(
+                    anomaly.get("category"), anomaly.get("category")
+                ),
+                "対象": anomaly.get("path") or "-",
+                "連番": anomaly.get("sequence") or anomaly.get("line") or "-",
+            }
+            for anomaly in audit_integrity.get("anomalies", [])
+        ]
+        if anomaly_rows:
+            st.dataframe(pd.DataFrame(anomaly_rows), hide_index=True, use_container_width=True)
+    elif audit_integrity.get("status") == "empty":
+        st.info("正式な前向き口座JSONがまだないため、監査チェーンは空です。")
+    else:
+        st.success("監査チェーンと登録済みJSONの完全性を確認しました。")
+    if audit_runs:
+        latest_audit = audit_runs[0]
+        st.caption(
+            f"最終独立検証: {format_jst(latest_audit.finished_at or latest_audit.started_at)} / "
+            f"結果: {latest_audit.details.get('audit_status', latest_audit.status)} / "
+            f"版: {latest_audit.details.get('chain_version', '-')}"
+        )
+    else:
+        st.caption("独立検証ジョブは未実行です。")
 
     latest_operations = operations_runs[0].details if operations_runs else {}
     latest_collector = collector_runs[0].details if collector_runs else {}
@@ -1433,7 +1494,9 @@ if active_page == "システム管理":
                 "status": job.status,
                 "started_at": format_jst(job.started_at),
                 "finished_at": format_jst(job.finished_at),
-                "details": job.details,
+                "details": json.dumps(
+                    job.details, ensure_ascii=False, sort_keys=True, default=str
+                ),
             }
             for job in job_runs
         ],

@@ -7,6 +7,7 @@ from sqlalchemy.exc import OperationalError
 
 from jobs.run_forward_shadow import canonical_daily_decision_at, daily_preflight_reason
 from app.services import forward_account_monitor as monitor
+from app.services.audit_integrity import AuditIntegrityError
 
 
 def test_daily_preflight_skips_before_evening_cutoff(tmp_path):
@@ -182,3 +183,9 @@ def test_forward_failure_classification_keeps_database_separate():
     error = OperationalError("SELECT 1", {}, RuntimeError("offline"))
 
     assert monitor.classify_forward_job_exception(error) == "database_unavailable"
+
+
+def test_forward_failure_classification_separates_audit_integrity():
+    error = AuditIntegrityError("chain mismatch")
+
+    assert monitor.classify_forward_job_exception(error) == "audit_integrity_failed"

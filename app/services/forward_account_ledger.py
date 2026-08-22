@@ -23,6 +23,7 @@ from app.database.repositories import (
     virtual_account_daily_state_for_date,
     virtual_account_events_for_state,
 )
+from app.services.audit_integrity import record_audit_export
 
 
 JST = "Asia/Tokyo"
@@ -685,9 +686,11 @@ def export_virtual_account_day(
     path = directory / f"{session_date.isoformat()}.json"
     if path.exists():
         if path.read_text(encoding="utf-8") == serialized:
+            record_audit_export(output_dir, path)
             return path
         raise FileExistsError(f"immutable ledger export already differs: {path}")
     temporary = path.with_suffix(".tmp")
     temporary.write_text(serialized, encoding="utf-8")
     temporary.replace(path)
+    record_audit_export(output_dir, path)
     return path

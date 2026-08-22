@@ -8,7 +8,7 @@
 
 > **現在の利用上の重要事項:** 現時点の仮想口座と候補スコアは、実際の売買判断や投資額決定の主な根拠にできる成熟度には達していません。正直な評価、利用してよい範囲、実投資支援前の必須品質ゲートは [docs/19_investment_decision_readiness_assessment.md](docs/19_investment_decision_readiness_assessment.md) を参照してください。
 
-> **現行ToDoの正本:** 今後の最優先事項、実装順序、未完了項目、完了条件は [docs/22_current_priority_todo.md](docs/22_current_priority_todo.md) に一本化しています。過去文書に残る「次の作業」より、この文書を優先します。`NOW-P0-1`〜`NOW-P0-5`、`NOW-P1-1`〜`NOW-P1-9`、`NOW-P2-1`〜`NOW-P2-4`の実装は完了しました。前向き口座の最初の実営業日を監視しながら、次は監査記録の改変・欠落検知を追加する`NOW-P2-5`です。
+> **現行ToDoの正本:** 今後の最優先事項、実装順序、未完了項目、完了条件は [docs/22_current_priority_todo.md](docs/22_current_priority_todo.md) に一本化しています。過去文書に残る「次の作業」より、この文書を優先します。`NOW-P0-1`〜`NOW-P0-5`、`NOW-P1-1`〜`NOW-P1-9`、`NOW-P2-1`〜`NOW-P2-5`の実装は完了しました。前向き口座の最初の実営業日を監視しながら、次は既存分析仕様の残実装を依存の少ない指標から進めます。
 
 GitHub: https://github.com/arts1996-tech/market-signal-lab
 
@@ -362,6 +362,18 @@ J-Quants銘柄マスター収集は、レスポンスまたは`--date YYYYMMDD`�
 
 画面の「現在結果を前向き観察として保存」ボタンは、将来結果を使う過去評価を研究JSONとして手動保存する旧経路です。`jobs/run_forward_shadow.py`の通常モードはこれと分離され、短期・中期口座を`delayed_historical`としてPostgreSQLへ追記保存し、`data/forward_shadow/<account>/delayed_historical/YYYY-MM-DD.json`へDB由来の監査コピーを出力します。このディレクトリはGit対象外です。同じ口座・系統・JST営業日の同一入力による再実行は冪等で、異なる後発入力による置換は拒否します。
 
+`NOW-P2-5`では正式な前向き口座JSONを`forward-audit-chain-v1`へ追記登録します。各レコードはファイルSHA-256、サイズ、連番、前レコードハッシュ、自身のハッシュを持ち、別のheadファイルで末尾の切り詰めも検査します。手動変更、登録済みJSONの削除、未登録JSON、中間レコード削除、順序変更、末尾削除を検出した場合は、新しい前向き記録の追記を停止します。PostgreSQLの投資結果とは分離した運用検査であり、画面の「システム管理」→「監査記録の完全性」で確認できます。
+
+```bash
+# 読取り専用の独立検証。異常時は終了コード1
+docker compose exec app python jobs/verify_audit_integrity.py
+
+# 導入前から存在する正式JSONだけを、DB正本との一致確認後に初期登録
+docker compose exec app python jobs/verify_audit_integrity.py --initialize-existing
+```
+
+チェーンとheadは同じホスト上にあるため、通常の手動変更や事故の検知を目的とします。ホスト管理権限を持つ攻撃者がJSON、チェーン、headをすべて整合するよう同時に作り直す攻撃までは証明できません。将来その脅威まで対象にする場合は、別ホストの署名済みアンカーまたは改ざん防止ストレージを追加します。
+
 通常モードの画面では、判断時刻以前の`price_time`と`available_at`だけを使う「指定時点の判断」を、将来結果を使った過去評価から分けて確認できます。買い候補だけでなく、待機とデータ不足も表示します。ただしJ-Quants Freeの遅延価格による研究結果であり、現在の買い判断ではありません。
 
 通常モードには、短期`forward-short-term-v1`と中期`forward-mid-term-v1`の独立口座状態があります。各250万円から開始し、短期は利益確定8%・損切り5%・最大10営業日、中期は利益確定18%・損切り10%・最大60営業日です。現金、保有、予定注文、実現／未実現／累積損益、最大ドローダウンを次の呼び出しへ渡せます。画面では「仮想投資評価」タブの「短期・中期の独立仮想口座」で確認できます。
@@ -378,9 +390,9 @@ Mac定期ジョブは18:30 JSTを同日再試行共通の判断時刻として�
 
 Macで平日18:30、20:30、22:30に上記の研究スナップショットを再試行する`launchd`設定は`docker/macos/com.arts1996.market-signal-lab-forward-shadow.plist`です。ログイン時にも呼びますが、JST 18:30より前、東証非営業日、当日保存済みの場合は分析前に正常終了します。2026-08-16にユーザー承認のもと`~/Library/LaunchAgents/com.arts1996.market-signal-lab-forward-shadow.plist`へ登録済みです。Macが停止中またはDocker Desktopが未起動の場合は後続時刻で再試行しますが、翌日に前日分を後付け生成しません。正式な継続口座完成後にラズパイを常時運用の実行主体へ切り替える手順は[docs/21_forward_shadow_operations.md](docs/21_forward_shadow_operations.md)を参照してください。
 
-`NOW-P0-5`では、MacのLaunchAgentを`docker/macos/run-forward-shadow.zsh`経由へ変更しました。各試行の開始、成功、見送り、失敗は同じ試行IDを付けて`job_runs`へ追記します。Dockerへ到達できない場合だけはDBへ書けないため、Git対象外の`logs/forward-shadow-host-attempts.tsv`へ`docker_unavailable`として残します。Dockerは動くがDBへ到達できない場合は`database_unavailable`、保存先が512 MiB未満または使用率95%以上なら`output_capacity_insufficient`、DB正本とJSONが異なる場合は`json_modified`として区別します。DB状態がありJSONだけ欠ける場合はDBから再出力しますが、改変済みJSONは自動上書きしません。
+`NOW-P0-5`では、MacのLaunchAgentを`docker/macos/run-forward-shadow.zsh`経由へ変更しました。各試行の開始、成功、見送り、失敗は同じ試行IDを付けて`job_runs`へ追記します。Dockerへ到達できない場合だけはDBへ書けないため、Git対象外の`logs/forward-shadow-host-attempts.tsv`へ`docker_unavailable`として残します。Dockerは動くがDBへ到達できない場合は`database_unavailable`、保存先が512 MiB未満または使用率95%以上なら`output_capacity_insufficient`、DB正本とJSONが異なる場合は`json_modified`として区別します。チェーン導入前の未登録JSONは上記初期化ジョブでDB照合して登録します。チェーン登録済みJSONの欠落・改変は`audit_integrity_failed`として自動追記・自動再出力を停止し、証拠を残します。
 
-利用者は画面上部の「システム管理」を選び、「前向き仮想口座の日次監視」で対象営業日、短期・中期の記録数、最終成功、当日失敗回数、欠測営業日、保存容量、JSON監査を確認できます。3回すべて失敗した日は警告し、翌日のデータで後付けしません。2026-08-16の非営業日試運転では`started`／`skipped`とホスト側成功を確認済みです。最初の実営業日に短期・中期の成功記録とJSONが作られることは継続監視項目です。
+利用者は画面上部の「システム管理」を選び、「前向き仮想口座の日次監視」で対象営業日、短期・中期の記録数、最終成功、当日失敗回数、欠測営業日、保存容量、JSON監査を確認できます。「監査記録の完全性」ではチェーン記録数、照合済みJSON、異常分類、独立検証ジョブの最終結果を投資成績と分けて確認できます。3回すべて失敗した日は警告し、翌日のデータで後付けしません。2026-08-22に既存8件をDB正本と照合して初期登録し、独立再検証で8件正常・異常0・未登録0を確認しました。
 
 通常の`jobs/run_backtest.py`は、全J-Quants株・ETFのうち有効な調整済みOHLCVが東証営業日で連続する銘柄だけを使います。短期は学習60＋検証20の80営業日、中期は学習120＋検証20の140営業日を最低条件とし、各250万円、手数料0.10%、税率0%の税引前評価、前営業日売買代金と流動性コストを使って別系列で評価します。各登録済み検証窓では、日経平均、取得できる場合のTOPIX、検証窓開始時点で投資可能と確認できた対象ETFの等ウェイト単純保有、同じく投資可能と確認できた全対象銘柄の等ウェイト単純保有、円現金保有を、同じ開始日・終了日とJPYで比較します。時点別銘柄集合が未確認なら現在残存銘柄で代用しません。ETF・単純保有は手数料、スプレッド、基礎スリッページの往復費用控除後です。日経平均とTOPIXは直接売買できないため費用前の参考値とし、未指定の連動商品コストは推測しません。完全一致する端点価格やJPY通貨情報がない比較対象は補完せず、個別の利用不可理由を保存します。指数欠損だけで戦略検証全体を中止しません。2026-08-22のMac実行では最大11営業日のため、両方とも`insufficient_contiguous_price_history`です。結果には入力ハッシュ、ルールハッシュ、費用、リスク規則、検証窓、比較対象別の状態を保存します。
 

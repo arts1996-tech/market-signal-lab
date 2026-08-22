@@ -311,6 +311,7 @@ docker compose exec app python jobs/run_short_term_analysis.py
 docker compose exec app python jobs/run_spillover_analysis.py --jp-symbol 13060
 docker compose exec app python jobs/run_mid_term_analysis.py
 docker compose exec app python jobs/run_backtest.py
+docker compose exec app python jobs/verify_audit_integrity.py
 MARKET_DATA_MODE=demo docker compose run --rm app python jobs/seed_sample_data.py --demo
 docker compose exec app python jobs/backup_database.py
 docker compose run --rm app pytest

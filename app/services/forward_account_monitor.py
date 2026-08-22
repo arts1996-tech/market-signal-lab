@@ -23,6 +23,7 @@ from app.services.forward_account_ledger import (
     build_virtual_account_day_export,
     serialize_virtual_account_day_export,
 )
+from app.services.audit_integrity import AuditIntegrityError, verify_audit_chain
 
 
 FORWARD_JOB_NAME = "run_forward_shadow"
@@ -75,6 +76,8 @@ def record_forward_job_status(
 
 
 def classify_forward_job_exception(exc: BaseException) -> str:
+    if isinstance(exc, AuditIntegrityError):
+        return "audit_integrity_failed"
     if isinstance(exc, FileExistsError):
         return "json_modified"
     if isinstance(exc, SQLAlchemyError):
@@ -204,6 +207,7 @@ def build_forward_account_monitor(
     host_attempt_log: str | Path = HOST_ATTEMPT_LOG,
 ) -> dict:
     observed = _utc_timestamp(observed_at or datetime.now(UTC))
+    audit_integrity = verify_audit_chain(output_dir)
     expected_date = expected_forward_session_date(observed)
     capacity = output_capacity_status(output_dir)
     rows = session.execute(
@@ -399,6 +403,7 @@ def build_forward_account_monitor(
         "failure_categories": failure_categories,
         "host_attempts": host_day_attempts,
         "warnings": warnings,
+        "audit_integrity": audit_integrity,
     }
 
 
@@ -439,4 +444,5 @@ def load_forward_account_monitor(
             "failure_categories": ["database_unavailable"],
             "host_attempts": host_attempts,
             "warnings": ["database_unavailable"],
+            "audit_integrity": verify_audit_chain(output_dir),
         }
