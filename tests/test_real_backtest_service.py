@@ -16,6 +16,8 @@ def _prices(periods: int = 100) -> tuple[pd.DataFrame, pd.DataFrame]:
                 {
                     "symbol": symbol,
                     "name": symbol,
+                    "asset_type": "stock",
+                    "currency": "JPY",
                     "price_time": session,
                     "open": close - 1,
                     "high": close + 5,
@@ -117,6 +119,34 @@ def test_real_backtest_claims_unseen_windows_before_evaluation(monkeypatch, tmp_
     assert result["validation_test_signals"] > 0
     assert result["validation_closed_trades"] > 0
     assert result["benchmark"] == "NIKKEI225"
+    benchmark_rows = result["benchmark_evaluation"]["windows"]
+    assert len(benchmark_rows) == result["validation_window_count"] * 5
+    assert {
+        row["benchmark"] for row in benchmark_rows
+    } == {
+        "NIKKEI225",
+        "TOPIX",
+        "TARGET_ETF_EQUAL_WEIGHT",
+        "ELIGIBLE_UNIVERSE_EQUAL_WEIGHT",
+        "CASH_JPY",
+    }
+    assert all(
+        row["period_start"] == window["test_start"]
+        and row["period_end"] == window["test_end"]
+        for window in result["windows"]
+        for row in benchmark_rows
+        if row["window"] == window["window"]
+    )
+    assert all(
+        row["status"] == "unavailable"
+        for row in benchmark_rows
+        if row["benchmark"] == "TOPIX"
+    )
+    assert all(
+        row["status"] == "available_cost_adjusted"
+        for row in benchmark_rows
+        if row["benchmark"] in {"ELIGIBLE_UNIVERSE_EQUAL_WEIGHT", "CASH_JPY"}
+    )
     assert result["execution_assumptions"]["tax_rate"] == 0.0
     assert all(window["validation_claim_id"] for window in result["windows"])
     assert all(window["rule_frozen_before_validation"] for window in result["windows"])
@@ -146,6 +176,62 @@ def test_real_backtest_claims_unseen_windows_before_evaluation(monkeypatch, tmp_
         for row in segmented["summaries"]
     )
     assert registry.exists()
+
+
+def test_missing_index_is_reported_per_benchmark_without_stopping_validation(
+    monkeypatch, tmp_path
+):
+    prices, _index_prices = _prices(100)
+    rule = backtest_service.RealBacktestRule(
+        account_name="short_term",
+        strategy_version="test-missing-index-v1",
+        score_threshold=70,
+        stop_loss=-0.05,
+        take_profit=0.08,
+        maximum_holding_days=5,
+        minimum_train_sessions=40,
+        test_sessions=20,
+    )
+
+    def point_in_time_signals(_index, price_frame, **_kwargs):
+        dates = pd.DatetimeIndex(sorted(price_frame["price_time"].unique()))
+        return pd.DataFrame(
+            [
+                {
+                    "signal_date": dates[45],
+                    "entry_date": dates[46],
+                    "symbol": "10010",
+                    "name": "10010",
+                    "score": 80,
+                    "minimum_score": 70,
+                    "side": "long",
+                    "maximum_holding_days": 5,
+                    "reasons": ["index-independent test signal"],
+                }
+            ]
+        )
+
+    monkeypatch.setattr(
+        backtest_service,
+        "build_point_in_time_historical_signals",
+        point_in_time_signals,
+    )
+    result = backtest_service.evaluate_real_account_walk_forward(
+        prices,
+        pd.DataFrame(),
+        rule=rule,
+        validation_registry_path=tmp_path / "windows.json",
+    )
+
+    assert result["validation_window_count"] == 3
+    index_rows = [
+        row
+        for row in result["benchmark_evaluation"]["windows"]
+        if row["benchmark"] in {"NIKKEI225", "TOPIX"}
+    ]
+    assert index_rows
+    assert all(row["status"] == "unavailable" for row in index_rows)
+    assert all(row["comparison_return"] is None for row in index_rows)
 
 
 def test_real_backtest_keeps_new_observations_out_of_frozen_validation(

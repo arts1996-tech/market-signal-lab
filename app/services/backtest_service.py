@@ -17,7 +17,16 @@ from app.analysis.virtual_trading import (
     build_point_in_time_historical_signals,
 )
 from app.backtest.audit import frame_hash, json_value, stable_payload_hash
-from app.backtest.asset_lifecycle import AssetLifecyclePolicy, evaluate_asset_lifecycle_gate
+from app.backtest.asset_lifecycle import (
+    AssetLifecyclePolicy,
+    evaluate_asset_lifecycle_gate,
+    investable_universe_as_of,
+)
+from app.backtest.benchmark_evaluation import (
+    BenchmarkEvaluationPolicy,
+    empty_benchmark_evaluation,
+    evaluate_validation_benchmarks,
+)
 from app.backtest.fx_accounting import FxAccountingPolicy, evaluate_fx_gate
 from app.backtest.corporate_actions import (
     CorporateActionPolicy,
@@ -158,22 +167,6 @@ def _latest_contiguous_prices(
     return pd.concat(frames, ignore_index=True)
 
 
-def _benchmark(index_prices: pd.DataFrame) -> pd.Series | None:
-    if index_prices.empty:
-        return None
-    nikkei = index_prices[index_prices["symbol"] == "NIKKEI225"].copy()
-    if nikkei.empty:
-        return None
-    nikkei["price_time"] = pd.to_datetime(nikkei["price_time"], utc=True).dt.normalize()
-    result = (
-        nikkei.drop_duplicates("price_time", keep="last")
-        .set_index("price_time")["close"]
-        .sort_index()
-    )
-    result = pd.to_numeric(result, errors="coerce").dropna()
-    return result if len(result) >= 2 else None
-
-
 def _window_records(frame: pd.DataFrame) -> list[dict]:
     if frame.empty:
         return []
@@ -191,6 +184,7 @@ def evaluate_real_account_walk_forward(
     asset_lifecycle: pd.DataFrame | None = None,
     asset_universe_coverage: pd.DataFrame | None = None,
     fx_rates: pd.DataFrame | None = None,
+    asset_metadata_by_symbol: dict[str, dict] | None = None,
 ) -> dict:
     prices = _valid_ohlcv(japan_prices)
     counts = _contiguous_counts(prices)
@@ -217,6 +211,10 @@ def evaluate_real_account_walk_forward(
     fx_accounting_policy = FxAccountingPolicy()
     fx_gate = evaluate_fx_gate(prices, fx_rates, fx_accounting_policy)
     tax_accounting_policy = TaxAccountingPolicy()
+    benchmark_policy = BenchmarkEvaluationPolicy()
+    empty_benchmarks = empty_benchmark_evaluation(
+        benchmark_policy, assumptions, market_impact
+    )
     input_data_version = frame_hash(prices)
     rule_hash = stable_payload_hash(
         {
@@ -228,6 +226,7 @@ def evaluate_real_account_walk_forward(
             "asset_lifecycle_policy": asset_lifecycle_policy,
             "fx_accounting_policy": fx_accounting_policy,
             "tax_accounting_policy": tax_accounting_policy,
+            "benchmark_evaluation_policy": benchmark_policy,
             "walk_forward_protocol_version": WALK_FORWARD_PROTOCOL_VERSION,
         }
     )
@@ -249,6 +248,13 @@ def evaluate_real_account_walk_forward(
         "walk_forward_protocol_version": WALK_FORWARD_PROTOCOL_VERSION,
         "validation_registry_path": str(validation_registry_path),
         "benchmark": "NIKKEI225",
+        "benchmark_candidates": [
+            "NIKKEI225",
+            "TOPIX",
+            "TARGET_ETF_EQUAL_WEIGHT",
+            "ELIGIBLE_UNIVERSE_EQUAL_WEIGHT",
+            "CASH_JPY",
+        ],
         "execution_assumptions": json_value(assumptions),
         "market_impact_assumptions": json_value(market_impact),
         "risk_rules": json_value(risk_rules),
@@ -281,6 +287,7 @@ def evaluate_real_account_walk_forward(
         "segmented_evaluation": summarize_segmented_trades(
             pd.DataFrame(), policy=segmented_policy
         ),
+        "benchmark_evaluation": empty_benchmarks,
     }
     if not qualified_symbols:
         return {
@@ -291,14 +298,6 @@ def evaluate_real_account_walk_forward(
         }
 
     prices = _latest_contiguous_prices(prices, counts, qualified_symbols)
-    benchmark = _benchmark(index_prices)
-    if benchmark is None:
-        return {
-            **base_details,
-            "status": "insufficient_data",
-            "reasons": ["nikkei_benchmark_missing"],
-            "windows": [],
-        }
     signals = build_point_in_time_historical_signals(
         index_prices,
         prices,
@@ -317,6 +316,7 @@ def evaluate_real_account_walk_forward(
         }
 
     segmented_trade_frames: list[pd.DataFrame] = []
+    benchmark_windows: list[dict] = []
     simulated_window_count = 0
 
     def simulator(test_signals: pd.DataFrame, prices_as_of_test: pd.DataFrame) -> dict:
@@ -331,7 +331,6 @@ def evaluate_real_account_walk_forward(
             assumptions=assumptions,
             market_impact=market_impact,
             risk_rules=risk_rules,
-            benchmark=benchmark,
             input_data_version=simulation_input_data_version,
             strategy_version=rule.strategy_version,
             corporate_actions=corporate_actions,
@@ -354,6 +353,71 @@ def evaluate_real_account_walk_forward(
             segmented_trade_frames.append(classified)
         return simulation_result
 
+    metadata = asset_metadata_by_symbol or {}
+
+    def enrich_benchmarks(
+        simulation_result: dict,
+        _test_signals: pd.DataFrame,
+        validation_prices: pd.DataFrame,
+        window,
+        window_number: int,
+    ) -> dict:
+        metrics = simulation_result.setdefault("metrics", {})
+        strategy_return = float(metrics.get("total_return") or 0.0)
+        benchmark_symbols = qualified_symbols
+        eligible_universe_status = "provided"
+        if lifecycle_enabled:
+            universe = investable_universe_as_of(
+                asset_lifecycle,
+                asset_universe_coverage,
+                window.test_start,
+            )
+            eligible_universe_status = str(universe["coverage_status"])
+            investable_symbols = set(universe["symbols"])
+            benchmark_symbols = [
+                symbol
+                for symbol in qualified_symbols
+                if symbol in investable_symbols
+            ]
+        eligible_etf_symbols = [
+            symbol
+            for symbol in benchmark_symbols
+            if str(metadata.get(symbol, {}).get("asset_type", "")).lower()
+            == "etf"
+        ]
+        evaluation = evaluate_validation_benchmarks(
+            window=window_number,
+            strategy_return=strategy_return,
+            validation_prices=validation_prices,
+            index_prices=index_prices,
+            period_start=window.test_start,
+            period_end=window.test_end,
+            eligible_symbols=benchmark_symbols,
+            eligible_etf_symbols=eligible_etf_symbols,
+            eligible_universe_status=eligible_universe_status,
+            assumptions=assumptions,
+            market_impact=market_impact,
+            policy=benchmark_policy,
+        )
+        benchmark_windows.append(evaluation)
+        comparisons = pd.DataFrame(evaluation["comparisons"])
+        simulation_result["benchmark_comparisons"] = comparisons
+        simulation_result["benchmark_evaluation"] = evaluation
+        primary = comparisons[
+            (comparisons["benchmark"] == "NIKKEI225")
+            & comparisons["comparison_return"].notna()
+        ]
+        primary_return = (
+            None if primary.empty else float(primary.iloc[-1]["comparison_return"])
+        )
+        metrics["benchmark_return"] = primary_return
+        metrics["excess_return"] = (
+            None
+            if primary_return is None
+            else float(strategy_return - primary_return)
+        )
+        return simulation_result
+
     walk_forward = evaluate_frozen_strategy_walk_forward(
         signals,
         prices,
@@ -364,6 +428,7 @@ def evaluate_real_account_walk_forward(
         strategy_version=rule.strategy_version,
         rule_hash=rule_hash,
         evaluation_track=rule.account_name,
+        result_enricher=enrich_benchmarks,
     )
     test_signals = int(walk_forward.get("test_signals", pd.Series(dtype=int)).sum())
     closed_trades = int(walk_forward.get("closed_trades", pd.Series(dtype=int)).sum())
@@ -375,6 +440,24 @@ def evaluate_real_account_walk_forward(
     segmented_evaluation = summarize_segmented_trades(
         segmented_trades, policy=segmented_policy
     )
+    benchmark_rows = [
+        row
+        for evaluation in benchmark_windows
+        for row in evaluation.get("comparisons", [])
+    ]
+    benchmark_evaluation = {
+        **empty_benchmarks,
+        "windows": json_value(benchmark_rows),
+        "validation_window_count": len(benchmark_windows),
+        "input_hash": stable_payload_hash(benchmark_windows),
+        "warnings": sorted(
+            {
+                warning
+                for evaluation in benchmark_windows
+                for warning in evaluation.get("warnings", [])
+            }
+        ),
+    }
     forward_period = {
         "status": "not_activated",
         "decision_track": "current_market",
@@ -456,12 +539,12 @@ def evaluate_real_account_walk_forward(
         **base_details,
         "status": "success" if not reasons else "insufficient_data",
         "reasons": reasons,
-        "benchmark_warning": "TOPIXと単純保有の追加比較はNOW-P2-3で実装する",
         "signal_count": len(signals),
         "validation_window_count": len(walk_forward),
         "validation_test_signals": test_signals,
         "validation_closed_trades": closed_trades,
         "segmented_evaluation": segmented_evaluation,
+        "benchmark_evaluation": benchmark_evaluation,
         "forward_period": json_value(forward_period),
         "windows": _window_records(walk_forward),
     }
@@ -484,10 +567,21 @@ def run_real_walk_forward_backtest(
         limit=None,
     )
     symbols = [asset.symbol for asset in assets]
+    asset_metadata_by_symbol = {
+        asset.symbol: {"asset_type": asset.asset_type, "currency": asset.currency}
+        for asset in assets
+    }
     japan_prices = market_prices_frame(session, symbols, source_policy=source_policy) if symbols else pd.DataFrame()
+    if not japan_prices.empty:
+        japan_prices["asset_type"] = japan_prices["symbol"].map(
+            lambda symbol: asset_metadata_by_symbol.get(str(symbol), {}).get("asset_type")
+        )
+        japan_prices["currency"] = japan_prices["symbol"].map(
+            lambda symbol: asset_metadata_by_symbol.get(str(symbol), {}).get("currency")
+        )
     index_prices = market_prices_frame(
         session,
-        ["NIKKEI225", "NASDAQCOM", "DJIA", "SP500", "DEXJPUS"],
+        ["NIKKEI225", "TOPIX", "NASDAQCOM", "DJIA", "SP500", "DEXJPUS"],
         source_policy=source_policy,
     )
     corporate_actions = corporate_actions_frame(session, symbols)
@@ -510,6 +604,7 @@ def run_real_walk_forward_backtest(
             asset_lifecycle=asset_lifecycle,
             asset_universe_coverage=asset_universe_coverage,
             fx_rates=fx_rates,
+            asset_metadata_by_symbol=asset_metadata_by_symbol,
         )
         for rule in REAL_BACKTEST_RULES
     }

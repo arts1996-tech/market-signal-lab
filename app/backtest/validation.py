@@ -61,11 +61,14 @@ def evaluate_frozen_strategy_walk_forward(
     strategy_version: str | None = None,
     rule_hash: str | None = None,
     evaluation_track: str = "default",
+    result_enricher=None,
 ) -> pd.DataFrame:
     """Evaluate a frozen rule only on each unseen test window.
 
     The simulator callable receives ``test_signals`` and ``prices_as_of_test``.
-    Training rows are never passed as test signals.
+    Training rows are never passed as test signals. An optional result enricher
+    receives the simulation result, exact validation prices, and frozen window
+    before metrics are recorded.
     """
 
     if prices.empty:
@@ -143,6 +146,14 @@ def evaluate_frozen_strategy_walk_forward(
             ].copy()
         prices_as_of_test = frame[frame["price_time"] <= window.test_end].copy()
         result = simulator(test_signals, prices_as_of_test)
+        if result_enricher is not None:
+            result = result_enricher(
+                result,
+                test_signals,
+                validation_prices.copy(),
+                window,
+                index + 1,
+            )
         metrics = result.get("metrics", {})
         manifest = result.get("manifest", {})
         rows.append(

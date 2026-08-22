@@ -1525,6 +1525,76 @@ if active_page == "システム管理":
                             "少数標本の区分は投資成績として評価していません。"
                         )
 
+                st.markdown("#### 同一期間ベンチマーク比較")
+                st.caption(
+                    "各登録済み検証窓を同じ開始日・終了日、円建てで比較します。"
+                    "対象ETFと対象銘柄の単純保有は手数料・スプレッド・"
+                    "基礎スリッページ控除後です。指数は売買できないため生の参考値とし、"
+                    "未指定の連動商品コストは推測しません。"
+                )
+                benchmark_evaluation = account.get("benchmark_evaluation") or {}
+                benchmark_rows = benchmark_evaluation.get("windows", [])
+                if not benchmark_rows:
+                    st.info(
+                        "比較可能な完了済み検証窓がありません。"
+                        "履歴が品質ゲートへ到達すると、日経平均、取得可能なTOPIX、"
+                        "対象ETF、単純保有、現金保有を表示します。"
+                    )
+                else:
+                    benchmark_view = pd.DataFrame(benchmark_rows)
+                    for column in (
+                        "gross_return",
+                        "net_return",
+                        "strategy_return",
+                        "excess_return",
+                    ):
+                        if column in benchmark_view:
+                            benchmark_view[column] = benchmark_view[column].map(
+                                format_percent
+                            )
+                    benchmark_view = benchmark_view.rename(
+                        columns={
+                            "window": "検証窓",
+                            "label": "比較対象",
+                            "status": "状態",
+                            "reason": "欠損・注記",
+                            "currency": "通貨",
+                            "period_start": "開始日",
+                            "period_end": "終了日",
+                            "gross_return": "費用前",
+                            "net_return": "費用控除後",
+                            "strategy_return": "戦略損益率",
+                            "excess_return": "戦略との差",
+                            "component_count": "構成数",
+                            "cost_adjusted": "費用控除",
+                        }
+                    )
+                    st.dataframe(
+                        benchmark_view[
+                            [
+                                "検証窓",
+                                "比較対象",
+                                "状態",
+                                "欠損・注記",
+                                "通貨",
+                                "開始日",
+                                "終了日",
+                                "費用前",
+                                "費用控除後",
+                                "戦略損益率",
+                                "戦略との差",
+                                "構成数",
+                                "費用控除",
+                            ]
+                        ],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                    if benchmark_evaluation.get("warnings"):
+                        st.warning(
+                            "利用できない比較対象は補完せず、欠損理由を表示しています。"
+                        )
+
     st.subheader("保存済み相関分析")
     if any(row.analysis_status == "requires_recalculation" for row in correlation_logs):
         st.warning("入力sourceを復元できない旧結果があります。`requires_recalculation` の行は判断材料に使わないでください。")
