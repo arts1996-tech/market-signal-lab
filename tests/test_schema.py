@@ -116,6 +116,8 @@ def test_virtual_account_ledger_has_freeze_and_event_idempotency_constraints():
         "observation_input_hash",
     }.issubset(VirtualAccountDailyState.__table__.columns.keys())
     assert "decision_track" in VirtualAccountEvent.__table__.columns
+    for column in ("equity", "unrealized_pnl", "cumulative_pnl", "maximum_drawdown"):
+        assert VirtualAccountDailyState.__table__.columns[column].nullable
 
 
 def test_asset_analysis_has_version_and_per_run_asset_constraints():

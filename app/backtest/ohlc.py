@@ -24,6 +24,12 @@ from app.backtest.corporate_actions import (
     events_on,
     known_unsupported_event_in_horizon,
 )
+from app.backtest.fx_accounting import (
+    FxAccountingPolicy,
+    evaluate_fx_gate,
+    fx_execution_rate,
+    fx_mid_on,
+)
 from app.backtest.portfolio import ExecutionAssumptions
 
 
@@ -103,10 +109,13 @@ def _empty_result(
     corporate_action_gate: dict,
     asset_lifecycle_policy: AssetLifecyclePolicy,
     asset_lifecycle_gate: dict,
+    fx_accounting_policy: FxAccountingPolicy,
+    fx_gate: dict,
 ) -> dict:
     empty = pd.DataFrame()
     return {
         "account_name": account_name,
+        "account_currency": fx_accounting_policy.account_currency,
         "initial_cash": float(initial_cash),
         "cash": float(initial_cash),
         "equity": float(initial_cash),
@@ -128,6 +137,9 @@ def _empty_result(
             "average_trade_return_ci95": None,
             "benchmark_return": None,
             "excess_return": None,
+            "asset_price_pnl_jpy": 0.0,
+            "fx_pnl_jpy": 0.0,
+            "fx_conversion_cost_jpy": 0.0,
         },
         "manifest": manifest,
         "assumptions": assumptions,
@@ -150,15 +162,24 @@ def _empty_result(
             for key, value in asset_lifecycle_gate.items()
             if key not in {"records", "coverage"}
         },
+        "fx_accounting_policy": fx_accounting_policy,
+        "fx_gate": {
+            key: value for key, value in fx_gate.items() if key != "rates"
+        },
+        "fx_events": empty,
         "quality_warnings": list(
             dict.fromkeys(
                 corporate_action_gate["warnings"]
                 + asset_lifecycle_gate["warnings"]
+                + fx_gate["warnings"]
+                + fx_gate["warnings"]
             )
         ),
         "evaluation_status": (
             "warning"
-            if corporate_action_gate["warnings"] or asset_lifecycle_gate["warnings"]
+            if corporate_action_gate["warnings"]
+            or asset_lifecycle_gate["warnings"]
+            or fx_gate["warnings"]
             else "complete"
         ),
     }
@@ -326,6 +347,8 @@ def simulate_ohlc_portfolio(
     asset_lifecycle: pd.DataFrame | None = None,
     asset_universe_coverage: pd.DataFrame | None = None,
     asset_lifecycle_policy: AssetLifecyclePolicy | None = None,
+    fx_rates: pd.DataFrame | None = None,
+    fx_accounting_policy: FxAccountingPolicy | None = None,
 ) -> dict:
     """Simulate long-only daily OHLC signals with conservative execution.
 
@@ -341,6 +364,7 @@ def simulate_ohlc_portfolio(
     risk_rules = risk_rules or PortfolioRiskRules()
     corporate_action_policy = corporate_action_policy or CorporateActionPolicy()
     asset_lifecycle_policy = asset_lifecycle_policy or AssetLifecyclePolicy()
+    fx_accounting_policy = fx_accounting_policy or FxAccountingPolicy()
     required_signals = {"signal_date", "entry_date", "symbol", "side"}
     required_prices = {"price_time", "symbol", "open", "high", "low", "close"}
     if not required_signals.issubset(signals.columns) and not signals.empty:
@@ -350,6 +374,10 @@ def simulate_ohlc_portfolio(
 
     signal_frame = signals.copy()
     price_frame = prices.copy()
+    if not price_frame.empty and "currency" not in price_frame:
+        price_frame["currency"] = "JPY"
+    if "currency" in price_frame:
+        price_frame["currency"] = price_frame["currency"].fillna("JPY").astype(str).str.upper()
     for frame, column in ((signal_frame, "signal_date"), (signal_frame, "entry_date"), (price_frame, "price_time")):
         if not frame.empty:
             frame[column] = pd.to_datetime(frame[column], utc=True).dt.normalize()
@@ -370,6 +398,8 @@ def simulate_ohlc_portfolio(
     )
     lifecycle_frame = asset_lifecycle_gate["records"]
     universe_coverage_frame = asset_lifecycle_gate["coverage"]
+    fx_gate = evaluate_fx_gate(price_frame, fx_rates, fx_accounting_policy)
+    fx_frame = fx_gate["rates"]
     action_frame = corporate_action_gate["actions"]
     coverage_frame = corporate_action_gate["coverage"]
     explicitly_modeled_symbols = set(
@@ -424,6 +454,8 @@ def simulate_ohlc_portfolio(
         asset_lifecycle=lifecycle_frame,
         asset_universe_coverage=universe_coverage_frame,
         asset_lifecycle_policy=asset_lifecycle_policy,
+        fx_rates=fx_frame,
+        fx_accounting_policy=fx_accounting_policy,
     )
     if signal_frame.empty or price_frame.empty:
         return _empty_result(
@@ -437,6 +469,8 @@ def simulate_ohlc_portfolio(
             corporate_action_gate,
             asset_lifecycle_policy,
             asset_lifecycle_gate,
+            fx_accounting_policy,
+            fx_gate,
         )
 
     price_frame = price_frame.sort_values(["symbol", "price_time"]).drop_duplicates(
@@ -477,6 +511,7 @@ def simulate_ohlc_portfolio(
     pending_dividends: list[dict] = []
     corporate_action_events: list[dict] = []
     asset_lifecycle_events: list[dict] = []
+    fx_events: list[dict] = []
     blocked_symbols: set[str] = set()
     lifecycle_blocked_symbols: set[str] = set()
     unverified_symbols = set(corporate_action_gate["unverified_symbols"])
@@ -707,7 +742,10 @@ def simulate_ohlc_portfolio(
                         }
                     )
                     continue
-                if event["currency"] != corporate_action_policy.account_currency:
+                if event["currency"] not in {
+                    corporate_action_policy.account_currency,
+                    "USD",
+                }:
                     corporate_action_gate["warnings"].append(
                         "foreign_currency_dividend_unmodeled"
                     )
@@ -715,7 +753,7 @@ def simulate_ohlc_portfolio(
                         {
                             **event,
                             "status": "evaluation_deferred",
-                            "reason": "foreign_currency_dividend_unmodeled",
+                            "reason": "unsupported_dividend_currency",
                         }
                     )
                     continue
@@ -808,6 +846,22 @@ def simulate_ohlc_portfolio(
             if bar is None or not _valid_positive_number(bar.get("open")):
                 reject(signal, "missing_entry_open", "次営業日の始値がありません")
                 continue
+            asset_currency = str(bar.get("currency") or "JPY").upper()
+            entry_fx_mid = fx_mid_on(fx_frame, asset_currency, current_date)
+            if entry_fx_mid is None:
+                reject(
+                    signal,
+                    "fx_rate_unavailable_at_entry",
+                    f"{asset_currency}/JPYの約定時点レートを確認できません",
+                )
+                continue
+            entry_fx_execution = (
+                1.0
+                if asset_currency == "JPY"
+                else fx_execution_rate(
+                    entry_fx_mid, side="buy", policy=fx_accounting_policy
+                )
+            )
             if ("tradable" in bar and not _is_true(bar.get("tradable"))) or _is_true(
                 bar.get("suspended")
             ):
@@ -859,6 +913,24 @@ def simulate_ohlc_portfolio(
                 and _valid_positive_number(previous_close)
                 else None
             )
+            if previous_turnover is not None and asset_currency != "JPY":
+                previous_fx_mid = fx_mid_on(
+                    fx_frame, asset_currency, previous.get("price_time")
+                )
+                if previous_fx_mid is None:
+                    if (
+                        market_impact.minimum_previous_turnover > 0
+                        or market_impact.use_turnover_cost_model
+                    ):
+                        reject(
+                            signal,
+                            "previous_fx_rate_unavailable",
+                            "前営業日の円換算売買代金に必要な為替レートがありません",
+                        )
+                        continue
+                    previous_turnover = None
+                else:
+                    previous_turnover *= previous_fx_mid
             if market_impact.require_volume and (
                 previous_volume is None
                 or not _valid_positive_number(previous_volume)
@@ -944,6 +1016,7 @@ def simulate_ohlc_portfolio(
                 budget
                 // (
                     open_price
+                    * entry_fx_execution
                     * assumptions.lot_size
                     * (1 + assumptions.fee_rate + cost_profile["spread_rate"] / 2)
                 )
@@ -977,18 +1050,31 @@ def simulate_ohlc_portfolio(
             execution_price = open_price * (
                 1 + cost_profile["spread_rate"] / 2 + slippage
             )
-            gross = execution_price * quantity
+            native_gross = execution_price * quantity
+            gross = native_gross * entry_fx_execution
             fee = gross * assumptions.fee_rate
             cost = gross + fee
             if cost > cash:
                 reject(signal, "insufficient_cash", "費用込み必要額が現金を超えました")
                 continue
             cash -= cost
-            planned_risk = execution_price * abs(stop_loss) * quantity + fee
+            planned_risk = (
+                execution_price
+                * abs(stop_loss)
+                * quantity
+                * entry_fx_execution
+                + fee
+            )
             position = {
                 **signal,
                 "quantity": quantity,
                 "entry_execution_price": execution_price,
+                "asset_currency": asset_currency,
+                "account_currency": fx_accounting_policy.account_currency,
+                "entry_fx_mid": entry_fx_mid,
+                "entry_fx_execution_rate": entry_fx_execution,
+                "entry_native_notional": native_gross,
+                "entry_fx_cost_jpy": native_gross * (entry_fx_execution - entry_fx_mid),
                 "entry_fee": fee,
                 "cost": cost,
                 "sector": sector,
@@ -1013,6 +1099,12 @@ def simulate_ohlc_portfolio(
                     "name": signal.get("name", symbol),
                     "quantity": quantity,
                     "execution_price": execution_price,
+                    "asset_currency": asset_currency,
+                    "account_currency": fx_accounting_policy.account_currency,
+                    "native_amount": native_gross,
+                    "fx_mid": entry_fx_mid,
+                    "fx_execution_rate": entry_fx_execution,
+                    "fx_cost_jpy": native_gross * (entry_fx_execution - entry_fx_mid),
                     "amount": cost,
                     "fee": fee,
                     "tax": 0.0,
@@ -1107,16 +1199,60 @@ def simulate_ohlc_portfolio(
                 exit_price, exit_reason = close, "最大保有期間到達"
             if exit_reason is None:
                 continue
+            asset_currency = position.get("asset_currency", "JPY")
+            exit_fx_mid = fx_mid_on(fx_frame, asset_currency, current_date)
+            if exit_fx_mid is None:
+                fx_gate["warnings"].append("fx_rate_missing_at_exit")
+                fx_events.append(
+                    {
+                        "symbol": symbol,
+                        "event_date": current_date,
+                        "status": "exit_deferred",
+                        "reason": "fx_rate_unavailable_at_exit",
+                        "asset_currency": asset_currency,
+                    }
+                )
+                cards.append(
+                    decision_card(
+                        position,
+                        status="exit_deferred",
+                        manifest=manifest,
+                        entry_price=position["entry_execution_price"],
+                        outcome_reason="為替レート欠損により円転不能",
+                        quality_warnings=["約定時点の為替レートを確認できません"],
+                        event_at=current_date,
+                    )
+                )
+                continue
+            exit_fx_execution = (
+                1.0
+                if asset_currency == "JPY"
+                else fx_execution_rate(
+                    exit_fx_mid, side="sell", policy=fx_accounting_policy
+                )
+            )
             slippage = position["slippage_rate"]
             execution_price = float(exit_price) * (
                 1 - position["spread_rate"] / 2 - slippage
             )
-            gross = execution_price * position["quantity"]
+            native_gross = execution_price * position["quantity"]
+            gross = native_gross * exit_fx_execution
             fee = gross * assumptions.fee_rate
             pre_tax_pnl = gross - fee - position["cost"]
             tax = max(pre_tax_pnl, 0.0) * assumptions.tax_rate
             proceeds = gross - fee - tax
             pnl = proceeds - position["cost"]
+            asset_price_pnl_jpy = (
+                native_gross - position["entry_native_notional"]
+            ) * position["entry_fx_mid"]
+            fx_pnl_jpy = native_gross * (
+                exit_fx_mid - position["entry_fx_mid"]
+            )
+            fx_conversion_cost_jpy = (
+                native_gross * (exit_fx_execution - exit_fx_mid)
+                - position["entry_native_notional"]
+                * (position["entry_fx_execution_rate"] - position["entry_fx_mid"])
+            )
             cash += proceeds
             realized_pnl += pnl
             if pnl < 0:
@@ -1142,6 +1278,16 @@ def simulate_ohlc_portfolio(
                     "name": position.get("name", symbol),
                     "quantity": position["quantity"],
                     "execution_price": execution_price,
+                    "asset_currency": asset_currency,
+                    "account_currency": fx_accounting_policy.account_currency,
+                    "native_amount": native_gross,
+                    "entry_fx_mid": position["entry_fx_mid"],
+                    "exit_fx_mid": exit_fx_mid,
+                    "exit_fx_execution_rate": exit_fx_execution,
+                    "asset_price_pnl_jpy": asset_price_pnl_jpy,
+                    "fx_pnl_jpy": fx_pnl_jpy,
+                    "fx_conversion_cost_jpy": fx_conversion_cost_jpy,
+                    "fees_tax_jpy": -(position["entry_fee"] + fee + tax),
                     "amount": proceeds,
                     "fee": fee,
                     "tax": tax,
@@ -1172,8 +1318,32 @@ def simulate_ohlc_portfolio(
             if receivable["payable_date"] > current_date:
                 continue
             gross_dividend = float(receivable["gross_amount"])
-            dividend_tax = gross_dividend * corporate_action_policy.dividend_tax_rate
-            net_dividend = gross_dividend - dividend_tax
+            dividend_currency = receivable["currency"]
+            dividend_fx_mid = fx_mid_on(fx_frame, dividend_currency, current_date)
+            if dividend_fx_mid is None:
+                fx_gate["warnings"].append("fx_rate_missing_for_dividend")
+                fx_events.append(
+                    {
+                        "symbol": receivable["symbol"],
+                        "event_date": current_date,
+                        "status": "payment_deferred",
+                        "reason": "fx_rate_unavailable_for_dividend",
+                        "asset_currency": dividend_currency,
+                    }
+                )
+                continue
+            dividend_fx_execution = (
+                1.0
+                if dividend_currency == "JPY"
+                else fx_execution_rate(
+                    dividend_fx_mid, side="sell", policy=fx_accounting_policy
+                )
+            )
+            gross_dividend_jpy = gross_dividend * dividend_fx_execution
+            dividend_tax = (
+                gross_dividend_jpy * corporate_action_policy.dividend_tax_rate
+            )
+            net_dividend = gross_dividend_jpy - dividend_tax
             cash += net_dividend
             realized_pnl += net_dividend
             dividend_income += net_dividend
@@ -1198,6 +1368,12 @@ def simulate_ohlc_portfolio(
                     "record_date": receivable["record_date"],
                     "payable_date": receivable["payable_date"],
                     "cash_per_share": receivable["cash_per_share"],
+                    "asset_currency": dividend_currency,
+                    "native_amount": gross_dividend,
+                    "fx_mid": dividend_fx_mid,
+                    "fx_execution_rate": dividend_fx_execution,
+                    "fx_cost_jpy": gross_dividend
+                    * (dividend_fx_execution - dividend_fx_mid),
                 }
             )
             corporate_action_events.append(
@@ -1206,6 +1382,7 @@ def simulate_ohlc_portfolio(
             pending_dividends.remove(receivable)
 
         market_value = 0.0
+        fx_valuation_complete = True
         for symbol, position in positions.items():
             bar = price_lookup.get((symbol, current_date))
             valuation = position["entry_execution_price"]
@@ -1215,27 +1392,56 @@ def simulate_ohlc_portfolio(
                 valuation = float(position.get("last_verified_close", position["entry_execution_price"]))
             else:
                 position["last_verified_close"] = valuation
-            market_value += valuation * position["quantity"]
+            asset_currency = position.get("asset_currency", "JPY")
+            valuation_fx_mid = fx_mid_on(fx_frame, asset_currency, current_date)
+            if valuation_fx_mid is None:
+                fx_valuation_complete = False
+                fx_gate["warnings"].append("fx_rate_missing_at_valuation")
+                fx_events.append(
+                    {
+                        "symbol": symbol,
+                        "event_date": current_date,
+                        "status": "evaluation_deferred",
+                        "reason": "fx_rate_unavailable_for_valuation",
+                        "asset_currency": asset_currency,
+                    }
+                )
+                continue
+            valuation_fx_rate = (
+                1.0
+                if asset_currency == "JPY"
+                else fx_execution_rate(
+                    valuation_fx_mid, side="sell", policy=fx_accounting_policy
+                )
+            )
+            position["valuation_fx_mid"] = valuation_fx_mid
+            position["valuation_fx_execution_rate"] = valuation_fx_rate
+            position["native_market_value"] = valuation * position["quantity"]
+            market_value += position["native_market_value"] * valuation_fx_rate
         cost_basis = sum(position["cost"] for position in positions.values())
-        equity = cash + market_value
-        high_watermark = max(high_watermark, equity)
-        drawdown = equity / high_watermark - 1
-        if drawdown <= -risk_rules.maximum_drawdown:
-            risk_halted = True
+        equity = cash + market_value if fx_valuation_complete else None
+        unrealized_pnl = market_value - cost_basis if fx_valuation_complete else None
+        drawdown = None
+        if equity is not None:
+            high_watermark = max(high_watermark, equity)
+            drawdown = equity / high_watermark - 1
+            if drawdown <= -risk_rules.maximum_drawdown:
+                risk_halted = True
         snapshots.append(
             {
                 "date": current_date,
                 "cash": cash,
-                "market_value": market_value,
+                "market_value": market_value if fx_valuation_complete else None,
                 "equity": equity,
                 "realized_pnl": realized_pnl,
-                "unrealized_pnl": market_value - cost_basis,
+                "unrealized_pnl": unrealized_pnl,
                 "drawdown": drawdown,
                 "risk_halted": risk_halted,
                 "cooldown_until_index": cooldown_until_index,
                 "dividend_income": dividend_income,
                 "corporate_action_blocked_positions": len(blocked_symbols),
                 "asset_lifecycle_blocked_positions": len(lifecycle_blocked_symbols),
+                "fx_valuation_complete": fx_valuation_complete,
             }
         )
 
@@ -1250,7 +1456,12 @@ def simulate_ohlc_portfolio(
         if not transaction_frame.empty
         else pd.DataFrame()
     )
-    total_return = float(snapshot_frame.iloc[-1]["equity"] / initial_cash - 1)
+    final_equity = snapshot_frame.iloc[-1]["equity"]
+    total_return = (
+        None
+        if final_equity is None or pd.isna(final_equity)
+        else float(final_equity / initial_cash - 1)
+    )
     entry_rows = (
         transaction_frame[transaction_frame["action"] == "仮想エントリー"]
         if not transaction_frame.empty
@@ -1278,7 +1489,9 @@ def simulate_ohlc_portfolio(
                 "benchmark_return": compared_return,
                 "strategy_return": total_return,
                 "excess_return": (
-                    None if compared_return is None else total_return - compared_return
+                    None
+                    if compared_return is None or total_return is None
+                    else total_return - compared_return
                 ),
             }
         )
@@ -1291,7 +1504,11 @@ def simulate_ohlc_portfolio(
     )
     metrics = {
         "total_return": total_return,
-        "maximum_drawdown": float(snapshot_frame["drawdown"].min()),
+        "maximum_drawdown": (
+            None
+            if snapshot_frame["drawdown"].dropna().empty
+            else float(snapshot_frame["drawdown"].dropna().min())
+        ),
         "closed_trades": int(len(closed)),
         "win_rate": float((closed["realized_pnl"] > 0).mean()) if not closed.empty else None,
         "average_trade_return": float(closed["trade_return"].mean()) if not closed.empty else None,
@@ -1306,33 +1523,73 @@ def simulate_ohlc_portfolio(
             else None
         ),
         "benchmark_return": benchmark_return,
-        "excess_return": None if benchmark_return is None else total_return - benchmark_return,
+        "asset_price_pnl_jpy": (
+            float(pd.to_numeric(closed.get("asset_price_pnl_jpy"), errors="coerce").sum())
+            if not closed.empty and "asset_price_pnl_jpy" in closed
+            else 0.0
+        ),
+        "fx_pnl_jpy": (
+            float(pd.to_numeric(closed.get("fx_pnl_jpy"), errors="coerce").sum())
+            if not closed.empty and "fx_pnl_jpy" in closed
+            else 0.0
+        ),
+        "fx_conversion_cost_jpy": (
+            float(pd.to_numeric(closed.get("fx_conversion_cost_jpy"), errors="coerce").sum())
+            if not closed.empty and "fx_conversion_cost_jpy" in closed
+            else 0.0
+        ),
+        "excess_return": (
+            None
+            if benchmark_return is None or total_return is None
+            else total_return - benchmark_return
+        ),
     }
     all_blocked_symbols = blocked_symbols | lifecycle_blocked_symbols
-    position_frame = pd.DataFrame(
-        [
+    position_rows = []
+    for symbol, position in positions.items():
+        native_mark = _position_mark(
+            price_lookup, symbol, sessions[-1], position, all_blocked_symbols
+        )
+        valuation_fx_mid = fx_mid_on(
+            fx_frame, position.get("asset_currency", "JPY"), sessions[-1]
+        )
+        valuation_fx_rate = (
+            None
+            if valuation_fx_mid is None
+            else 1.0
+            if position.get("asset_currency", "JPY") == "JPY"
+            else fx_execution_rate(
+                valuation_fx_mid, side="sell", policy=fx_accounting_policy
+            )
+        )
+        native_market_value = native_mark * position["quantity"]
+        market_value_jpy = (
+            None
+            if valuation_fx_rate is None
+            else native_market_value * valuation_fx_rate
+        )
+        position_rows.append(
             {
                 "symbol": symbol,
                 "name": position.get("name", symbol),
                 "quantity": position["quantity"],
                 "entry_date": position["entry_date"],
                 "entry_price": position["entry_execution_price"],
-                "market_value": _position_mark(
-                    price_lookup, symbol, sessions[-1], position, all_blocked_symbols
-                )
-                * position["quantity"],
-                "unrealized_pnl": _position_mark(
-                    price_lookup, symbol, sessions[-1], position, all_blocked_symbols
-                )
-                * position["quantity"]
-                - position["cost"],
+                "asset_currency": position.get("asset_currency", "JPY"),
+                "account_currency": fx_accounting_policy.account_currency,
+                "native_market_value": native_market_value,
+                "valuation_fx_mid": valuation_fx_mid,
+                "valuation_fx_execution_rate": valuation_fx_rate,
+                "market_value": market_value_jpy,
+                "unrealized_pnl": (
+                    None if market_value_jpy is None else market_value_jpy - position["cost"]
+                ),
                 "sector": position["sector"],
                 "corporate_action_blocked": symbol in blocked_symbols,
                 "asset_lifecycle_blocked": symbol in lifecycle_blocked_symbols,
             }
-            for symbol, position in positions.items()
-        ]
-    )
+        )
+    position_frame = pd.DataFrame(position_rows)
     decision_card_frame = pd.DataFrame(cards)
     if not decision_card_frame.empty:
         decision_card_frame = decision_card_frame.sort_values("event_at").reset_index(
@@ -1340,11 +1597,18 @@ def simulate_ohlc_portfolio(
         )
     return {
         "account_name": account_name,
+        "account_currency": fx_accounting_policy.account_currency,
         "initial_cash": float(initial_cash),
         "cash": float(snapshot_frame.iloc[-1]["cash"]),
-        "equity": float(snapshot_frame.iloc[-1]["equity"]),
+        "equity": (
+            None if pd.isna(snapshot_frame.iloc[-1]["equity"])
+            else float(snapshot_frame.iloc[-1]["equity"])
+        ),
         "realized_pnl": float(snapshot_frame.iloc[-1]["realized_pnl"]),
-        "unrealized_pnl": float(snapshot_frame.iloc[-1]["unrealized_pnl"]),
+        "unrealized_pnl": (
+            None if pd.isna(snapshot_frame.iloc[-1]["unrealized_pnl"])
+            else float(snapshot_frame.iloc[-1]["unrealized_pnl"])
+        ),
         "positions": position_frame,
         "transactions": transaction_frame,
         "snapshots": snapshot_frame,
@@ -1373,22 +1637,31 @@ def simulate_ohlc_portfolio(
             for key, value in asset_lifecycle_gate.items()
             if key not in {"records", "coverage"}
         },
+        "fx_accounting_policy": fx_accounting_policy,
+        "fx_gate": {
+            key: value for key, value in fx_gate.items() if key != "rates"
+        },
+        "fx_events": pd.DataFrame(fx_events),
         "quality_warnings": list(
             dict.fromkeys(
                 corporate_action_gate["warnings"]
                 + asset_lifecycle_gate["warnings"]
+                + fx_gate["warnings"]
             )
         ),
         "evaluation_status": (
             "incomplete"
             if blocked_symbols
             or lifecycle_blocked_symbols
+            or not bool(snapshot_frame.iloc[-1].get("fx_valuation_complete", True))
             or any(
                 event.get("status") == "evaluation_deferred"
-                for event in [*corporate_action_events, *asset_lifecycle_events]
+                for event in [*corporate_action_events, *asset_lifecycle_events, *fx_events]
             )
             else "warning"
-            if corporate_action_gate["warnings"] or asset_lifecycle_gate["warnings"]
+            if corporate_action_gate["warnings"]
+            or asset_lifecycle_gate["warnings"]
+            or fx_gate["warnings"]
             else "complete"
         ),
     }

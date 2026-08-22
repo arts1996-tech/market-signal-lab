@@ -9,6 +9,7 @@ from app.analysis.signal_generation import known_prices_as_of
 from app.backtest.audit import stable_payload_hash
 from app.backtest.corporate_actions import CorporateActionPolicy
 from app.backtest.asset_lifecycle import AssetLifecyclePolicy
+from app.backtest.fx_accounting import FxAccountingPolicy
 from app.backtest.ohlc import (
     MarketImpactAssumptions,
     PortfolioRiskRules,
@@ -18,7 +19,7 @@ from app.backtest.portfolio import ExecutionAssumptions
 
 
 FORWARD_ACCOUNT_STATE_VERSION = "forward-account-state-v1"
-FORWARD_EXECUTION_VERSION = "ohlc-next-open-conservative-v4"
+FORWARD_EXECUTION_VERSION = "ohlc-next-open-conservative-v5"
 
 
 @dataclass(frozen=True)
@@ -189,6 +190,8 @@ def advance_forward_accounts_as_of(
     asset_lifecycle: pd.DataFrame | None = None,
     asset_universe_coverage: pd.DataFrame | None = None,
     asset_lifecycle_policy: AssetLifecyclePolicy | None = None,
+    fx_rates: pd.DataFrame | None = None,
+    fx_accounting_policy: FxAccountingPolicy | None = None,
 ) -> dict:
     """Advance independent short/mid virtual accounts through ``as_of``.
 
@@ -201,6 +204,7 @@ def advance_forward_accounts_as_of(
     cutoff = _utc_timestamp(as_of)
     incoming = _normalize_signals(signals, cutoff)
     known_prices = known_prices_as_of(prices, cutoff)
+    known_fx_rates = known_prices_as_of(fx_rates, cutoff) if fx_rates is not None else None
     if not known_prices.empty:
         known_prices = known_prices.copy()
         known_prices["price_time"] = pd.to_datetime(
@@ -258,9 +262,15 @@ def advance_forward_accounts_as_of(
             asset_lifecycle=asset_lifecycle,
             asset_universe_coverage=asset_universe_coverage,
             asset_lifecycle_policy=asset_lifecycle_policy,
+            fx_rates=known_fx_rates,
+            fx_accounting_policy=fx_accounting_policy,
         )
         pending = _pending_orders(ruled_signals, last_session)
-        cumulative_pnl = float(result["equity"] - rule.initial_cash)
+        cumulative_pnl = (
+            None
+            if result["equity"] is None
+            else float(result["equity"] - rule.initial_cash)
+        )
         result.update(
             {
                 "label": rule.label,

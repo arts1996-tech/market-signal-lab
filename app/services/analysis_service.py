@@ -927,6 +927,11 @@ def load_movement_and_virtual_trade_analysis(
         take_profit=0.08,
         maximum_holding_days=holding_days,
     )
+    fx_rates = (
+        index_prices[index_prices["symbol"] == "DEXJPUS"].copy()
+        if not index_prices.empty
+        else pd.DataFrame()
+    )
     virtual_account = simulate_ohlc_portfolio(
         virtual_signals,
         japan_prices,
@@ -953,6 +958,7 @@ def load_movement_and_virtual_trade_analysis(
         corporate_action_coverage=corporate_action_coverage,
         asset_lifecycle=asset_lifecycle,
         asset_universe_coverage=asset_universe_coverage,
+        fx_rates=fx_rates,
     )
     candidates = build_movement_candidates(
         index_prices,
@@ -1010,6 +1016,7 @@ def load_movement_and_virtual_trade_analysis(
         corporate_action_coverage=corporate_action_coverage,
         asset_lifecycle=asset_lifecycle,
         asset_universe_coverage=asset_universe_coverage,
+        fx_rates=fx_rates,
     )
     return {
         "index_prices": index_prices,

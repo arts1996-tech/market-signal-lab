@@ -110,11 +110,15 @@ def build_virtual_account_daily_state(
     pending_dividends = _records(account.get("pending_dividends"))
     corporate_action_events = _records(account.get("corporate_action_events"))
     asset_lifecycle_events = _records(account.get("asset_lifecycle_events"))
+    fx_events = _records(account.get("fx_events"))
     signal_history = _records(
         account.get("base_signal_history", account.get("signal_history"))
     )
     decision_records = _records(decisions)
     session_date = observed.tz_convert(JST).date()
+    def optional_float(value):
+        return None if value is None or pd.isna(value) else float(value)
+
     deterministic = {
         "account_name": account["account_name"],
         "decision_track": decision_track,
@@ -122,11 +126,11 @@ def build_virtual_account_daily_state(
         "run_id": run_id,
         "input_data_version": input_data_version,
         "cash": float(account["cash"]),
-        "equity": float(account["equity"]),
+        "equity": optional_float(account["equity"]),
         "realized_pnl": float(account["realized_pnl"]),
-        "unrealized_pnl": float(account["unrealized_pnl"]),
-        "cumulative_pnl": float(account["cumulative_pnl"]),
-        "maximum_drawdown": float(account["maximum_drawdown"]),
+        "unrealized_pnl": optional_float(account["unrealized_pnl"]),
+        "cumulative_pnl": optional_float(account["cumulative_pnl"]),
+        "maximum_drawdown": optional_float(account["maximum_drawdown"]),
         "risk_halted": bool(account.get("risk_halted", False)),
         "positions": positions,
         "pending_orders": pending_orders,
@@ -135,6 +139,8 @@ def build_virtual_account_daily_state(
         "corporate_action_gate": json_value(account.get("corporate_action_gate", {})),
         "asset_lifecycle_events": asset_lifecycle_events,
         "asset_lifecycle_gate": json_value(account.get("asset_lifecycle_gate", {})),
+        "fx_events": fx_events,
+        "fx_gate": json_value(account.get("fx_gate", {})),
         "quality_warnings": json_value(account.get("quality_warnings", [])),
         "evaluation_status": account.get("evaluation_status"),
         "signal_history": signal_history,
@@ -166,7 +172,9 @@ def build_virtual_account_daily_state(
             "quality_gate_reasons": list(observation["quality_gate_reasons"]),
             "observation_input_hash": str(observation["input_hash"]),
             "status": (
-                "risk_halted"
+                "fx_valuation_deferred"
+                if account.get("equity") is None
+                else "risk_halted"
                 if account.get("risk_halted")
                 else "positions_open"
                 if positions
@@ -178,11 +186,11 @@ def build_virtual_account_daily_state(
             "input_hash": stable_payload_hash(deterministic),
             "run_id": run_id,
             "cash": float(account["cash"]),
-            "equity": float(account["equity"]),
+            "equity": optional_float(account["equity"]),
             "realized_pnl": float(account["realized_pnl"]),
-            "unrealized_pnl": float(account["unrealized_pnl"]),
-            "cumulative_pnl": float(account["cumulative_pnl"]),
-            "maximum_drawdown": float(account["maximum_drawdown"]),
+            "unrealized_pnl": optional_float(account["unrealized_pnl"]),
+            "cumulative_pnl": optional_float(account["cumulative_pnl"]),
+            "maximum_drawdown": optional_float(account["maximum_drawdown"]),
             "risk_halted": bool(account.get("risk_halted", False)),
             "positions": positions,
             "pending_orders": pending_orders,
@@ -202,6 +210,8 @@ def build_virtual_account_daily_state(
                 "asset_lifecycle_gate": json_value(
                     account.get("asset_lifecycle_gate", {})
                 ),
+                "fx_events": fx_events,
+                "fx_gate": json_value(account.get("fx_gate", {})),
                 "quality_warnings": json_value(account.get("quality_warnings", [])),
                 "evaluation_status": account.get("evaluation_status"),
                 "warning": "仮想記録です。実注文・投資助言・利益保証ではありません。",
@@ -369,6 +379,22 @@ def build_virtual_account_events(
                 decision_track=decision_track,
                 session_date=session_date,
                 event_type="asset_lifecycle",
+                event_at=event_at,
+                input_data_version=input_data_version,
+                payload=record,
+            )
+        )
+
+    for record in _records(account.get("fx_events")):
+        event_at = record.get("event_date") or observed
+        if _event_date(event_at) != session_date:
+            continue
+        events.append(
+            _ledger_event(
+                account_name=account_name,
+                decision_track=decision_track,
+                session_date=session_date,
+                event_type="fx_accounting",
                 event_at=event_at,
                 input_data_version=input_data_version,
                 payload=record,

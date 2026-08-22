@@ -9,7 +9,7 @@ import pandas as pd
 
 
 STRATEGY_VERSION = "phase4-long-only-v0.3"
-EXECUTION_VERSION = "ohlc-next-open-conservative-v4"
+EXECUTION_VERSION = "ohlc-next-open-conservative-v5"
 DECISION_CARD_VERSION = "decision-card-v2"
 
 
@@ -94,12 +94,15 @@ def build_run_manifest(
     asset_lifecycle: pd.DataFrame | None = None,
     asset_universe_coverage: pd.DataFrame | None = None,
     asset_lifecycle_policy: Any | None = None,
+    fx_rates: pd.DataFrame | None = None,
+    fx_accounting_policy: Any | None = None,
     created_at: datetime | None = None,
 ) -> dict:
     signal_hash = frame_hash(signals)
     price_columns = [
         "price_time",
         "symbol",
+        "currency",
         "open",
         "high",
         "low",
@@ -140,6 +143,7 @@ def build_run_manifest(
         if asset_universe_coverage is not None
         else pd.DataFrame()
     )
+    fx_rate_hash = frame_hash(fx_rates if fx_rates is not None else pd.DataFrame())
     deterministic = {
         "account_name": account_name,
         "strategy_version": strategy_version,
@@ -153,6 +157,8 @@ def build_run_manifest(
         "asset_lifecycle_hash": asset_lifecycle_hash,
         "asset_universe_coverage_hash": asset_universe_coverage_hash,
         "asset_lifecycle_policy": json_value(asset_lifecycle_policy),
+        "fx_rate_hash": fx_rate_hash,
+        "fx_accounting_policy": json_value(fx_accounting_policy),
         "assumptions": json_value(assumptions),
         "risk_rules": json_value(risk_rules),
     }
@@ -206,6 +212,10 @@ def decision_card(
         "event_at": event_time,
         "symbol": signal.get("symbol"),
         "name": signal.get("name", signal.get("symbol")),
+        "asset_currency": signal.get("asset_currency", signal.get("currency", "JPY")),
+        "account_currency": signal.get("account_currency", "JPY"),
+        "entry_fx_mid": signal.get("entry_fx_mid"),
+        "entry_fx_execution_rate": signal.get("entry_fx_execution_rate"),
         "data_as_of": signal.get("signal_date"),
         "entry_date": signal.get("entry_date"),
         "entry_condition": f"score >= {signal.get('minimum_score', '-')}",

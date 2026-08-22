@@ -50,6 +50,12 @@ def format_percent(value) -> str:
     return f"{value:.2%}"
 
 
+def format_yen(value, *, signed: bool = False) -> str:
+    if value is None or pd.isna(value):
+        return "-（為替評価保留）"
+    return f"¥{value:+,.0f}" if signed else f"¥{value:,.0f}"
+
+
 def format_reason_list(value) -> str:
     if not value:
         return "-"
@@ -65,6 +71,11 @@ def format_corporate_action_warnings(values) -> str:
         "raw_prices_required_for_explicit_corporate_action": "価格調整の二重反映を避けるための未調整OHLCが不足しています",
         "foreign_currency_dividend_unmodeled": "外貨配当の換算を評価できません",
         "asset_universe_coverage_unverified": "過去時点の投資可能銘柄集合を確認できません",
+        "fx_rate_missing": "同一時点のUSD/JPYレートが不足しています",
+        "fx_rate_missing_at_exit": "決済時のUSD/JPYレートが不足しています",
+        "fx_rate_missing_at_valuation": "評価時のUSD/JPYレートが不足しています",
+        "fx_rate_missing_for_dividend": "外貨配当の円転レートが不足しています",
+        "unsupported_asset_currency": "未対応通貨の資産が含まれています",
     }
     return " / ".join(labels.get(str(value), str(value)) for value in values)
 
@@ -660,9 +671,9 @@ if active_page == "仮想投資評価":
                 metrics = st.columns(6)
                 metrics[0].metric("初期資金", f"¥{account['initial_cash']:,.0f}")
                 metrics[1].metric("現金", f"¥{account['cash']:,.0f}")
-                metrics[2].metric("評価額", f"¥{account['equity']:,.0f}")
+                metrics[2].metric("評価額", format_yen(account["equity"]))
                 metrics[3].metric("実現損益", f"¥{account['realized_pnl']:+,.0f}")
-                metrics[4].metric("未実現損益", f"¥{account['unrealized_pnl']:+,.0f}")
+                metrics[4].metric("未実現損益", format_yen(account["unrealized_pnl"], signed=True))
                 metrics[5].metric("最大ドローダウン", format_percent(account["maximum_drawdown"]))
                 account_statistics = account["metrics"]
                 average_ci = account_statistics.get("average_trade_return_ci95")
@@ -910,9 +921,9 @@ if active_page == "仮想投資評価":
             account_cols = st.columns(6)
             account_cols[0].metric("初期資金", f"¥{account['initial_cash']:,.0f}")
             account_cols[1].metric("現金", f"¥{account['cash']:,.0f}")
-            account_cols[2].metric("評価額", f"¥{account['equity']:,.0f}")
+            account_cols[2].metric("評価額", format_yen(account["equity"]))
             account_cols[3].metric("実現損益", f"¥{account['realized_pnl']:+,.0f}")
-            account_cols[4].metric("未実現損益", f"¥{account['unrealized_pnl']:+,.0f}")
+            account_cols[4].metric("未実現損益", format_yen(account["unrealized_pnl"], signed=True))
             account_cols[5].metric(
                 "最大ドローダウン", format_percent(account["maximum_drawdown"])
             )
@@ -922,7 +933,7 @@ if active_page == "仮想投資評価":
                 f"利益確定: {rule['take_profit']:.0%} / "
                 f"損切り: {rule['stop_loss']:.0%} / "
                 f"最大保有: {rule['maximum_holding_days']}営業日 / "
-                f"累積損益: ¥{account['cumulative_pnl']:+,.0f} / "
+                f"累積損益: {format_yen(account['cumulative_pnl'], signed=True)} / "
                 f"翌日注文: {len(account['pending_orders'])}件"
             )
             if account.get("quality_warnings"):
