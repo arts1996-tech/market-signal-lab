@@ -31,6 +31,7 @@ from app.backtest.fx_accounting import (
     fx_mid_on,
 )
 from app.backtest.portfolio import ExecutionAssumptions
+from app.backtest.tax_accounting import TaxAccountingPolicy
 
 
 @dataclass(frozen=True)
@@ -111,6 +112,7 @@ def _empty_result(
     asset_lifecycle_gate: dict,
     fx_accounting_policy: FxAccountingPolicy,
     fx_gate: dict,
+    tax_accounting_policy: TaxAccountingPolicy,
 ) -> dict:
     empty = pd.DataFrame()
     return {
@@ -167,6 +169,8 @@ def _empty_result(
             key: value for key, value in fx_gate.items() if key != "rates"
         },
         "fx_events": empty,
+        "tax_accounting_policy": tax_accounting_policy,
+        "tax_summary": tax_accounting_policy.disclosure(),
         "quality_warnings": list(
             dict.fromkeys(
                 corporate_action_gate["warnings"]
@@ -349,6 +353,7 @@ def simulate_ohlc_portfolio(
     asset_lifecycle_policy: AssetLifecyclePolicy | None = None,
     fx_rates: pd.DataFrame | None = None,
     fx_accounting_policy: FxAccountingPolicy | None = None,
+    tax_accounting_policy: TaxAccountingPolicy | None = None,
 ) -> dict:
     """Simulate long-only daily OHLC signals with conservative execution.
 
@@ -365,6 +370,12 @@ def simulate_ohlc_portfolio(
     corporate_action_policy = corporate_action_policy or CorporateActionPolicy()
     asset_lifecycle_policy = asset_lifecycle_policy or AssetLifecyclePolicy()
     fx_accounting_policy = fx_accounting_policy or FxAccountingPolicy()
+    tax_accounting_policy = tax_accounting_policy or TaxAccountingPolicy()
+    tax_disclosure = tax_accounting_policy.disclosure()
+    tax_metadata = {
+        "tax_accounting_version": tax_accounting_policy.version,
+        "tax_evaluation_basis": tax_accounting_policy.evaluation_basis,
+    }
     required_signals = {"signal_date", "entry_date", "symbol", "side"}
     required_prices = {"price_time", "symbol", "open", "high", "low", "close"}
     if not required_signals.issubset(signals.columns) and not signals.empty:
@@ -456,6 +467,7 @@ def simulate_ohlc_portfolio(
         asset_lifecycle_policy=asset_lifecycle_policy,
         fx_rates=fx_frame,
         fx_accounting_policy=fx_accounting_policy,
+        tax_accounting_policy=tax_accounting_policy,
     )
     if signal_frame.empty or price_frame.empty:
         return _empty_result(
@@ -471,6 +483,7 @@ def simulate_ohlc_portfolio(
             asset_lifecycle_gate,
             fx_accounting_policy,
             fx_gate,
+            tax_accounting_policy,
         )
 
     price_frame = price_frame.sort_values(["symbol", "price_time"]).drop_duplicates(
@@ -589,6 +602,7 @@ def simulate_ohlc_portfolio(
                     "amount": 0.0,
                     "fee": 0.0,
                     "tax": 0.0,
+                    **tax_metadata,
                     "realized_pnl": pnl,
                     "trade_return": -1.0,
                     "reason": delisting_reason,
@@ -724,6 +738,7 @@ def simulate_ohlc_portfolio(
                     "amount": 0.0,
                     "fee": 0.0,
                     "tax": 0.0,
+                    **tax_metadata,
                     "realized_pnl": 0.0,
                     "reason": f"企業行動反映: {action_type}",
                     "decision_as_of": position["signal_date"],
@@ -1108,6 +1123,7 @@ def simulate_ohlc_portfolio(
                     "amount": cost,
                     "fee": fee,
                     "tax": 0.0,
+                    **tax_metadata,
                     "realized_pnl": 0.0,
                     "reason": " / ".join(signal.get("reasons", [])),
                     "decision_as_of": signal["signal_date"],
@@ -1239,7 +1255,10 @@ def simulate_ohlc_portfolio(
             gross = native_gross * exit_fx_execution
             fee = gross * assumptions.fee_rate
             pre_tax_pnl = gross - fee - position["cost"]
-            tax = max(pre_tax_pnl, 0.0) * assumptions.tax_rate
+            tax = (
+                max(pre_tax_pnl, 0.0)
+                * tax_accounting_policy.capital_gains_tax_rate
+            )
             proceeds = gross - fee - tax
             pnl = proceeds - position["cost"]
             asset_price_pnl_jpy = (
@@ -1291,6 +1310,7 @@ def simulate_ohlc_portfolio(
                     "amount": proceeds,
                     "fee": fee,
                     "tax": tax,
+                    **tax_metadata,
                     "realized_pnl": pnl,
                     "trade_return": pnl / position["cost"],
                     "reason": exit_reason,
@@ -1341,7 +1361,7 @@ def simulate_ohlc_portfolio(
             )
             gross_dividend_jpy = gross_dividend * dividend_fx_execution
             dividend_tax = (
-                gross_dividend_jpy * corporate_action_policy.dividend_tax_rate
+                gross_dividend_jpy * tax_accounting_policy.dividend_tax_rate
             )
             net_dividend = gross_dividend_jpy - dividend_tax
             cash += net_dividend
@@ -1361,6 +1381,7 @@ def simulate_ohlc_portfolio(
                     "amount": net_dividend,
                     "fee": 0.0,
                     "tax": dividend_tax,
+                    **tax_metadata,
                     "realized_pnl": net_dividend,
                     "reason": "権利確定済み現金配当の支払い",
                     "decision_as_of": None,
@@ -1642,6 +1663,8 @@ def simulate_ohlc_portfolio(
             key: value for key, value in fx_gate.items() if key != "rates"
         },
         "fx_events": pd.DataFrame(fx_events),
+        "tax_accounting_policy": tax_accounting_policy,
+        "tax_summary": tax_disclosure,
         "quality_warnings": list(
             dict.fromkeys(
                 corporate_action_gate["warnings"]

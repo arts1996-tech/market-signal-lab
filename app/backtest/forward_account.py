@@ -16,10 +16,11 @@ from app.backtest.ohlc import (
     simulate_ohlc_portfolio,
 )
 from app.backtest.portfolio import ExecutionAssumptions
+from app.backtest.tax_accounting import TaxAccountingPolicy
 
 
 FORWARD_ACCOUNT_STATE_VERSION = "forward-account-state-v1"
-FORWARD_EXECUTION_VERSION = "ohlc-next-open-conservative-v5"
+FORWARD_EXECUTION_VERSION = "ohlc-next-open-conservative-v6"
 
 
 @dataclass(frozen=True)
@@ -192,6 +193,7 @@ def advance_forward_accounts_as_of(
     asset_lifecycle_policy: AssetLifecyclePolicy | None = None,
     fx_rates: pd.DataFrame | None = None,
     fx_accounting_policy: FxAccountingPolicy | None = None,
+    tax_accounting_policy: TaxAccountingPolicy | None = None,
 ) -> dict:
     """Advance independent short/mid virtual accounts through ``as_of``.
 
@@ -264,6 +266,7 @@ def advance_forward_accounts_as_of(
             asset_lifecycle_policy=asset_lifecycle_policy,
             fx_rates=known_fx_rates,
             fx_accounting_policy=fx_accounting_policy,
+            tax_accounting_policy=tax_accounting_policy,
         )
         pending = _pending_orders(ruled_signals, last_session)
         cumulative_pnl = (

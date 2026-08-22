@@ -9,7 +9,7 @@ import pandas as pd
 
 
 STRATEGY_VERSION = "phase4-long-only-v0.3"
-EXECUTION_VERSION = "ohlc-next-open-conservative-v5"
+EXECUTION_VERSION = "ohlc-next-open-conservative-v6"
 DECISION_CARD_VERSION = "decision-card-v2"
 
 
@@ -96,6 +96,7 @@ def build_run_manifest(
     asset_lifecycle_policy: Any | None = None,
     fx_rates: pd.DataFrame | None = None,
     fx_accounting_policy: Any | None = None,
+    tax_accounting_policy: Any | None = None,
     created_at: datetime | None = None,
 ) -> dict:
     signal_hash = frame_hash(signals)
@@ -159,6 +160,7 @@ def build_run_manifest(
         "asset_lifecycle_policy": json_value(asset_lifecycle_policy),
         "fx_rate_hash": fx_rate_hash,
         "fx_accounting_policy": json_value(fx_accounting_policy),
+        "tax_accounting_policy": json_value(tax_accounting_policy),
         "assumptions": json_value(assumptions),
         "risk_rules": json_value(risk_rules),
     }
@@ -207,6 +209,15 @@ def decision_card(
         "run_id": manifest["run_id"],
         "strategy_version": manifest["strategy_version"],
         "execution_version": manifest["execution_version"],
+        "tax_accounting_version": (manifest.get("tax_accounting_policy") or {}).get(
+            "version"
+        ),
+        "tax_evaluation_basis": (manifest.get("tax_accounting_policy") or {}).get(
+            "evaluation_basis"
+        ),
+        "tax_model_status": (manifest.get("tax_accounting_policy") or {}).get(
+            "tax_model_status"
+        ),
         "input_data_version": manifest["input_data_version"],
         "status": status,
         "event_at": event_time,

@@ -650,6 +650,10 @@ if active_page == "変動候補":
 if active_page == "仮想投資評価":
     st.subheader("仮想投資評価")
     st.caption("実際の投資や注文は行いません。過去時点で候補に出たと仮定し、一定営業日後の損益と理由を検証します。")
+    st.warning(
+        "損益・評価額は税率0%の税引前評価です。税モデルは未実装で、"
+        "口座種別、源泉徴収、損益通算、繰越控除、申告税務を再現していません。"
+    )
     if is_demo:
         st.warning(
             "検証用デモ: 合成価格・合成ニュースだけで計算します。実績、予測、投資判断には使用できません。"
@@ -663,7 +667,7 @@ if active_page == "仮想投資評価":
             st.info(
                 "約定仮定: "
                 f"{assumptions['execution_rule']} / 手数料 {assumptions['fee_rate']:.2%} / "
-                f"{assumptions['execution_cost_model']} / 税率 {assumptions['tax_rate']:.1%} / "
+                f"{assumptions['execution_cost_model']} / 税引前（税率 {assumptions['tax_rate']:.1%}） / "
                 f"売買単位 {assumptions['lot_size']}株 / 同時保有上限 {assumptions['maximum_positions']}銘柄"
             )
             for account in demo_environment["accounts"].values():

@@ -65,6 +65,10 @@ class CorporateActionPolicy:
             raise ValueError("only defer fractional-share policy is supported")
         if not 0 <= self.dividend_tax_rate <= 1:
             raise ValueError("dividend_tax_rate must be between 0 and 1")
+        if self.dividend_tax_rate != 0:
+            raise ValueError(
+                "dividend_tax_rate must remain 0; virtual-account results are pretax"
+            )
         if not self.account_currency:
             raise ValueError("account_currency is required")
 

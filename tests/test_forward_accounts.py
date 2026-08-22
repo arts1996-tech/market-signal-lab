@@ -115,6 +115,8 @@ def test_forward_accounts_start_with_independent_jpy_2_5m_balances():
         assert account["initial_cash"] == 2_500_000
         assert account["cash"] == 2_500_000
         assert account["equity"] == 2_500_000
+        assert account["tax_summary"]["evaluation_basis"] == "pretax"
+        assert account["tax_summary"]["tax_model_status"] == "not_implemented"
 
 
 def test_forward_accounts_carry_orders_positions_and_balances_to_next_session():
@@ -243,6 +245,10 @@ def test_daily_ledger_hash_is_stable_across_same_day_observation_retries():
     assert first["state"]["session_date"] == retried["state"]["session_date"]
     assert first["state"]["input_data_version"] == retried["state"]["input_data_version"]
     assert first["state"]["input_hash"] == retried["state"]["input_hash"]
+    assert first["state"]["details"]["tax_summary"]["evaluation_basis"] == "pretax"
+    assert first["state"]["details"]["tax_summary"]["tax_model_status"] == (
+        "not_implemented"
+    )
 
 
 def test_daily_ledger_emits_decision_plan_skip_execution_closure_and_balance():

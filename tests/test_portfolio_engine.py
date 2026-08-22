@@ -76,28 +76,9 @@ def test_event_portfolio_reserves_cash_for_overlapping_positions():
     assert result["cash"] == pytest.approx(1_100_000)
 
 
-def test_event_portfolio_applies_spread_fees_and_tax_to_positive_trade():
-    sessions = _sessions()
-    trades = pd.DataFrame([_trade("A", sessions[0], sessions[1], sessions[2])])
-    assumptions = ExecutionAssumptions(
-        fee_rate=0.001,
-        spread_rate=0.002,
-        tax_rate=0.20,
-        lot_size=100,
-        maximum_position_rate=0.5,
-    )
-
-    result = simulate_long_portfolio(
-        trades,
-        initial_cash=1_000_000,
-        assumptions=assumptions,
-    )
-
-    exit_row = result["trades"].query("action == 'exit'").iloc[0]
-    assert exit_row["fee"] > 0
-    assert exit_row["tax"] > 0
-    assert result["realized_pnl"] == pytest.approx(exit_row["realized_pnl"])
-    assert result["cash"] == pytest.approx(1_000_000 + exit_row["realized_pnl"])
+def test_event_portfolio_rejects_legacy_nonzero_tax_rate():
+    with pytest.raises(ValueError, match="pretax"):
+        ExecutionAssumptions(tax_rate=0.20)
 
 
 def test_event_portfolio_reports_benchmark_and_drawdown_metrics():

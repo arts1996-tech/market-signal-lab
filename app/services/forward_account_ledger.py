@@ -141,6 +141,10 @@ def build_virtual_account_daily_state(
         "asset_lifecycle_gate": json_value(account.get("asset_lifecycle_gate", {})),
         "fx_events": fx_events,
         "fx_gate": json_value(account.get("fx_gate", {})),
+        "tax_accounting_policy": json_value(
+            account.get("tax_accounting_policy")
+        ),
+        "tax_summary": json_value(account.get("tax_summary", {})),
         "quality_warnings": json_value(account.get("quality_warnings", [])),
         "evaluation_status": account.get("evaluation_status"),
         "signal_history": signal_history,
@@ -212,6 +216,10 @@ def build_virtual_account_daily_state(
                 ),
                 "fx_events": fx_events,
                 "fx_gate": json_value(account.get("fx_gate", {})),
+                "tax_accounting_policy": json_value(
+                    account.get("tax_accounting_policy")
+                ),
+                "tax_summary": json_value(account.get("tax_summary", {})),
                 "quality_warnings": json_value(account.get("quality_warnings", [])),
                 "evaluation_status": account.get("evaluation_status"),
                 "warning": "仮想記録です。実注文・投資助言・利益保証ではありません。",

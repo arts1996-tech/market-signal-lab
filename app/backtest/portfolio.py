@@ -2,6 +2,8 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from app.backtest.tax_accounting import TaxAccountingPolicy
+
 
 @dataclass(frozen=True)
 class ExecutionAssumptions:
@@ -22,6 +24,10 @@ class ExecutionAssumptions:
             raise ValueError("lot_size and maximum_positions must be positive")
         if not 0 < self.maximum_position_rate <= 1:
             raise ValueError("maximum_position_rate must be between 0 and 1")
+        if self.tax_rate != 0:
+            raise ValueError(
+                "tax_rate must remain 0; virtual-account results are pretax and do not model taxation"
+            )
 
 
 def _performance_metrics(
@@ -76,6 +82,7 @@ def simulate_long_portfolio(
     assumptions: ExecutionAssumptions | None = None,
     price_history: pd.DataFrame | None = None,
     benchmark: pd.Series | None = None,
+    tax_accounting_policy: TaxAccountingPolicy | None = None,
 ) -> dict:
     """Run an event-ordered, cash-reserving, long-only virtual portfolio.
 
@@ -88,6 +95,12 @@ def simulate_long_portfolio(
     if initial_cash <= 0:
         raise ValueError("initial_cash must be positive")
     assumptions = assumptions or ExecutionAssumptions()
+    tax_accounting_policy = tax_accounting_policy or TaxAccountingPolicy()
+    tax_disclosure = tax_accounting_policy.disclosure()
+    tax_metadata = {
+        "tax_accounting_version": tax_accounting_policy.version,
+        "tax_evaluation_basis": tax_accounting_policy.evaluation_basis,
+    }
     required = {
         "signal_date",
         "entry_date",
@@ -112,6 +125,8 @@ def simulate_long_portfolio(
             "rejected_trades": empty,
             "metrics": metrics,
             "assumptions": assumptions,
+            "tax_accounting_policy": tax_accounting_policy,
+            "tax_summary": tax_disclosure,
             "scope": "long_only_cash_account",
             "execution_warning": "signal_dateより後のentry_dateだけを許可し、空売りは実行しません。",
         }
@@ -226,6 +241,7 @@ def simulate_long_portfolio(
                     "execution_price": execution_price,
                     "fee": entry_fee,
                     "tax": 0.0,
+                    **tax_metadata,
                     "cash_after": cash,
                     "realized_pnl": 0.0,
                     "trade_return": 0.0,
@@ -240,7 +256,7 @@ def simulate_long_portfolio(
             gross = execution_price * position["quantity"]
             exit_fee = gross * assumptions.fee_rate
             pre_tax_pnl = gross - exit_fee - position["cost"]
-            tax = max(pre_tax_pnl, 0.0) * assumptions.tax_rate
+            tax = max(pre_tax_pnl, 0.0) * tax_accounting_policy.capital_gains_tax_rate
             proceeds = gross - exit_fee - tax
             pnl = proceeds - position["cost"]
             cash += proceeds
@@ -256,6 +272,7 @@ def simulate_long_portfolio(
                     "execution_price": execution_price,
                     "fee": exit_fee,
                     "tax": tax,
+                    **tax_metadata,
                     "cash_after": cash,
                     "realized_pnl": pnl,
                     "trade_return": pnl / position["cost"],
@@ -318,6 +335,8 @@ def simulate_long_portfolio(
         "rejected_trades": pd.DataFrame(rejected),
         "metrics": metrics,
         "assumptions": assumptions,
+        "tax_accounting_policy": tax_accounting_policy,
+        "tax_summary": tax_disclosure,
         "scope": "long_only_cash_account",
         "execution_warning": "signal_dateより後のentry_dateだけを許可し、空売りは実行しません。",
     }
