@@ -1,6 +1,8 @@
 from app.database.models import (
     AssetAnalysisResult,
     AssetAnalysisRun,
+    AssetLifecycleRecord,
+    AssetUniverseCoverage,
     CorrelationResult,
     CorporateAction,
     CorporateActionCoverage,
@@ -59,6 +61,23 @@ def test_corporate_action_tables_have_event_and_coverage_idempotency_constraints
     assert {"ex_date", "record_date", "payable_date", "ratio", "cash_per_share"}.issubset(
         CorporateAction.__table__.columns.keys()
     )
+
+
+def test_asset_lifecycle_tables_preserve_point_in_time_revisions_and_coverage():
+    lifecycle_constraints = {
+        constraint.name for constraint in AssetLifecycleRecord.__table__.constraints
+    }
+    coverage_constraints = {
+        constraint.name for constraint in AssetUniverseCoverage.__table__.constraints
+    }
+
+    assert "uq_asset_lifecycle_revision" in lifecycle_constraints
+    assert "ck_asset_lifecycle_effective_period" in lifecycle_constraints
+    assert "ck_asset_lifecycle_listing_period" in lifecycle_constraints
+    assert "ck_asset_lifecycle_status" in lifecycle_constraints
+    assert "uq_asset_universe_coverage_revision" in coverage_constraints
+    assert "ck_asset_universe_coverage_period" in coverage_constraints
+    assert "ck_asset_universe_coverage_status" in coverage_constraints
 
 
 def test_spillover_feature_has_duplicate_prevention_constraint():

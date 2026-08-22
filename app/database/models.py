@@ -193,6 +193,77 @@ class CorporateActionCoverage(Base):
     details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
 
+class AssetLifecycleRecord(Base):
+    __tablename__ = "asset_lifecycle_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "asset_id", "effective_from", "source", "fetched_at",
+            name="uq_asset_lifecycle_revision",
+        ),
+        CheckConstraint(
+            "effective_to IS NULL OR effective_from <= effective_to",
+            name="ck_asset_lifecycle_effective_period",
+        ),
+        CheckConstraint(
+            "delisted_on IS NULL OR listed_on IS NULL OR listed_on <= delisted_on",
+            name="ck_asset_lifecycle_listing_period",
+        ),
+        CheckConstraint(
+            "investability_status IN ('investable', 'non_investable', 'suspended', 'delisted', 'unknown')",
+            name="ck_asset_lifecycle_status",
+        ),
+        Index("ix_asset_lifecycle_asset_effective", "asset_id", "effective_from"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    asset_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("assets.id"), nullable=False)
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    effective_to: Mapped[date | None] = mapped_column(Date)
+    listed_on: Mapped[date | None] = mapped_column(Date)
+    delisted_on: Mapped[date | None] = mapped_column(Date)
+    market: Mapped[str | None] = mapped_column(String(128))
+    sector_17: Mapped[str | None] = mapped_column(String(128))
+    sector_33: Mapped[str | None] = mapped_column(String(128))
+    investability_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class AssetUniverseCoverage(Base):
+    __tablename__ = "asset_universe_coverages"
+    __table_args__ = (
+        UniqueConstraint(
+            "period_start", "period_end", "source", "checked_at",
+            name="uq_asset_universe_coverage_revision",
+        ),
+        CheckConstraint(
+            "period_start <= period_end", name="ck_asset_universe_coverage_period"
+        ),
+        CheckConstraint(
+            "status IN ('complete', 'partial', 'unavailable')",
+            name="ck_asset_universe_coverage_status",
+        ),
+        CheckConstraint(
+            "observed_asset_count IS NULL OR observed_asset_count >= 0",
+            name="ck_asset_universe_coverage_count",
+        ),
+        Index("ix_asset_universe_coverage_period", "period_start", "period_end"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    period_start: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    observed_asset_count: Mapped[int | None] = mapped_column(Integer)
+    input_hash: Mapped[str | None] = mapped_column(String(64))
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
 class ApiFetchLog(Base):
     __tablename__ = "api_fetch_logs"
 

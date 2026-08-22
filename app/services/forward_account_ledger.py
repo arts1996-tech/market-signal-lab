@@ -109,6 +109,7 @@ def build_virtual_account_daily_state(
     pending_orders = _records(account.get("pending_orders"))
     pending_dividends = _records(account.get("pending_dividends"))
     corporate_action_events = _records(account.get("corporate_action_events"))
+    asset_lifecycle_events = _records(account.get("asset_lifecycle_events"))
     signal_history = _records(
         account.get("base_signal_history", account.get("signal_history"))
     )
@@ -132,6 +133,8 @@ def build_virtual_account_daily_state(
         "pending_dividends": pending_dividends,
         "corporate_action_events": corporate_action_events,
         "corporate_action_gate": json_value(account.get("corporate_action_gate", {})),
+        "asset_lifecycle_events": asset_lifecycle_events,
+        "asset_lifecycle_gate": json_value(account.get("asset_lifecycle_gate", {})),
         "quality_warnings": json_value(account.get("quality_warnings", [])),
         "evaluation_status": account.get("evaluation_status"),
         "signal_history": signal_history,
@@ -194,6 +197,10 @@ def build_virtual_account_daily_state(
                 "corporate_action_events": corporate_action_events,
                 "corporate_action_gate": json_value(
                     account.get("corporate_action_gate", {})
+                ),
+                "asset_lifecycle_events": asset_lifecycle_events,
+                "asset_lifecycle_gate": json_value(
+                    account.get("asset_lifecycle_gate", {})
                 ),
                 "quality_warnings": json_value(account.get("quality_warnings", [])),
                 "evaluation_status": account.get("evaluation_status"),
@@ -317,7 +324,7 @@ def build_virtual_account_events(
                 payload=record,
             )
         )
-        if action in {"利益確定", "損切り", "保有期限決済"}:
+        if action in {"利益確定", "損切り", "保有期限決済", "上場廃止評価"}:
             events.append(
                 _ledger_event(
                     account_name=account_name,
@@ -346,6 +353,22 @@ def build_virtual_account_events(
                 decision_track=decision_track,
                 session_date=session_date,
                 event_type="corporate_action",
+                event_at=event_at,
+                input_data_version=input_data_version,
+                payload=record,
+            )
+        )
+
+    for record in _records(account.get("asset_lifecycle_events")):
+        event_at = record.get("event_date") or observed
+        if _event_date(event_at) != session_date:
+            continue
+        events.append(
+            _ledger_event(
+                account_name=account_name,
+                decision_track=decision_track,
+                session_date=session_date,
+                event_type="asset_lifecycle",
                 event_at=event_at,
                 input_data_version=input_data_version,
                 payload=record,

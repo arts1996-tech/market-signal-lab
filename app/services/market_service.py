@@ -1,4 +1,6 @@
-from datetime import UTC, datetime
+from datetime import UTC, date as date_value, datetime
+import hashlib
+import json
 import logging
 
 from sqlalchemy.orm import Session
@@ -9,6 +11,8 @@ from app.collectors.sample_data import SAMPLE_ASSET_DEFINITIONS, generate_sample
 from app.core.exceptions import DataProviderError
 from app.database.repositories import (
     ASSET_DEFINITIONS,
+    insert_asset_lifecycle_records,
+    insert_asset_universe_coverages,
     insert_api_fetch_log,
     insert_job_run,
     list_assets_by_source,
@@ -266,19 +270,87 @@ def collect_jquants_listed_info(session: Session, date: str | None = None, limit
     try:
         assets, latency_ms, endpoint = client.fetch_listed_info(date=date)
         selected_assets = assets[:limit] if limit else assets
-        upsert_assets(session, selected_assets)
+        asset_rows = upsert_assets(session, selected_assets)
+        fetched_at = datetime.now(UTC)
+        lifecycle_rows = []
+        snapshot_dates: set[date_value] = set()
+        for item in selected_assets:
+            lifecycle = item.get("metadata_json", {}).get("lifecycle", {})
+            raw_effective = lifecycle.get("effective_date") or date
+            if not raw_effective:
+                continue
+            effective = datetime.strptime(str(raw_effective).replace("-", "")[:8], "%Y%m%d").date()
+            snapshot_dates.add(effective)
+            available_at = datetime.combine(effective, datetime.min.time(), tzinfo=UTC)
+
+            def optional_date(value):
+                if not value:
+                    return None
+                return datetime.strptime(str(value).replace("-", "")[:8], "%Y%m%d").date()
+
+            metadata = item.get("metadata_json", {})
+            lifecycle_rows.append(
+                {
+                    "asset_id": asset_rows[item["symbol"]].id,
+                    "effective_from": effective,
+                    "effective_to": effective,
+                    "listed_on": optional_date(lifecycle.get("listed_on")),
+                    "delisted_on": optional_date(lifecycle.get("delisted_on")),
+                    "market": metadata.get("market"),
+                    "sector_17": metadata.get("sector_17"),
+                    "sector_33": metadata.get("sector_33"),
+                    "investability_status": "investable",
+                    "source": "jquants_listed_info",
+                    "available_at": available_at,
+                    "fetched_at": fetched_at,
+                    "details": {"provider_fields_only": True},
+                }
+            )
+        saved_lifecycle = insert_asset_lifecycle_records(session, lifecycle_rows)
+        saved_coverage = 0
+        coverage_status = "unverified_missing_effective_date"
+        if len(snapshot_dates) == 1 and len(lifecycle_rows) == len(selected_assets):
+            snapshot_date = next(iter(snapshot_dates))
+            coverage_status = "partial" if limit is not None else "complete"
+            digest = hashlib.sha256(
+                json.dumps(sorted(item["symbol"] for item in selected_assets)).encode()
+            ).hexdigest()
+            saved_coverage = insert_asset_universe_coverages(
+                session,
+                [{
+                    "period_start": snapshot_date,
+                    "period_end": snapshot_date,
+                    "status": coverage_status,
+                    "source": "jquants_listed_info",
+                    "observed_asset_count": len(selected_assets),
+                    "input_hash": digest,
+                    "available_at": datetime.combine(snapshot_date, datetime.min.time(), tzinfo=UTC),
+                    "checked_at": fetched_at,
+                    "details": {"requested_date": date, "limited": limit is not None},
+                }],
+            )
         insert_api_fetch_log(
             session,
             provider="jquants",
             endpoint=endpoint,
             status="success",
             asset_symbol=None,
-            fetched_at=datetime.now(UTC),
+            fetched_at=fetched_at,
             latency_ms=latency_ms,
-            message=f"Saved {len(selected_assets)} listed assets",
+            message=(
+                f"Saved {len(selected_assets)} listed assets; "
+                f"lifecycle={saved_lifecycle}; universe={coverage_status}"
+            ),
         )
         session.commit()
-        return {"status": "success", "saved_assets": len(selected_assets), "latency_ms": latency_ms}
+        return {
+            "status": "success",
+            "saved_assets": len(selected_assets),
+            "saved_lifecycle_records": saved_lifecycle,
+            "saved_universe_coverages": saved_coverage,
+            "universe_coverage_status": coverage_status,
+            "latency_ms": latency_ms,
+        }
     except DataProviderError as exc:
         message = concise_error_message(exc)
         insert_api_fetch_log(

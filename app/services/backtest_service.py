@@ -14,6 +14,7 @@ from app.analysis.virtual_trading import (
     virtual_signals_from_reference_trades,
 )
 from app.backtest.audit import frame_hash, json_value, stable_payload_hash
+from app.backtest.asset_lifecycle import AssetLifecyclePolicy, evaluate_asset_lifecycle_gate
 from app.backtest.corporate_actions import (
     CorporateActionPolicy,
     evaluate_corporate_action_gate,
@@ -27,6 +28,8 @@ from app.backtest.portfolio import ExecutionAssumptions
 from app.backtest.validation import evaluate_frozen_strategy_walk_forward
 from app.core.config import get_settings
 from app.database.repositories import (
+    asset_lifecycle_frame,
+    asset_universe_coverage_frame,
     corporate_action_coverage_frame,
     corporate_actions_frame,
     list_assets_by_source,
@@ -151,6 +154,8 @@ def evaluate_real_account_walk_forward(
     validation_registry_path: str | Path,
     corporate_actions: pd.DataFrame | None = None,
     corporate_action_coverage: pd.DataFrame | None = None,
+    asset_lifecycle: pd.DataFrame | None = None,
+    asset_universe_coverage: pd.DataFrame | None = None,
 ) -> dict:
     prices = _valid_ohlcv(japan_prices)
     counts = _contiguous_counts(prices)
@@ -162,6 +167,13 @@ def evaluate_real_account_walk_forward(
         corporate_action_coverage,
         corporate_action_policy,
     )
+    lifecycle_enabled = asset_lifecycle is not None or asset_universe_coverage is not None
+    asset_lifecycle_policy = AssetLifecyclePolicy(
+        missing_coverage_policy="reject" if lifecycle_enabled else "warn"
+    )
+    asset_lifecycle_gate = evaluate_asset_lifecycle_gate(
+        prices, asset_lifecycle, asset_universe_coverage, asset_lifecycle_policy
+    )
     input_data_version = frame_hash(prices)
     rule_hash = stable_payload_hash(
         {
@@ -170,6 +182,7 @@ def evaluate_real_account_walk_forward(
             "market_impact": market_impact,
             "risk_rules": risk_rules,
             "corporate_action_policy": corporate_action_policy,
+            "asset_lifecycle_policy": asset_lifecycle_policy,
         }
     )
     qualified_symbols = sorted(
@@ -196,6 +209,11 @@ def evaluate_real_account_walk_forward(
             key: json_value(value)
             for key, value in corporate_action_gate.items()
             if key not in {"actions", "coverage"}
+        },
+        "asset_lifecycle_gate": {
+            key: json_value(value)
+            for key, value in asset_lifecycle_gate.items()
+            if key not in {"records", "coverage"}
         },
     }
     if not qualified_symbols:
@@ -253,6 +271,9 @@ def evaluate_real_account_walk_forward(
             corporate_actions=corporate_actions,
             corporate_action_coverage=corporate_action_coverage,
             corporate_action_policy=corporate_action_policy,
+            asset_lifecycle=asset_lifecycle,
+            asset_universe_coverage=asset_universe_coverage,
+            asset_lifecycle_policy=asset_lifecycle_policy,
         )
 
     walk_forward = evaluate_frozen_strategy_walk_forward(
@@ -313,6 +334,8 @@ def run_real_walk_forward_backtest(
     )
     corporate_actions = corporate_actions_frame(session, symbols)
     corporate_action_coverage = corporate_action_coverage_frame(session, symbols)
+    asset_lifecycle = asset_lifecycle_frame(session, symbols)
+    asset_universe_coverage = asset_universe_coverage_frame(session)
     accounts = {
         rule.account_name: evaluate_real_account_walk_forward(
             japan_prices,
@@ -321,6 +344,8 @@ def run_real_walk_forward_backtest(
             validation_registry_path=validation_registry_path,
             corporate_actions=corporate_actions,
             corporate_action_coverage=corporate_action_coverage,
+            asset_lifecycle=asset_lifecycle,
+            asset_universe_coverage=asset_universe_coverage,
         )
         for rule in REAL_BACKTEST_RULES
     }

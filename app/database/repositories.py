@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session, aliased
 from app.database.models import (
     ApiFetchLog,
     Asset,
+    AssetLifecycleRecord,
+    AssetUniverseCoverage,
     CorporateAction,
     CorporateActionCoverage,
     CorrelationResult,
@@ -186,6 +188,113 @@ def insert_corporate_action_coverages(session: Session, rows: Iterable[dict]) ->
         .returning(CorporateActionCoverage.id)
     )
     return len(session.scalars(statement).all())
+
+
+def insert_asset_lifecycle_records(session: Session, rows: Iterable[dict]) -> int:
+    payload = list(rows)
+    if not payload:
+        return 0
+    statement = (
+        pg_insert(AssetLifecycleRecord)
+        .values(payload)
+        .on_conflict_do_nothing(constraint="uq_asset_lifecycle_revision")
+        .returning(AssetLifecycleRecord.id)
+    )
+    return len(session.scalars(statement).all())
+
+
+def insert_asset_universe_coverages(session: Session, rows: Iterable[dict]) -> int:
+    payload = list(rows)
+    if not payload:
+        return 0
+    statement = (
+        pg_insert(AssetUniverseCoverage)
+        .values(payload)
+        .on_conflict_do_nothing(constraint="uq_asset_universe_coverage_revision")
+        .returning(AssetUniverseCoverage.id)
+    )
+    return len(session.scalars(statement).all())
+
+
+def asset_lifecycle_frame(
+    session: Session,
+    symbols: list[str],
+    *,
+    as_of: datetime | None = None,
+) -> pd.DataFrame:
+    if not symbols:
+        return pd.DataFrame()
+    query = (
+        select(
+            Asset.symbol,
+            AssetLifecycleRecord.effective_from,
+            AssetLifecycleRecord.effective_to,
+            AssetLifecycleRecord.listed_on,
+            AssetLifecycleRecord.delisted_on,
+            AssetLifecycleRecord.market,
+            AssetLifecycleRecord.sector_17,
+            AssetLifecycleRecord.sector_33,
+            AssetLifecycleRecord.investability_status,
+            AssetLifecycleRecord.source,
+            AssetLifecycleRecord.available_at,
+            AssetLifecycleRecord.fetched_at,
+        )
+        .join(Asset, Asset.id == AssetLifecycleRecord.asset_id)
+        .where(Asset.symbol.in_(symbols))
+        .distinct(
+            AssetLifecycleRecord.asset_id,
+            AssetLifecycleRecord.effective_from,
+            AssetLifecycleRecord.source,
+        )
+        .order_by(
+            AssetLifecycleRecord.asset_id,
+            AssetLifecycleRecord.effective_from,
+            AssetLifecycleRecord.source,
+            AssetLifecycleRecord.fetched_at.desc(),
+        )
+    )
+    if as_of is not None:
+        query = query.where(
+            AssetLifecycleRecord.available_at <= as_of,
+            AssetLifecycleRecord.fetched_at <= as_of,
+        )
+    return pd.DataFrame(session.execute(query).mappings().all())
+
+
+def asset_universe_coverage_frame(
+    session: Session,
+    *,
+    as_of: datetime | None = None,
+) -> pd.DataFrame:
+    query = (
+        select(
+            AssetUniverseCoverage.period_start,
+            AssetUniverseCoverage.period_end,
+            AssetUniverseCoverage.status,
+            AssetUniverseCoverage.source,
+            AssetUniverseCoverage.observed_asset_count,
+            AssetUniverseCoverage.input_hash,
+            AssetUniverseCoverage.available_at,
+            AssetUniverseCoverage.checked_at,
+        )
+        .distinct(
+            AssetUniverseCoverage.period_start,
+            AssetUniverseCoverage.period_end,
+            AssetUniverseCoverage.source,
+        )
+        .order_by(
+            AssetUniverseCoverage.period_start,
+            AssetUniverseCoverage.period_end,
+            AssetUniverseCoverage.source,
+            AssetUniverseCoverage.checked_at.desc(),
+        )
+    )
+    if as_of is not None:
+        query = query.where(
+            AssetUniverseCoverage.available_at <= as_of,
+            AssetUniverseCoverage.checked_at <= as_of,
+        )
+    return pd.DataFrame(session.execute(query).mappings().all())
 
 
 def corporate_actions_frame(

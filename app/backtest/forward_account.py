@@ -8,6 +8,7 @@ import pandas as pd
 from app.analysis.signal_generation import known_prices_as_of
 from app.backtest.audit import stable_payload_hash
 from app.backtest.corporate_actions import CorporateActionPolicy
+from app.backtest.asset_lifecycle import AssetLifecyclePolicy
 from app.backtest.ohlc import (
     MarketImpactAssumptions,
     PortfolioRiskRules,
@@ -17,7 +18,7 @@ from app.backtest.portfolio import ExecutionAssumptions
 
 
 FORWARD_ACCOUNT_STATE_VERSION = "forward-account-state-v1"
-FORWARD_EXECUTION_VERSION = "ohlc-next-open-conservative-v3"
+FORWARD_EXECUTION_VERSION = "ohlc-next-open-conservative-v4"
 
 
 @dataclass(frozen=True)
@@ -185,6 +186,9 @@ def advance_forward_accounts_as_of(
     corporate_actions: pd.DataFrame | None = None,
     corporate_action_coverage: pd.DataFrame | None = None,
     corporate_action_policy: CorporateActionPolicy | None = None,
+    asset_lifecycle: pd.DataFrame | None = None,
+    asset_universe_coverage: pd.DataFrame | None = None,
+    asset_lifecycle_policy: AssetLifecyclePolicy | None = None,
 ) -> dict:
     """Advance independent short/mid virtual accounts through ``as_of``.
 
@@ -251,6 +255,9 @@ def advance_forward_accounts_as_of(
             corporate_actions=corporate_actions,
             corporate_action_coverage=corporate_action_coverage,
             corporate_action_policy=corporate_action_policy,
+            asset_lifecycle=asset_lifecycle,
+            asset_universe_coverage=asset_universe_coverage,
+            asset_lifecycle_policy=asset_lifecycle_policy,
         )
         pending = _pending_orders(ruled_signals, last_session)
         cumulative_pnl = float(result["equity"] - rule.initial_cash)

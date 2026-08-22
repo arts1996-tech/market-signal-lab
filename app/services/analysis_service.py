@@ -43,6 +43,8 @@ from app.backtest.ohlc import (
 )
 from app.backtest.portfolio import ExecutionAssumptions
 from app.database.repositories import (
+    asset_lifecycle_frame,
+    asset_universe_coverage_frame,
     corporate_action_coverage_frame,
     corporate_actions_frame,
     list_assets_by_source,
@@ -895,6 +897,12 @@ def load_movement_and_virtual_trade_analysis(
     corporate_action_coverage = corporate_action_coverage_frame(
         session, japan_symbols, as_of=corporate_action_as_of
     )
+    asset_lifecycle = asset_lifecycle_frame(
+        session, japan_symbols, as_of=corporate_action_as_of
+    )
+    asset_universe_coverage = asset_universe_coverage_frame(
+        session, as_of=corporate_action_as_of
+    )
     virtual_trades = build_virtual_trades(
         index_prices,
         japan_prices,
@@ -943,6 +951,8 @@ def load_movement_and_virtual_trade_analysis(
         benchmark=benchmark,
         corporate_actions=corporate_actions,
         corporate_action_coverage=corporate_action_coverage,
+        asset_lifecycle=asset_lifecycle,
+        asset_universe_coverage=asset_universe_coverage,
     )
     candidates = build_movement_candidates(
         index_prices,
@@ -998,6 +1008,8 @@ def load_movement_and_virtual_trade_analysis(
         previous_states=previous_forward_states,
         corporate_actions=corporate_actions,
         corporate_action_coverage=corporate_action_coverage,
+        asset_lifecycle=asset_lifecycle,
+        asset_universe_coverage=asset_universe_coverage,
     )
     return {
         "index_prices": index_prices,
@@ -1012,6 +1024,8 @@ def load_movement_and_virtual_trade_analysis(
         "virtual_account": virtual_account,
         "corporate_actions": corporate_actions,
         "corporate_action_coverage": corporate_action_coverage,
+        "asset_lifecycle": asset_lifecycle,
+        "asset_universe_coverage": asset_universe_coverage,
         "score_threshold": score_threshold,
         "holding_days": holding_days,
     }

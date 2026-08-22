@@ -64,6 +64,7 @@ def format_corporate_action_warnings(values) -> str:
         "corporate_action_announcement_time_missing": "企業行動の公表時刻を確認できません",
         "raw_prices_required_for_explicit_corporate_action": "価格調整の二重反映を避けるための未調整OHLCが不足しています",
         "foreign_currency_dividend_unmodeled": "外貨配当の換算を評価できません",
+        "asset_universe_coverage_unverified": "過去時点の投資可能銘柄集合を確認できません",
     }
     return " / ".join(labels.get(str(value), str(value)) for value in values)
 
@@ -926,7 +927,7 @@ if active_page == "仮想投資評価":
             )
             if account.get("quality_warnings"):
                 st.warning(
-                    "企業行動ゲート: "
+                    "企業行動・銘柄集合ゲート: "
                     + format_corporate_action_warnings(account["quality_warnings"])
                 )
             if not account["positions"].empty:
@@ -955,7 +956,7 @@ if active_page == "仮想投資評価":
         )
         if virtual_account.get("quality_warnings"):
             st.warning(
-                "企業行動ゲート: "
+                "企業行動・銘柄集合ゲート: "
                 + format_corporate_action_warnings(
                     virtual_account["quality_warnings"]
                 )

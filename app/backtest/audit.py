@@ -9,7 +9,7 @@ import pandas as pd
 
 
 STRATEGY_VERSION = "phase4-long-only-v0.3"
-EXECUTION_VERSION = "ohlc-next-open-conservative-v3"
+EXECUTION_VERSION = "ohlc-next-open-conservative-v4"
 DECISION_CARD_VERSION = "decision-card-v2"
 
 
@@ -91,6 +91,9 @@ def build_run_manifest(
     corporate_actions: pd.DataFrame | None = None,
     corporate_action_coverage: pd.DataFrame | None = None,
     corporate_action_policy: Any | None = None,
+    asset_lifecycle: pd.DataFrame | None = None,
+    asset_universe_coverage: pd.DataFrame | None = None,
+    asset_lifecycle_policy: Any | None = None,
     created_at: datetime | None = None,
 ) -> dict:
     signal_hash = frame_hash(signals)
@@ -129,6 +132,14 @@ def build_run_manifest(
         if corporate_action_coverage is not None
         else pd.DataFrame()
     )
+    asset_lifecycle_hash = frame_hash(
+        asset_lifecycle if asset_lifecycle is not None else pd.DataFrame()
+    )
+    asset_universe_coverage_hash = frame_hash(
+        asset_universe_coverage
+        if asset_universe_coverage is not None
+        else pd.DataFrame()
+    )
     deterministic = {
         "account_name": account_name,
         "strategy_version": strategy_version,
@@ -139,6 +150,9 @@ def build_run_manifest(
         "corporate_action_hash": corporate_action_hash,
         "corporate_action_coverage_hash": corporate_action_coverage_hash,
         "corporate_action_policy": json_value(corporate_action_policy),
+        "asset_lifecycle_hash": asset_lifecycle_hash,
+        "asset_universe_coverage_hash": asset_universe_coverage_hash,
+        "asset_lifecycle_policy": json_value(asset_lifecycle_policy),
         "assumptions": json_value(assumptions),
         "risk_rules": json_value(risk_rules),
     }

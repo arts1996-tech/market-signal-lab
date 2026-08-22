@@ -4,6 +4,16 @@ import math
 import pandas as pd
 
 from app.backtest.audit import build_run_manifest, decision_card
+from app.backtest.asset_lifecycle import (
+    DELISTED,
+    INVESTABLE,
+    NON_INVESTABLE,
+    SUSPENDED,
+    UNKNOWN,
+    AssetLifecyclePolicy,
+    evaluate_asset_lifecycle_gate,
+    lifecycle_record_on,
+)
 from app.backtest.corporate_actions import (
     CASH_DIVIDEND,
     REVERSE_SPLIT,
@@ -91,6 +101,8 @@ def _empty_result(
     risk_rules: PortfolioRiskRules,
     corporate_action_policy: CorporateActionPolicy,
     corporate_action_gate: dict,
+    asset_lifecycle_policy: AssetLifecyclePolicy,
+    asset_lifecycle_gate: dict,
 ) -> dict:
     empty = pd.DataFrame()
     return {
@@ -131,9 +143,23 @@ def _empty_result(
             for key, value in corporate_action_gate.items()
             if key not in {"actions", "coverage"}
         },
-        "quality_warnings": list(corporate_action_gate["warnings"]),
+        "asset_lifecycle_events": empty,
+        "asset_lifecycle_policy": asset_lifecycle_policy,
+        "asset_lifecycle_gate": {
+            key: value
+            for key, value in asset_lifecycle_gate.items()
+            if key not in {"records", "coverage"}
+        },
+        "quality_warnings": list(
+            dict.fromkeys(
+                corporate_action_gate["warnings"]
+                + asset_lifecycle_gate["warnings"]
+            )
+        ),
         "evaluation_status": (
-            "warning" if corporate_action_gate["warnings"] else "complete"
+            "warning"
+            if corporate_action_gate["warnings"] or asset_lifecycle_gate["warnings"]
+            else "complete"
         ),
     }
 
@@ -297,6 +323,9 @@ def simulate_ohlc_portfolio(
     corporate_actions: pd.DataFrame | None = None,
     corporate_action_coverage: pd.DataFrame | None = None,
     corporate_action_policy: CorporateActionPolicy | None = None,
+    asset_lifecycle: pd.DataFrame | None = None,
+    asset_universe_coverage: pd.DataFrame | None = None,
+    asset_lifecycle_policy: AssetLifecyclePolicy | None = None,
 ) -> dict:
     """Simulate long-only daily OHLC signals with conservative execution.
 
@@ -311,6 +340,7 @@ def simulate_ohlc_portfolio(
     market_impact = market_impact or MarketImpactAssumptions()
     risk_rules = risk_rules or PortfolioRiskRules()
     corporate_action_policy = corporate_action_policy or CorporateActionPolicy()
+    asset_lifecycle_policy = asset_lifecycle_policy or AssetLifecyclePolicy()
     required_signals = {"signal_date", "entry_date", "symbol", "side"}
     required_prices = {"price_time", "symbol", "open", "high", "low", "close"}
     if not required_signals.issubset(signals.columns) and not signals.empty:
@@ -332,6 +362,14 @@ def simulate_ohlc_portfolio(
         corporate_action_coverage,
         corporate_action_policy,
     )
+    asset_lifecycle_gate = evaluate_asset_lifecycle_gate(
+        price_frame,
+        asset_lifecycle,
+        asset_universe_coverage,
+        asset_lifecycle_policy,
+    )
+    lifecycle_frame = asset_lifecycle_gate["records"]
+    universe_coverage_frame = asset_lifecycle_gate["coverage"]
     action_frame = corporate_action_gate["actions"]
     coverage_frame = corporate_action_gate["coverage"]
     explicitly_modeled_symbols = set(
@@ -383,6 +421,9 @@ def simulate_ohlc_portfolio(
         corporate_actions=action_frame,
         corporate_action_coverage=coverage_frame,
         corporate_action_policy=corporate_action_policy,
+        asset_lifecycle=lifecycle_frame,
+        asset_universe_coverage=universe_coverage_frame,
+        asset_lifecycle_policy=asset_lifecycle_policy,
     )
     if signal_frame.empty or price_frame.empty:
         return _empty_result(
@@ -394,6 +435,8 @@ def simulate_ohlc_portfolio(
             risk_rules,
             corporate_action_policy,
             corporate_action_gate,
+            asset_lifecycle_policy,
+            asset_lifecycle_gate,
         )
 
     price_frame = price_frame.sort_values(["symbol", "price_time"]).drop_duplicates(
@@ -433,7 +476,9 @@ def simulate_ohlc_portfolio(
     dividend_income = 0.0
     pending_dividends: list[dict] = []
     corporate_action_events: list[dict] = []
+    asset_lifecycle_events: list[dict] = []
     blocked_symbols: set[str] = set()
+    lifecycle_blocked_symbols: set[str] = set()
     unverified_symbols = set(corporate_action_gate["unverified_symbols"])
 
     def reject(signal: dict, reason: str, warning: str) -> None:
@@ -456,6 +501,96 @@ def simulate_ohlc_portfolio(
         cards.append(card)
 
     for session_index, current_date in enumerate(sessions):
+        for symbol, position in list(positions.items()):
+            lifecycle, lifecycle_covered = lifecycle_record_on(
+                lifecycle_frame,
+                universe_coverage_frame,
+                symbol=symbol,
+                session=current_date,
+            )
+            delisting_reason = None
+            if lifecycle_covered and lifecycle is None:
+                delisting_reason = "absent_from_complete_asset_universe"
+            elif lifecycle is not None:
+                delisted_on = lifecycle.get("delisted_on")
+                if lifecycle.get("investability_status") == DELISTED or (
+                    delisted_on is not None and delisted_on <= current_date
+                ):
+                    delisting_reason = "confirmed_delisting"
+                elif lifecycle.get("investability_status") in {
+                    NON_INVESTABLE,
+                    SUSPENDED,
+                    UNKNOWN,
+                }:
+                    lifecycle_blocked_symbols.add(symbol)
+                    asset_lifecycle_events.append(
+                        {
+                            "symbol": symbol,
+                            "event_date": current_date,
+                            "status": "evaluation_deferred",
+                            "reason": "asset_not_investable",
+                            "lifecycle": lifecycle,
+                        }
+                    )
+                elif lifecycle.get("investability_status") == INVESTABLE:
+                    lifecycle_blocked_symbols.discard(symbol)
+            if delisting_reason is None:
+                continue
+            pnl = -float(position["cost"])
+            realized_pnl += pnl
+            loss_streak += 1
+            if loss_streak >= risk_rules.loss_streak_threshold:
+                cooldown_until_index = session_index + risk_rules.cooldown_sessions
+                loss_streak = 0
+            transactions.append(
+                {
+                    "account": account_name,
+                    "date": current_date,
+                    "action": "上場廃止評価",
+                    "symbol": symbol,
+                    "name": position.get("name", symbol),
+                    "quantity": position["quantity"],
+                    "execution_price": 0.0,
+                    "amount": 0.0,
+                    "fee": 0.0,
+                    "tax": 0.0,
+                    "realized_pnl": pnl,
+                    "trade_return": -1.0,
+                    "reason": delisting_reason,
+                    "decision_as_of": position["signal_date"],
+                    "participation_rate": None,
+                    "slippage_rate": None,
+                    "spread_rate": None,
+                    "execution_cost_profile": asset_lifecycle_policy.version,
+                    "previous_turnover": None,
+                }
+            )
+            asset_lifecycle_events.append(
+                {
+                    "symbol": symbol,
+                    "event_date": current_date,
+                    "status": "zero_recovery_applied",
+                    "reason": delisting_reason,
+                    "policy_version": asset_lifecycle_policy.version,
+                    "lifecycle": lifecycle,
+                }
+            )
+            cards.append(
+                decision_card(
+                    position,
+                    status="closed",
+                    manifest=manifest,
+                    entry_price=position["entry_execution_price"],
+                    exit_price=0.0,
+                    outcome_reason="上場廃止の保守的ゼロ回収評価",
+                    quality_warnings=[delisting_reason],
+                    event_at=current_date,
+                )
+            )
+            del positions[symbol]
+            blocked_symbols.discard(symbol)
+            lifecycle_blocked_symbols.discard(symbol)
+
         session_events = sorted(
             events_on(action_frame, current_date),
             key=lambda event: (
@@ -598,6 +733,51 @@ def simulate_ohlc_portfolio(
         for signal in entries.to_dict(orient="records"):
             symbol = str(signal["symbol"])
             bar = price_lookup.get((symbol, current_date))
+            lifecycle, lifecycle_covered = lifecycle_record_on(
+                lifecycle_frame,
+                universe_coverage_frame,
+                symbol=symbol,
+                session=current_date,
+            )
+            if not lifecycle_covered:
+                existing_warnings = signal.get("quality_warnings", [])
+                if not isinstance(existing_warnings, list):
+                    existing_warnings = [existing_warnings]
+                signal["quality_warnings"] = [
+                    *existing_warnings,
+                    "過去時点の投資可能銘柄集合を確認できません",
+                ]
+                if asset_lifecycle_policy.missing_coverage_policy == "reject":
+                    reject(
+                        signal,
+                        "asset_universe_coverage_unverified",
+                        "過去時点の銘柄集合が未確認のためエントリーを見送ります",
+                    )
+                    continue
+            elif lifecycle is None:
+                reject(
+                    signal,
+                    "not_in_historical_asset_universe",
+                    "当時の完全な銘柄集合に存在しないためエントリーを見送ります",
+                )
+                continue
+            else:
+                listed_on = lifecycle.get("listed_on")
+                delisted_on = lifecycle.get("delisted_on")
+                if (
+                    lifecycle.get("investability_status") != INVESTABLE
+                    or (listed_on is not None and listed_on > current_date)
+                    or (delisted_on is not None and delisted_on <= current_date)
+                ):
+                    reject(
+                        signal,
+                        "asset_not_investable_as_of_entry",
+                        "当時の投資可能状態を満たさないためエントリーを見送ります",
+                    )
+                    continue
+                if lifecycle.get("sector_33") or lifecycle.get("sector_17"):
+                    signal["sector"] = lifecycle.get("sector_33") or lifecycle.get("sector_17")
+                signal["market_as_of_entry"] = lifecycle.get("market")
             if symbol in unverified_symbols:
                 existing_warnings = signal.get("quality_warnings", [])
                 if not isinstance(existing_warnings, list):
@@ -860,7 +1040,7 @@ def simulate_ohlc_portfolio(
             cards.append(card)
 
         for symbol, position in list(positions.items()):
-            if symbol in blocked_symbols:
+            if symbol in blocked_symbols or symbol in lifecycle_blocked_symbols:
                 continue
             bar = price_lookup.get((symbol, current_date))
             if bar is None or not _valid_ohlc_bar(bar):
@@ -1031,7 +1211,7 @@ def simulate_ohlc_portfolio(
             valuation = position["entry_execution_price"]
             if bar is not None and pd.notna(bar.get("close")):
                 valuation = float(bar["close"])
-            if symbol in blocked_symbols:
+            if symbol in blocked_symbols or symbol in lifecycle_blocked_symbols:
                 valuation = float(position.get("last_verified_close", position["entry_execution_price"]))
             else:
                 position["last_verified_close"] = valuation
@@ -1055,13 +1235,18 @@ def simulate_ohlc_portfolio(
                 "cooldown_until_index": cooldown_until_index,
                 "dividend_income": dividend_income,
                 "corporate_action_blocked_positions": len(blocked_symbols),
+                "asset_lifecycle_blocked_positions": len(lifecycle_blocked_symbols),
             }
         )
 
     transaction_frame = pd.DataFrame(transactions)
     snapshot_frame = pd.DataFrame(snapshots)
     closed = (
-        transaction_frame[transaction_frame["action"].isin(["利益確定", "損切り", "保有期限決済"])]
+        transaction_frame[
+            transaction_frame["action"].isin(
+                ["利益確定", "損切り", "保有期限決済", "上場廃止評価"]
+            )
+        ]
         if not transaction_frame.empty
         else pd.DataFrame()
     )
@@ -1123,6 +1308,7 @@ def simulate_ohlc_portfolio(
         "benchmark_return": benchmark_return,
         "excess_return": None if benchmark_return is None else total_return - benchmark_return,
     }
+    all_blocked_symbols = blocked_symbols | lifecycle_blocked_symbols
     position_frame = pd.DataFrame(
         [
             {
@@ -1132,16 +1318,17 @@ def simulate_ohlc_portfolio(
                 "entry_date": position["entry_date"],
                 "entry_price": position["entry_execution_price"],
                 "market_value": _position_mark(
-                    price_lookup, symbol, sessions[-1], position, blocked_symbols
+                    price_lookup, symbol, sessions[-1], position, all_blocked_symbols
                 )
                 * position["quantity"],
                 "unrealized_pnl": _position_mark(
-                    price_lookup, symbol, sessions[-1], position, blocked_symbols
+                    price_lookup, symbol, sessions[-1], position, all_blocked_symbols
                 )
                 * position["quantity"]
                 - position["cost"],
                 "sector": position["sector"],
                 "corporate_action_blocked": symbol in blocked_symbols,
+                "asset_lifecycle_blocked": symbol in lifecycle_blocked_symbols,
             }
             for symbol, position in positions.items()
         ]
@@ -1179,16 +1366,29 @@ def simulate_ohlc_portfolio(
             for key, value in corporate_action_gate.items()
             if key not in {"actions", "coverage"}
         },
-        "quality_warnings": list(dict.fromkeys(corporate_action_gate["warnings"])),
+        "asset_lifecycle_events": pd.DataFrame(asset_lifecycle_events),
+        "asset_lifecycle_policy": asset_lifecycle_policy,
+        "asset_lifecycle_gate": {
+            key: value
+            for key, value in asset_lifecycle_gate.items()
+            if key not in {"records", "coverage"}
+        },
+        "quality_warnings": list(
+            dict.fromkeys(
+                corporate_action_gate["warnings"]
+                + asset_lifecycle_gate["warnings"]
+            )
+        ),
         "evaluation_status": (
             "incomplete"
             if blocked_symbols
+            or lifecycle_blocked_symbols
             or any(
                 event.get("status") == "evaluation_deferred"
-                for event in corporate_action_events
+                for event in [*corporate_action_events, *asset_lifecycle_events]
             )
             else "warning"
-            if corporate_action_gate["warnings"]
+            if corporate_action_gate["warnings"] or asset_lifecycle_gate["warnings"]
             else "complete"
         ),
     }

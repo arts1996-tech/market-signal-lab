@@ -171,6 +171,8 @@ def test_parse_listed_info_response_builds_assets():
                 "MarketCodeName": "プライム",
                 "Sector17CodeName": "金融（除く銀行）",
                 "Sector33CodeName": "その他金融業",
+                "Date": "20260724",
+                "ListingDate": "20040101",
             },
             {
                 "Code": "13060",
@@ -186,6 +188,11 @@ def test_parse_listed_info_response_builds_assets():
     assert assets[0]["name"] == "日本取引所グループ"
     assert assets[0]["asset_type"] == "stock"
     assert assets[0]["metadata_json"]["market"] == "プライム"
+    assert assets[0]["metadata_json"]["lifecycle"] == {
+        "effective_date": "20260724",
+        "listed_on": "20040101",
+        "delisted_on": None,
+    }
     assert assets[1]["asset_type"] == "etf"
 
 

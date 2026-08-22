@@ -245,6 +245,9 @@ def parse_listed_info_response(payload: dict[str, Any] | list[dict[str, Any]]) -
         market = pick_value(item, ["MarketCodeName", "marketCodeName", "MarketName", "marketName"])
         sector_17 = pick_value(item, ["Sector17CodeName", "sector17CodeName"])
         sector_33 = pick_value(item, ["Sector33CodeName", "sector33CodeName"])
+        effective_date = pick_value(item, ["Date", "date", "BaseDate", "baseDate"])
+        listed_on = pick_value(item, ["ListingDate", "listingDate", "ListedDate", "listedDate"])
+        delisted_on = pick_value(item, ["DelistingDate", "delistingDate", "DelistedDate", "delistedDate"])
         assets.append(
             {
                 "symbol": str(code),
@@ -257,6 +260,11 @@ def parse_listed_info_response(payload: dict[str, Any] | list[dict[str, Any]]) -
                     "market": market,
                     "sector_17": sector_17,
                     "sector_33": sector_33,
+                    "lifecycle": {
+                        "effective_date": effective_date,
+                        "listed_on": listed_on,
+                        "delisted_on": delisted_on,
+                    },
                     "raw": item,
                     "free_plan_note": "J-Quants Free plan data is delayed by 12 weeks.",
                 },
