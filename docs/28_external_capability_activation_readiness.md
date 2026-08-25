@@ -121,6 +121,6 @@ provider候補の追加やプラン変更が判明したら、この表の状態
 - 障害時動作、解約時動作、rollback
 - 未解消制約と次の確認日
 
-## 9. 現在の再開位置
+## 9. 本書の適用範囲
 
-本書の追加は、外部サービスの採用、契約、コード変更、DB変更、`current_market`の有効化、Raspberry Pi配置を承認するものではない。現行の次実装は`docs/22_current_priority_todo.md`どおりストキャスティクス、支持・抵抗候補、ブレイクアウトの順である。
+本書は、外部サービスの採用、契約、コード変更、DB変更、`current_market`の有効化、Raspberry Pi配置を承認するものではない。現行の実装順と次タスクは`docs/22_current_priority_todo.md`だけを正本とする。

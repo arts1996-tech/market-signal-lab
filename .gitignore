@@ -8,6 +8,7 @@ __pycache__/
 htmlcov/
 .DS_Store
 logs/
+ops_logs/
 *.log
 backups/
 data/

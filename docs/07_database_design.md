@@ -91,7 +91,7 @@
 - result JSONB
 - created_at
 
-`asset_analysis_runs`はフェーズ3の全銘柄バッチについて、通常／デモ区分、入力版、ルール版、source方針、データ時点、検査対象数、品質ゲート通過数、状態を保持する。`asset_analysis_results`は実行IDと銘柄の組を一意にし、注目度・変動候補スコア、順位、観測数、業種、結果JSONを保持する。バッチの母集団は無制限とし、画面はこの保存結果を最大200件ずつページ読込する。`0013_asset_analysis_results`はMac側で往復検証済みで、Raspberry Piには未適用である。
+`asset_analysis_runs`は全銘柄バッチの通常／デモ区分、入力版、ルール版、source方針、データ時点、検査対象数、品質ゲート通過数、状態を保持する。`asset_analysis_results`は実行IDと銘柄の組を一意にし、注目度・変動候補スコア、順位、観測数、業種、結果JSONを保持する。バッチ母集団へUI上限を適用せず、画面だけをページ読込する。
 
 ## 時刻
 - DBはUTC
@@ -109,7 +109,7 @@
 - 3テーブルのUPDATE／DELETEはDB triggerで拒否する。訂正が必要な場合は、将来の明示的な訂正イベントとして設計し、既存行を変更しない。
 - 再起動後は判断系統別に最新の日次状態とシグナル履歴を読み、決定論的な口座エンジンへ復元する。
 - PostgreSQLを正本とする。JSONは日次状態とイベントを含む監査エクスポートであり、唯一の口座状態にしない。
-- `0011_virtual_account_ledger`と`0012_decision_tracks`はMac側で往復検証済みだが、Raspberry Piへはユーザー承認前に適用しない。
+- 実環境への適用状態は本書へ固定せず、Alembic revisionと運用確認で判定する。Raspberry Piへは利用者承認前に適用しない。
 
 ## 信用取引データ
 

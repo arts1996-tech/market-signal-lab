@@ -55,6 +55,35 @@ Market Signal Labは原則無料で利用できるデータソースを優先し
 12. テーマデータは`docs/27_theme_sector_etf.md`に従い、説明変数ごとに`effective_at`、`available_at`、`fetched_at`、source、権利、品質を保持する。
 13. テーマランキングは、現在価格・ニュース等が未採用の間は`delayed_historical`研究に限定し、最新ニュースを遅延価格へ混ぜない。
 
+## Provider境界と来歴
+
+外部APIを分析ロジックや画面へ直接結合しない。providerは必要な範囲で次の共通能力を実装する。
+
+- `fetch_assets`
+- `fetch_prices`
+- `fetch_fundamentals`
+- `fetch_events`
+- `fetch_etf_profile`
+- `fetch_theme_factors`
+- `fetch_liquidity_snapshots`
+- `health_check`
+
+取得済み範囲をDBへ保存し、差分取得、キャッシュ、同一リクエスト抑制、レート制限記録を行う。各値にはsource、source symbol、`effective_at`、`available_at`、`fetched_at`、revision、qualityを保存する。取得不能値をゼロや取引可能として補完しない。
+
+## 取引カレンダー
+
+- JPX公式Market HolidaysとNYSE公式Holidays & Trading Hoursを照合の正本とする。
+- 実行時は`exchange_calendars`の`XTKS`と`XNYS`を使用できるが、公式との差異、臨時休場、早期終了、将来年の範囲を検証する。
+- カレンダーライブラリは価格sourceや来歴を置き換えない。差異がある期間は分析から除外する。
+
+## 財務・ETF・米国データの現在地
+
+- J-Quants財務、SEC Company Facts、レビュー済みETF JSONは共通収集サービス、入力検証、資産照合、冪等保存、取得ログ、`JobRun`、失敗分類へ接続済み。
+- J-Quants財務とSECは単銘柄を明示した実行だけを維持し、自動全銘柄収集は公式条件と利用者承認まで有効化しない。
+- SEC Company FactsはUSD資産とCIKの完全一致、識別User-Agent、Fair Accessを必須とし、価格sourceとして使わない。
+- ETF経費率、NAV、構成銘柄等はJ-Quants銘柄マスターから推測せず、取得元と利用条件を確認したJSONだけを`jobs/save_etf_metrics.py`で明示投入する。
+- 無料で継続更新され、広範囲の日次収集と画面表示条件を満たす米国個別株・ETF価格providerは未採用。Alpha Vantage、Twelve Data、Nasdaq Data Link等も、現在の料金・上限・表示権を公式再確認し、利用者承認前に採用しない。
+
 ## 2026-08-16 公式条件の再確認
 
 - [J-Quants公式サイト](https://jpx-jquants.com/?lang=ja%2F): Freeは月額0円、登録後1年で自動解約、価格は過去2年・12週間遅延。公開プラン表でFreeの財務情報は対象外表示。利用は個人の私的利用に限定され、第三者配信・データ利用アプリの提供は禁止。レートリミット閾値は非公表。

@@ -1,24 +1,28 @@
 # 02 システムアーキテクチャ
 
 ## 実行構成
-MacBookでCodexを用いて開発し、Raspberry Pi OS 64-bit上でDocker Composeにより継続運用する。
+
+MacBookで開発・検証し、承認済み機能をRaspberry Pi OS 64-bit上のDocker Composeで継続運用する。
+
+現行の実装経路:
 
 ```text
 External APIs
   -> Collectors
   -> PostgreSQL
   -> Python Analysis / Backtest
-  -> Gemini Agents
-  -> Slack / Streamlit
+  -> Streamlit Lab / Lite
 ```
 
-## サービス候補
+GeminiとSlackは将来の承認制フェーズであり、現行の必須経路ではない。導入後もPython分析とStreamlitだけで縮退運転できるようにする。
+
+## サービス
 - `db`: PostgreSQL
-- `dashboard`: Streamlit
+- `app` / `lite`: Streamlit
 - `collector`: データ取得ジョブ
 - `analyzer`: 指標・統計・スコア・バックテスト
-- `gemini-agent`: Gemini連携
-- `slack-bot`: Slack Bolt / Socket Mode
+- `gemini-agent`: 将来のGemini連携
+- `slack-bot`: 将来のSlack Bolt / Socket Mode
 - `scheduler`: cronまたはsystemd timer。初期は単純で透明性の高い方式を優先
 
 ## モジュール境界
@@ -33,7 +37,7 @@ External APIs
 - jobs: 独立実行可能なジョブ
 - core: 設定、ログ、例外、時刻
 
-## 推奨ディレクトリ
+## ディレクトリ
 ```text
 market-signal-lab/
 ├── AGENTS.md
@@ -49,13 +53,11 @@ market-signal-lab/
 │   ├── providers/
 │   ├── analysis/
 │   ├── backtest/
-│   ├── agents/
-│   ├── slack_bot/
-│   └── dashboard/
+│   ├── dashboard/
+│   └── lite_dashboard/
 ├── jobs/
 ├── tests/
 ├── docs/
-└── scripts/
 ```
 
 ## 非機能要件
