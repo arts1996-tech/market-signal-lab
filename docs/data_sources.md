@@ -15,6 +15,10 @@ Market Signal Labは原則無料で利用できるデータソースを優先し
 | 信用残、貸借・空売り関連 | J-Quants有料プラン等 | 未採用 | プラン、履歴、更新時刻、私的利用条件を再確認し、ユーザー承認が必要 |
 | 一般信用在庫、信用金利、貸株料、保証金条件 | 証券会社または承認済みprovider | 未採用 | 証券会社固有で変動し、認証・規約・自動取得可否の確認が必要 |
 | 米国short availability、borrow fee、margin requirement | 未定 | 未採用 | 無料・保存・表示条件を満たす本番ソースが未確定 |
+| 東証ETFの名称、コード、対象指数、売買単位、上場日 | JPX ETF銘柄一覧・銘柄別資料 | 公式参照として採用 | テーマ候補の識別・照合に使用。価格、流動性、信用在庫を保証しない |
+| 制度信用・貸借選定 | JPX 制度信用・貸借選定銘柄一覧 | 公式参照候補 | 公表時点の市場制度区分の確認用。一般信用在庫、証券会社別条件、将来の取引可否を示さない |
+| テーマETFのBid/Ask、板厚、NAV、純資産、構成銘柄、資金フロー | 未定 | 未採用 | 短期テーマランキングと流動性評価に必要。無料・時点・保存・表示条件を確認して承認が必要 |
+| テーマ別の商品、金利、政策・地政学ニュース | 未定 | 未採用 | テーマごとに必要な現在値・過去時点・利用可能時刻・保存権を満たすproviderが未確定 |
 
 ## J-Quants Free Planで扱う範囲
 
@@ -43,6 +47,9 @@ Market Signal Labは原則無料で利用できるデータソースを優先し
 6. 有料プランが必要な機能は実装前に止めて確認する。
 7. 信用取引データは`effective_at`、`available_at`、`fetched_at`、対象市場・証券会社を保存し、現在値を過去バックテストへ適用しない。
 8. 信用取引の本番ソースが未採用の間は型・provider境界・合成データテストに限定し、信用可否や費用を推測しない。
+9. JPXのETF・信用銘柄一覧は識別と公表区分の照合に用い、実際の流動性、証券会社別在庫、費用、現在の取引可否へ暗黙転用しない。
+10. テーマデータは`docs/27_theme_sector_etf.md`に従い、説明変数ごとに`effective_at`、`available_at`、`fetched_at`、source、権利、品質を保持する。
+11. テーマランキングは、現在価格・ニュース等が未採用の間は`delayed_historical`研究に限定し、最新ニュースを遅延価格へ混ぜない。
 
 ## 2026-08-16 公式条件の再確認
 
@@ -51,6 +58,12 @@ Market Signal Labは原則無料で利用できるデータソースを優先し
 - [SEC Webmaster FAQ](https://www.sec.gov/about/webmaster-frequently-asked-questions): 自動アクセスは組織名と連絡先を含むUser-Agentを宣言し、最大10リクエスト/秒を超えない。
 
 この確認結果により、J-Quants財務とSEC Company Factsは単銘柄を明示したジョブだけを維持する。自動全銘柄収集は、対象プラン、私的利用範囲、レート制限、実行頻度を提示し、ユーザー承認を得るまで実装・有効化しない。SECで将来大量取得が必要な場合は、1社ずつの連打ではなく公式bulk ZIPも先に比較する。
+
+## 2026-08-26 テーマETF候補の公式照合
+
+- [JPX ETF全銘柄](https://www.jpx.co.jp/equities/products/etfs/issues/01.html)、[日本株テーマ別ETF](https://www.jpx.co.jp/equities/products/etfs/issues/01-04.html)、[外国株ETF](https://www.jpx.co.jp/equities/products/etfs/issues/01-08.html)で、`docs/27_theme_sector_etf.md`の初期候補コードと名称を照合した。
+- [JPX 制度信用・貸借選定銘柄一覧](https://www.jpx.co.jp/listing/others/margin/index.html)は毎月更新されるため、取得時点を保存し、一般信用や証券会社別在庫へ推測適用しない。
+- 552A、568A、577A、578A、579A、580A、610A等の新規ETFは履歴が短い。公式掲載だけで短期売買に十分な流動性があるとは判定せず、出来高、売買代金、スプレッド、板、NAV、純資産、上場日数を別途評価する。
 
 ## 実装済みの無料株価データ基盤
 

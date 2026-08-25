@@ -39,6 +39,16 @@
 - virtual_account_events
 - user_asset_selections
 - user_asset_selection_items
+- themes
+- theme_versions
+- theme_asset_memberships
+- theme_factor_definitions
+- theme_liquidity_policies
+- theme_analysis_runs
+- theme_scores
+- theme_rankings
+- theme_events
+- theme_tier_change_proposals
 
 信用取引のテーブル名は実装時のマイグレーション設計で確定する。既存の`assets`や`positions`へ現在値だけを追加して履歴を失わず、適格性・残高・費用・保証金条件を時点付きスナップショットとして分離する。
 
@@ -170,3 +180,20 @@ DB変更は追加マイグレーションで行い、既存の現物ポジショ
 - `knowledge_events`: 状態遷移と承認を追記型監査イベントとして保持する。
 
 結果判明後も当初の入力、判断、仮説を更新しない。訂正、反証、廃止は新しいイベントとして保存する。ニュース本文は保存権限がある場合だけ保持し、それ以外は許可された識別子、URL、時刻、要約、構造化特徴に限定する。
+
+## テーマ・セクターETF
+
+詳細は[27 注目テーマ・セクターETF仕様](27_theme_sector_etf.md)を参照する。
+
+- `themes`: 安定した識別子、名称、状態、created_at、updated_at
+- `theme_versions`: 基準Tier、enabled、テーマ単位のmargin_trading_enabled、説明、適用期間、作成・承認時刻、構成ハッシュ
+- `theme_asset_memberships`: テーマ版、asset_id、役割、重み、適用期間、出典
+- `theme_factor_definitions`: 説明変数、方向、必須性、ラグ、変換、重み、モデル版
+- `theme_liquidity_policies`: 投資期間・取引モード別の流動性規則版
+- `theme_analysis_runs`: as_of、decision_track、入力版・ハッシュ、モデル版、品質状態
+- `theme_scores`: 総合点、構成要素、coverage、根拠、反対材料
+- `theme_rankings`: 実行時点の順位、同点規則、対象集合ハッシュ
+- `theme_events`: ニュース・政策・地政学等の時点付き構造化参照
+- `theme_tier_change_proposals`: Tier変更案、証拠、将来の適用開始、承認状態
+
+`related_etfs`、`related_stocks`、`leading_us_assets`、`related_commodities`、`related_fx`を単一配列列へ固定せず、関連資産の役割と有効期間を正規化する。`analysis_model`はfactor定義とモデル版、`minimum_liquidity`は流動性規則へ分離する。テーマ単位の`margin_trading_enabled`だけで取引可能とせず、資産・市場・証券会社・時点別適格性を必須とする。テーマ定義、構成、Tier、スコア、流動性規則を現在値で過去へ上書きしない。遅延研究と現在判断を一意制約・検索条件で分離し、欠損要素を0として保存しない。

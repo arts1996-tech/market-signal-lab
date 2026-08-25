@@ -43,6 +43,7 @@ GitHub: https://github.com/arts1996-tech/market-signal-lab
 25. `docs/24_user_selected_ticker_simulation.md`
 26. `docs/25_simulation_knowledge_feedback.md`
 27. `docs/26_market_signal_lite.md`
+28. `docs/27_theme_sector_etf.md`
 
 レビュー文書とオプション提案は、必須要件と区別して扱います。文書、既存コード、実運用状態に矛盾がある場合は、機能やルールを勝手に削除せず、差分と推奨案を確認してから変更します。
 
@@ -215,6 +216,8 @@ Market Signal Lite（日常確認）: http://localhost:8502
 ```
 
 Lite版は、保存済みデータの時点・品質と`delayed_historical`の短期・中期仮想口座を軽量に確認する別画面です。現在価格と同時点ニュースはまだ接続していないため、現在の売買判断には使用できません。詳細分析、バックテスト、データ収集・監査・運用管理はLab版で確認します。両画面は同じPostgreSQLとサービス層を共有し、Lite版に分析・約定・損益ロジックを複製しません。
+
+テーマ・セクターETFは[docs/27_theme_sector_etf.md](docs/27_theme_sector_etf.md)に従い、金、半導体、防衛、AIインフラ等をテーマ別モデルで段階評価します。現時点では仕様確定のみで、毎朝の現在ランキング、板・NAV、ニュース、証券会社別信用条件は未実装です。J-Quants Freeで今後生成する研究ランキングは`delayed_historical`として扱い、現在の投資判断へ昇格させません。
 
 ラズパイの常駐収集が稼働中は、同じJ-Quants APIキーのレート制限競合を避けるため、Macで`jquants-collector`を同時起動しません。
 
