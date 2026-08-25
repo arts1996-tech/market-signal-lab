@@ -14,6 +14,9 @@
 - financial_results
 - corporate_events
 - etf_profiles
+- asset_trading_capabilities
+- margin_market_snapshots
+- financing_term_snapshots
 - technical_indicators
 - spillover_features
 - correlation_results
@@ -34,6 +37,10 @@
 - virtual_accounts
 - virtual_account_daily_states
 - virtual_account_events
+- user_asset_selections
+- user_asset_selection_items
+
+信用取引のテーブル名は実装時のマイグレーション設計で確定する。既存の`assets`や`positions`へ現在値だけを追加して履歴を失わず、適格性・残高・費用・保証金条件を時点付きスナップショットとして分離する。
 
 ## assets主要項目
 - id
@@ -93,3 +100,73 @@
 - 再起動後は判断系統別に最新の日次状態とシグナル履歴を読み、決定論的な口座エンジンへ復元する。
 - PostgreSQLを正本とする。JSONは日次状態とイベントを含む監査エクスポートであり、唯一の口座状態にしない。
 - `0011_virtual_account_ledger`と`0012_decision_tracks`はMac側で往復検証済みだが、Raspberry Piへはユーザー承認前に適用しない。
+
+## 信用取引データ
+
+詳細要件は[23 信用取引モード仕様](23_margin_trading.md)を参照する。
+
+### `asset_trading_capabilities`候補
+
+- asset_id
+- market / broker_scope
+- margin_long_eligible / margin_short_eligible
+- credit_type: standardized / general / market_specific / not_applicable
+- is_lending_issue / short_availability
+- repayment_deadline
+- restriction_status
+- effective_from / effective_to / available_at / fetched_at
+- source / source_version / data_quality_status
+
+同一資産でも取引可否や在庫は変化するため、現在値で過去を上書きしない。米国資産へ日本固有の制度区分を設定せず、該当しない値はNULLまたは`not_applicable`とする。
+
+### `margin_market_snapshots`候補
+
+- asset_id / session_date
+- margin_long_balance / margin_short_balance
+- lending_ratio
+- reverse_stock_borrow_fee
+- effective_at / available_at / fetched_at
+- source / quality_status
+
+### `financing_term_snapshots`候補
+
+- asset_id / market / broker_scope / currency
+- margin_interest_rate / stock_lending_fee / borrow_cost
+- initial_margin_rate / maintenance_margin_rate
+- repayment_term_days / forced_liquidation_rule_version
+- effective_from / effective_to / available_at / fetched_at
+- source / quality_status
+
+### 既存テーブルへの影響
+
+- `trading_signals`、判断カード、バックテスト結果に`trade_mode`、適格性、却下理由、信用データ版、費用版、保証金版、リスク規則版を保存する。
+- `positions`と`virtual_account_events`に売買方向、建玉総額、必要保証金、維持率、総レバレッジ、累積信用費用、返済期限、強制決済理由を保持できるようにする。
+- `virtual_account_daily_states`に現物拘束額、信用必要保証金、利用可能余力、建玉総額、総レバレッジ、口座維持率を保持できるようにする。
+- `backtest_runs`と`backtest_results`は現物、信用買い、信用売り、`auto_select`を別系列・別ルール版として識別する。
+- `auto_select`では比較した全モードの入力ハッシュ、評価、却下理由を監査可能にする。
+
+DB変更は追加マイグレーションで行い、既存の現物ポジションは`cash`へ安全に移行する。NULLをゼロや「取引可能」へ変換しない。Raspberry Pi適用前にMacでupgrade/downgrade、既存台帳の不変性、バックアップ・リストアを確認する。
+
+## 利用者指定ティッカー集合
+
+詳細は[24 利用者指定ティッカー分析・仮想口座仕様](24_user_selected_ticker_simulation.md)を参照する。
+
+- `user_asset_selections`: 名称、版、作成日時、適用開始、作成者、状態、選定理由、構成ハッシュ
+- `user_asset_selection_items`: selection_id、asset_id、追加日時、表示順、状態
+- `analysis_runs`: selection_id、selection_version、asset_id、as_of、入力ハッシュ、分析版を関連付ける
+- `backtest_runs`: `scope=selected_universe`、selection_id、selection_version、分析スナップショット集合ハッシュを保存する
+- `virtual_accounts`: `account_scope=selected_universe`、allowed_selection_id、allowed_selection_versionを保存する
+
+集合の追加・削除はUPDATEで過去構成を置換せず新版として保存する。既存シミュレーションと継続口座は開始時の集合版を参照し続ける。指定集合外の`asset_id`を仮想注文・ポジションへ保存しようとした場合はサービス境界で拒否する。
+
+## シミュレーションレビューとナレッジ
+
+詳細は[25 シミュレーション振り返り・ナレッジ更新仕様](25_simulation_knowledge_feedback.md)を参照する。
+
+- `simulation_reviews`: 判断カード、口座イベント、取引結果、見送り結果、ベンチマーク、レビュー版を関連付ける。
+- `knowledge_items`: 観測、仮説、検証中、検証済み、結論不十分、反証、廃止の状態、適用範囲、構造化条件、版を保持する。
+- `knowledge_evidence_links`: 判断、取引、見送り、検証窓、分析結果、ニュース参照を賛成・反対証拠として関連付ける。
+- `strategy_change_proposals`: 現行戦略版との差、検証証拠、承認状態、承認者、承認時刻を保持する。
+- `knowledge_events`: 状態遷移と承認を追記型監査イベントとして保持する。
+
+結果判明後も当初の入力、判断、仮説を更新しない。訂正、反証、廃止は新しいイベントとして保存する。ニュース本文は保存権限がある場合だけ保持し、それ以外は許可された識別子、URL、時刻、要約、構造化特徴に限定する。

@@ -42,6 +42,8 @@ Geminiは計算エンジンではなく、Pythonで計算済み・検証済み�
 ## 構造化出力
 JSON Schemaで最低限以下を要求する。
 - decision
+- trade_mode: cash / margin_long / margin_short / auto_select
+- eligibility_status / rejected_mode_reasons
 - short_term_view
 - mid_term_view
 - entry_condition
@@ -56,6 +58,8 @@ JSON Schemaで最低限以下を要求する。
 - risk_factors
 - data_quality_warnings
 - human_review_required
+- margin_requirement / maintenance_ratio / gross_leverage（信用取引時）
+- financing_costs / repayment_deadline / forced_liquidation_risk（信用取引時）
 
 ## ガードレール
 - データにない価格・事実を作らない
@@ -65,6 +69,9 @@ JSON Schemaで最低限以下を要求する。
 - 決算・イベント前は警告
 - 強い断定や利益保証をしない
 - 自動注文を要求・実行しない
+- 信用可否、在庫、費用、保証金等が未確認のモードを取引可能として補完しない
+- `auto_select`を自動売買へ変換せず、採用・却下理由を説明するだけにする
+- 取引モード、数量、保証金、費用、維持率はPythonの検証済み計算結果だけを使用する
 - Gemini停止時はPython分析のみで縮退運転
 
 ## 監査
