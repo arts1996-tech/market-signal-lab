@@ -7,7 +7,7 @@
 要件の優先順位は次のとおりです。
 
 1. 本書の製品要件、アーキテクチャ方針、投資分析ルール、セキュリティ方針、開発ロードマップ
-2. `docs/22_current_priority_todo.md` の現行ToDo、依存順、完了条件、`docs/23_margin_trading.md` の信用取引要件、`docs/24_user_selected_ticker_simulation.md` の利用者指定ティッカー要件、および`docs/27_theme_sector_etf.md`のテーマ・セクターETF要件
+2. `docs/22_current_priority_todo.md` の現行ToDo、依存順、完了条件、`docs/23_margin_trading.md` の信用取引要件、`docs/24_user_selected_ticker_simulation.md` の利用者指定ティッカー要件、`docs/27_theme_sector_etf.md`のテーマ・セクターETF要件、および`docs/28_external_capability_activation_readiness.md`の外部制約解除・有効化条件
 3. `docs/` 配下の現行仕様・受け入れ基準・レビュー・運用手順。仮想取引の振り返りとナレッジ更新は`docs/25_simulation_knowledge_feedback.md`、日常確認用の別アプリは`docs/26_market_signal_lite.md`を正本とする
 4. `README.md` の現行環境に対応した起動・運用手順
 5. 既存コードとテストが示す現在の挙動
@@ -114,6 +114,7 @@ Market Signal Labは、日本株、米国株、日本ETF、米国ETFを対象と
 - 採用前に無料利用可否、無料枠、レート制限、利用規約、再配布条件、商用・個人利用条件、障害時の影響を確認する。
 - 条件は変更され得るため、過去のレビューだけで確定せず、各フェーズ着手時に公式情報を再確認する。
 - データソースの採用判断は `docs/data_sources.md` に記録し、プロバイダーを交換可能にする。
+- プラン変更や新しいAPIの利用可能化は、実装・`current_market`有効化・Raspberry Pi配置の自動承認ではない。`docs/28_external_capability_activation_readiness.md`に従い、能力単位の公式確認、利用者承認、Mac隔離検証、品質ゲート、前向きシャドー、配置承認を順に満たす。
 - スクレイピングは規約、安定性、保守性を確認し、安易に採用しない。
 - Geminiはフェーズ5、Slackはフェーズ6の候補であり、料金・無料枠・規約・モデル選定を再確認し、ユーザー承認後に導入する。
 - Gemini停止時はPython分析とStreamlitのみで縮退運転できるようにする。
@@ -127,6 +128,7 @@ Market Signal Labは、日本株、米国株、日本ETF、米国ETFを対象と
 - 複数銘柄の連続取得は余裕を持った間隔と小さい `--limit` で検証してから増やす。
 - 有料プラン、TOPIX四本値、指数四本値、分足、ティック、前場四本値、アドオンはユーザー確認なしに導入しない。
 - 信用残、逆日歩、信用取引可否等が有料プランに依存する場合も、料金・規約・履歴範囲を提示し、ユーザー承認前に契約・有効化しない。
+- J-Quants上位プランが利用可能になっても、日次価格、指数、財務、信用、分足等を一括して利用可能と推測しない。正確なプラン名と対象能力を確認し、Free由来データとsource・時点・版を分離する。後日のバックフィルを正式な前向き観察へ遡及算入しない。
 
 ## 6. 技術スタックとアーキテクチャ
 

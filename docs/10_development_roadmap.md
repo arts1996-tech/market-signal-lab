@@ -134,6 +134,9 @@ Liteの都合で未完成の分析をUIへ先行実装せず、J-Quants Freeの�
 基準Tier、日次順位、Tier変更提案を分離し、結果を見た後のテーマ・重み変更を同じ検証期間へ遡及適用しない。テーマランキングだけを仮想注文条件にせず、投資推奨として表示しない。
 
 ## フェーズ5 Gemini
+
+外部データ、上位料金プラン、LLM、Slack等が利用可能になった場合も、契約だけでフェーズを完了または`current_market`を有効化しない。能力ごとの開始条件と段階的な昇格は`docs/28_external_capability_activation_readiness.md`に従い、現行の依存順と品質ゲートへ統合する。
+
 - APIクライアント
 - Function Calling
 - Structured Outputs

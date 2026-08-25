@@ -44,6 +44,7 @@ GitHub: https://github.com/arts1996-tech/market-signal-lab
 26. `docs/25_simulation_knowledge_feedback.md`
 27. `docs/26_market_signal_lite.md`
 28. `docs/27_theme_sector_etf.md`
+29. `docs/28_external_capability_activation_readiness.md`
 
 レビュー文書とオプション提案は、必須要件と区別して扱います。文書、既存コード、実運用状態に矛盾がある場合は、機能やルールを勝手に削除せず、差分と推奨案を確認してから変更します。
 
@@ -52,6 +53,8 @@ GitHub: https://github.com/arts1996-tech/market-signal-lab
 本システムは原則として無料で利用できる技術、サービス、API、ライブラリで開発します。有料サービス、有料API、有料プランが必要な機能、無料枠の条件が不明なもの、将来的な課金リスクを判断しきれないものは、導入前に必ず確認します。
 
 データソースの採用方針は [docs/data_sources.md](/Users/tsurusumu/Projects/market-signal-lab/docs/data_sources.md) にまとめます。
+
+J-Quants上位プラン等により現在の制約が解消できる場合の、実装開始条件、品質確認、`current_market`への昇格、Raspberry Pi配置までの手順は[docs/28_external_capability_activation_readiness.md](/Users/tsurusumu/Projects/market-signal-lab/docs/28_external_capability_activation_readiness.md)を正本とします。契約やAPIキー発行だけでは自動的に現在判断へ切り替えません。
 
 ## 現在の基盤と機能
 
