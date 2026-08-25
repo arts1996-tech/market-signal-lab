@@ -42,6 +42,7 @@ GitHub: https://github.com/arts1996-tech/market-signal-lab
 24. `docs/23_margin_trading.md`
 25. `docs/24_user_selected_ticker_simulation.md`
 26. `docs/25_simulation_knowledge_feedback.md`
+27. `docs/26_market_signal_lite.md`
 
 レビュー文書とオプション提案は、必須要件と区別して扱います。文書、既存コード、実運用状態に矛盾がある場合は、機能やルールを勝手に削除せず、差分と推奨案を確認してから変更します。
 
@@ -200,17 +201,20 @@ docker compose run --rm app python jobs/save_etf_metrics.py \
 docker compose run --rm app alembic upgrade head
 ```
 
-4. Docker Composeで起動します。
+4. Docker Composeで既存Lab版とLite版を起動します。
 
 ```bash
-docker compose up --build db app
+docker compose up --build db app lite
 ```
 
 5. ブラウザで開きます。
 
 ```text
-http://localhost:8501
+Market Signal Lab（研究・管理）: http://localhost:8501
+Market Signal Lite（日常確認）: http://localhost:8502
 ```
+
+Lite版は、保存済みデータの時点・品質と`delayed_historical`の短期・中期仮想口座を軽量に確認する別画面です。現在価格と同時点ニュースはまだ接続していないため、現在の売買判断には使用できません。詳細分析、バックテスト、データ収集・監査・運用管理はLab版で確認します。両画面は同じPostgreSQLとサービス層を共有し、Lite版に分析・約定・損益ロジックを複製しません。
 
 ラズパイの常駐収集が稼働中は、同じJ-Quants APIキーのレート制限競合を避けるため、Macで`jquants-collector`を同時起動しません。
 
@@ -254,8 +258,16 @@ docker compose down
 ```bash
 docker compose ps
 docker compose logs -f app
+docker compose logs -f lite
 docker compose logs -f db
 ```
+
+Lite版の基本確認では、`http://localhost:8502`を開き、次を確認します。
+
+- 「ホーム」で遅延研究、価格最終日、品質警告、現在判断が利用できない理由が表示される。
+- 「仮想口座」で`delayed_historical`の短期・中期各250万円口座が分離表示される。
+- 「利用範囲」で現在利用できる機能、未完成機能、自動発注を行わないことが表示される。
+- DB停止時は例外画面ではなく、PostgreSQLへ接続できない旨が表示される。
 
 フェーズ1の基本確認では、`http://localhost:8501` を開き、次を確認します。
 

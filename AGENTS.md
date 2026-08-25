@@ -8,7 +8,7 @@
 
 1. 本書の製品要件、アーキテクチャ方針、投資分析ルール、セキュリティ方針、開発ロードマップ
 2. `docs/22_current_priority_todo.md` の現行ToDo、依存順、完了条件、`docs/23_margin_trading.md` の信用取引要件、および `docs/24_user_selected_ticker_simulation.md` の利用者指定ティッカー要件
-3. `docs/` 配下の現行仕様・受け入れ基準・レビュー・運用手順。仮想取引の振り返りとナレッジ更新は`docs/25_simulation_knowledge_feedback.md`を正本とする
+3. `docs/` 配下の現行仕様・受け入れ基準・レビュー・運用手順。仮想取引の振り返りとナレッジ更新は`docs/25_simulation_knowledge_feedback.md`、日常確認用の別アプリは`docs/26_market_signal_lite.md`を正本とする
 4. `README.md` の現行環境に対応した起動・運用手順
 5. 既存コードとテストが示す現在の挙動
 
@@ -168,6 +168,7 @@ External APIs
 - `app/agents/`: Geminiプロンプト、ツール、構造化出力。フェーズ5で追加する
 - `app/slack_bot/`: Slackコマンド、イベント、Block Kit。フェーズ6で追加する
 - `app/dashboard/`: 表示のみ。入口は `streamlit_app.py`
+- `app/lite_dashboard/`: 日常確認用の別Streamlit入口。既存サービスの保存済み結果だけを軽量表示し、分析・約定ロジックを複製しない
 - `app/core/`: 設定、ログ、例外、時刻
 - `jobs/`: cronまたはsystemd timerから独立実行できるジョブ
 - `tests/`: pytest
