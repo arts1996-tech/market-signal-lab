@@ -6,7 +6,7 @@ the contract that future J-Quants or broker-public-data adapters must satisfy.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
@@ -94,6 +94,10 @@ class MarginTradingSnapshot(BaseModel):
     short_availability: ShortAvailability = ShortAvailability.UNKNOWN
     restriction_codes: tuple[str, ...] = ()
 
+    session_date: date | None = None
+    margin_long_balance: float | None = Field(default=None, ge=0)
+    margin_short_balance: float | None = Field(default=None, ge=0)
+    lending_ratio: float | None = Field(default=None, ge=0)
     margin_interest_rate: float | None = Field(default=None, ge=0)
     stock_lending_fee: float | None = Field(default=None, ge=0)
     borrow_cost: float | None = Field(default=None, ge=0)

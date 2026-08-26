@@ -156,7 +156,7 @@ final_quantity = min(
 ## 11. 段階的な実装順序
 
 1. **完了（MT-P0）**: `cash`、`margin_long`、`margin_short`、`auto_select`、日米の制度差、適格性、在庫、費用、保証金、返済期限、規制、時点・品質を表す不変型とprovider境界を追加した。欠損、未来取得、期限外、古い、利用不能、合成研究データは信用取引可能へ変換せず、`not_eligible`と`insufficient_data`を分離する。`auto_select`の戦略比較、実provider、DB、分析、約定は後続MT-Pで接続する。
-2. 履歴スナップショットと来歴をDBへ保存し、NULL・古い値・改訂を検証する。
+2. **完了（MT-P1）**: 適格性、信用区分、在庫・規制、信用残・貸借倍率・逆日歩、金利・貸株料・借株費用、保証金、返済期限を`asset_trading_capabilities`、`margin_market_snapshots`、`financing_term_snapshots`へ分離して追記保存する。provider記録の再取得時刻を版として保持し、同一入力を冪等化する。判断時点までに有効・利用可能・取得済みの同一source・broker系列だけを読み、NULLをゼロや取引可能へ変換しない。実provider、分析カード、仮想約定はまだ接続しない。
 3. 信用買い・信用売りの分析カードとハードゲートを合成データで実装する。
 4. 保証金、維持率、総レバレッジ、信用費用を共通OHLCイベントエンジンへ接続する。
 5. 現物、信用買い、信用売り、`auto_select`を別系列でバックテストする。

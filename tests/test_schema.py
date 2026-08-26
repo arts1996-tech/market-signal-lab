@@ -2,10 +2,13 @@ from app.database.models import (
     AssetAnalysisResult,
     AssetAnalysisRun,
     AssetLifecycleRecord,
+    AssetTradingCapability,
     AssetUniverseCoverage,
     CorrelationResult,
     CorporateAction,
     CorporateActionCoverage,
+    FinancingTermSnapshot,
+    MarginMarketSnapshot,
     MarketPrice,
     SpilloverFeature,
     SpilloverModelResult,
@@ -132,6 +135,51 @@ def test_virtual_account_ledger_has_freeze_and_event_idempotency_constraints():
     assert "decision_track" in VirtualAccountEvent.__table__.columns
     for column in ("equity", "unrealized_pnl", "cumulative_pnl", "maximum_drawdown"):
         assert VirtualAccountDailyState.__table__.columns[column].nullable
+
+
+def test_margin_snapshots_are_separate_append_only_ready_histories():
+    capability_constraints = {
+        constraint.name for constraint in AssetTradingCapability.__table__.constraints
+    }
+    market_constraints = {
+        constraint.name for constraint in MarginMarketSnapshot.__table__.constraints
+    }
+    financing_constraints = {
+        constraint.name for constraint in FinancingTermSnapshot.__table__.constraints
+    }
+
+    assert "uq_asset_trading_capability_provider_record" in capability_constraints
+    assert "ck_asset_trading_capability_effective_period" in capability_constraints
+    assert "uq_margin_market_snapshot_provider_record" in market_constraints
+    assert "ck_margin_market_snapshot_long_balance" in market_constraints
+    assert "uq_financing_term_snapshot_provider_record" in financing_constraints
+    assert "ck_financing_term_snapshot_effective_period" in financing_constraints
+    assert {
+        "margin_long_eligible",
+        "margin_short_eligible",
+        "credit_types",
+        "short_availability",
+        "restriction_codes",
+        "effective_from",
+        "available_at",
+        "fetched_at",
+        "input_hash",
+    }.issubset(AssetTradingCapability.__table__.columns.keys())
+    assert {
+        "margin_long_balance",
+        "margin_short_balance",
+        "lending_ratio",
+        "reverse_stock_borrow_fee",
+    }.issubset(MarginMarketSnapshot.__table__.columns.keys())
+    assert {
+        "margin_interest_rate",
+        "stock_lending_fee",
+        "borrow_cost",
+        "initial_margin_rate",
+        "maintenance_margin_rate",
+        "minimum_margin_amount",
+        "repayment_term_days",
+    }.issubset(FinancingTermSnapshot.__table__.columns.keys())
 
 
 def test_asset_analysis_has_version_and_per_run_asset_constraints():

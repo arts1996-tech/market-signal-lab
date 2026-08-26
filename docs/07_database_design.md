@@ -115,7 +115,7 @@
 
 詳細要件は[23 信用取引モード仕様](23_margin_trading.md)を参照する。
 
-### `asset_trading_capabilities`候補
+### `asset_trading_capabilities`（MT-P1実装済み）
 
 - asset_id
 - market / broker_scope
@@ -129,7 +129,7 @@
 
 同一資産でも取引可否や在庫は変化するため、現在値で過去を上書きしない。米国資産へ日本固有の制度区分を設定せず、該当しない値はNULLまたは`not_applicable`とする。
 
-### `margin_market_snapshots`候補
+### `margin_market_snapshots`（MT-P1実装済み）
 
 - asset_id / session_date
 - margin_long_balance / margin_short_balance
@@ -138,7 +138,7 @@
 - effective_at / available_at / fetched_at
 - source / quality_status
 
-### `financing_term_snapshots`候補
+### `financing_term_snapshots`（MT-P1実装済み）
 
 - asset_id / market / broker_scope / currency
 - margin_interest_rate / stock_lending_fee / borrow_cost
@@ -154,6 +154,8 @@
 - `virtual_account_daily_states`に現物拘束額、信用必要保証金、利用可能余力、建玉総額、総レバレッジ、口座維持率を保持できるようにする。
 - `backtest_runs`と`backtest_results`は現物、信用買い、信用売り、`auto_select`を別系列・別ルール版として識別する。
 - `auto_select`では比較した全モードの入力ハッシュ、評価、却下理由を監査可能にする。
+
+3種類の信用スナップショットは`source + provider_record_id + fetched_at`を取得版の一意境界とし、UPDATE／DELETEをDB triggerで拒否する。同じ取得版・同じ入力は冪等に扱い、同じ外部記録を後から再取得した場合は新しい`fetched_at`の行として追記する。判断時点読出しではsourceとbrokerを明示し、`effective_from`、`effective_to`、`available_at`、`fetched_at`をすべて満たす履歴だけを使う。
 
 DB変更は追加マイグレーションで行い、既存の現物ポジションは`cash`へ安全に移行する。NULLをゼロや「取引可能」へ変換しない。Raspberry Pi適用前にMacでupgrade/downgrade、既存台帳の不変性、バックアップ・リストアを確認する。
 

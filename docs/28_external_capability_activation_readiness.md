@@ -59,7 +59,7 @@
 
 上位プランに変更しても、Freeで取得済みの価格や既存分析を上書きしない。`source`、provider版、取得時刻、利用可能時刻を分離し、同一時点で比較できる形で追加する。過去データを後から埋めても、正式な前向き観察期間へ遡って算入しない。
 
-信用取引についてはMT-P0で交換可能な`MarginTradingProvider`、日米正規化型、4モード、欠損・鮮度・先読み防止境界を実装済みである。契約後は既存型を変更してAPIへ密結合せず、最初に公式応答adapterとfixtureを追加する。提供されない項目はNULLのまま保持し、`broker_scope`、`source_version`、`effective_from`、`available_at`、`fetched_at`、品質状態を埋められない能力は有効化しない。
+信用取引についてはMT-P0で交換可能な`MarginTradingProvider`、日米正規化型、4モード、欠損・鮮度・先読み防止境界を実装済みである。MT-P1では適格性、市場残高、費用・保証金を分けた追記型DBと時点読出しも実装済みである。契約後は既存型やDBを変更してAPIへ密結合せず、最初に公式応答adapterとfixtureを追加する。提供されない項目はNULLのまま保持し、`broker_scope`、`source_version`、`effective_from`、`available_at`、`fetched_at`、品質状態を埋められない能力は有効化しない。
 
 J-Quantsの契約変更を利用者から知らされた場合、最初に確認するのは、正確なプラン名、利用開始日、利用したい能力、公式プラン・API資料、APIキーの権限変更有無、更新・失効日である。秘密値の提示は求めない。
 

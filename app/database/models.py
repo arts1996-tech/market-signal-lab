@@ -775,6 +775,241 @@ class PriceCollectionItem(Base):
     details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
 
 
+class AssetTradingCapability(Base):
+    __tablename__ = "asset_trading_capabilities"
+    __table_args__ = (
+        UniqueConstraint(
+            "source",
+            "provider_record_id",
+            "fetched_at",
+            name="uq_asset_trading_capability_provider_record",
+        ),
+        CheckConstraint("market IN ('jp', 'us')", name="ck_asset_trading_capability_market"),
+        CheckConstraint(
+            "asset_type IN ('stock', 'etf')",
+            name="ck_asset_trading_capability_asset_type",
+        ),
+        CheckConstraint(
+            "short_availability IN ('available', 'limited', 'unavailable', "
+            "'unknown', 'not_applicable')",
+            name="ck_asset_trading_capability_short_availability",
+        ),
+        CheckConstraint(
+            "data_quality_status IN ('verified', 'partial', 'stale', "
+            "'unavailable', 'synthetic_research')",
+            name="ck_asset_trading_capability_quality",
+        ),
+        CheckConstraint(
+            "effective_to IS NULL OR effective_to > effective_from",
+            name="ck_asset_trading_capability_effective_period",
+        ),
+        CheckConstraint(
+            "repayment_term_days IS NULL OR repayment_term_days > 0",
+            name="ck_asset_trading_capability_repayment_term",
+        ),
+        CheckConstraint(
+            "fetched_at >= available_at",
+            name="ck_asset_trading_capability_fetch_time",
+        ),
+        Index(
+            "ix_asset_trading_capabilities_lookup",
+            "asset_id",
+            "broker_scope",
+            "effective_from",
+            "available_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    asset_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("assets.id"), nullable=False
+    )
+    provider_record_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    market: Mapped[str] = mapped_column(String(8), nullable=False)
+    asset_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    broker_scope: Mapped[str] = mapped_column(String(64), nullable=False)
+    margin_long_eligible: Mapped[bool | None] = mapped_column(Boolean)
+    margin_short_eligible: Mapped[bool | None] = mapped_column(Boolean)
+    credit_types: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    is_lending_issue: Mapped[bool | None] = mapped_column(Boolean)
+    short_availability: Mapped[str] = mapped_column(String(32), nullable=False)
+    restriction_codes: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    repayment_term_days: Mapped[int | None] = mapped_column(Integer)
+    effective_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    effective_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    data_quality_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class MarginMarketSnapshot(Base):
+    __tablename__ = "margin_market_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "source",
+            "provider_record_id",
+            "fetched_at",
+            name="uq_margin_market_snapshot_provider_record",
+        ),
+        CheckConstraint("market IN ('jp', 'us')", name="ck_margin_market_snapshot_market"),
+        CheckConstraint(
+            "margin_long_balance IS NULL OR margin_long_balance >= 0",
+            name="ck_margin_market_snapshot_long_balance",
+        ),
+        CheckConstraint(
+            "margin_short_balance IS NULL OR margin_short_balance >= 0",
+            name="ck_margin_market_snapshot_short_balance",
+        ),
+        CheckConstraint(
+            "lending_ratio IS NULL OR lending_ratio >= 0",
+            name="ck_margin_market_snapshot_lending_ratio",
+        ),
+        CheckConstraint(
+            "reverse_stock_borrow_fee IS NULL OR reverse_stock_borrow_fee >= 0",
+            name="ck_margin_market_snapshot_reverse_fee",
+        ),
+        CheckConstraint(
+            "data_quality_status IN ('verified', 'partial', 'stale', "
+            "'unavailable', 'synthetic_research')",
+            name="ck_margin_market_snapshot_quality",
+        ),
+        CheckConstraint(
+            "fetched_at >= available_at",
+            name="ck_margin_market_snapshot_fetch_time",
+        ),
+        Index(
+            "ix_margin_market_snapshots_lookup",
+            "asset_id",
+            "session_date",
+            "available_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    asset_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("assets.id"), nullable=False
+    )
+    provider_record_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    market: Mapped[str] = mapped_column(String(8), nullable=False)
+    broker_scope: Mapped[str] = mapped_column(String(64), nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), nullable=False)
+    session_date: Mapped[date | None] = mapped_column(Date)
+    margin_long_balance: Mapped[float | None] = mapped_column(Numeric(24, 4))
+    margin_short_balance: Mapped[float | None] = mapped_column(Numeric(24, 4))
+    lending_ratio: Mapped[float | None] = mapped_column(Numeric(18, 8))
+    reverse_stock_borrow_fee: Mapped[float | None] = mapped_column(Numeric(18, 8))
+    effective_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    data_quality_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class FinancingTermSnapshot(Base):
+    __tablename__ = "financing_term_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "source",
+            "provider_record_id",
+            "fetched_at",
+            name="uq_financing_term_snapshot_provider_record",
+        ),
+        CheckConstraint("market IN ('jp', 'us')", name="ck_financing_term_snapshot_market"),
+        CheckConstraint(
+            "initial_margin_rate IS NULL OR "
+            "(initial_margin_rate >= 0 AND initial_margin_rate <= 1)",
+            name="ck_financing_term_snapshot_initial_margin",
+        ),
+        CheckConstraint(
+            "maintenance_margin_rate IS NULL OR "
+            "(maintenance_margin_rate >= 0 AND maintenance_margin_rate <= 1)",
+            name="ck_financing_term_snapshot_maintenance_margin",
+        ),
+        CheckConstraint(
+            "effective_to IS NULL OR effective_to > effective_from",
+            name="ck_financing_term_snapshot_effective_period",
+        ),
+        CheckConstraint(
+            "margin_interest_rate IS NULL OR margin_interest_rate >= 0",
+            name="ck_financing_term_snapshot_interest",
+        ),
+        CheckConstraint(
+            "stock_lending_fee IS NULL OR stock_lending_fee >= 0",
+            name="ck_financing_term_snapshot_lending_fee",
+        ),
+        CheckConstraint(
+            "borrow_cost IS NULL OR borrow_cost >= 0",
+            name="ck_financing_term_snapshot_borrow_cost",
+        ),
+        CheckConstraint(
+            "minimum_margin_amount IS NULL OR minimum_margin_amount >= 0",
+            name="ck_financing_term_snapshot_minimum_margin",
+        ),
+        CheckConstraint(
+            "repayment_term_days IS NULL OR repayment_term_days > 0",
+            name="ck_financing_term_snapshot_repayment_term",
+        ),
+        CheckConstraint(
+            "data_quality_status IN ('verified', 'partial', 'stale', "
+            "'unavailable', 'synthetic_research')",
+            name="ck_financing_term_snapshot_quality",
+        ),
+        CheckConstraint(
+            "fetched_at >= available_at",
+            name="ck_financing_term_snapshot_fetch_time",
+        ),
+        Index(
+            "ix_financing_term_snapshots_lookup",
+            "asset_id",
+            "broker_scope",
+            "effective_from",
+            "available_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    asset_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("assets.id"), nullable=False
+    )
+    provider_record_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    market: Mapped[str] = mapped_column(String(8), nullable=False)
+    broker_scope: Mapped[str] = mapped_column(String(64), nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), nullable=False)
+    margin_interest_rate: Mapped[float | None] = mapped_column(Numeric(18, 8))
+    stock_lending_fee: Mapped[float | None] = mapped_column(Numeric(18, 8))
+    borrow_cost: Mapped[float | None] = mapped_column(Numeric(18, 8))
+    initial_margin_rate: Mapped[float | None] = mapped_column(Numeric(18, 8))
+    maintenance_margin_rate: Mapped[float | None] = mapped_column(Numeric(18, 8))
+    minimum_margin_amount: Mapped[float | None] = mapped_column(Numeric(20, 4))
+    repayment_term_days: Mapped[int | None] = mapped_column(Integer)
+    forced_liquidation_rule_version: Mapped[str | None] = mapped_column(String(64))
+    effective_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    effective_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    data_quality_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class VirtualAccount(Base):
     __tablename__ = "virtual_accounts"
     __table_args__ = (
