@@ -126,7 +126,13 @@ class JQuantsClient:
                 if response.status_code < 400:
                     latency_ms = int((perf_counter() - started) * 1000)
                     return parse_listed_info_response(response.json()), latency_ms, endpoint
-                last_error = DataProviderError(build_http_error_message(response))
+                last_error = DataProviderError(
+                    build_http_error_message(response),
+                    category=jquants_error_category(response.status_code),
+                    retryable=response.status_code == 429 or response.status_code >= 500,
+                )
+                if last_error.retryable:
+                    raise last_error
         latency_ms = int((perf_counter() - started) * 1000)
         message = str(last_error) if last_error else "J-Quants listed info request failed"
         raise DataProviderError(f"{message}. tried_endpoints={list(self.listed_info_endpoints)} latency_ms={latency_ms}")

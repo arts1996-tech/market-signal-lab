@@ -206,6 +206,40 @@ def test_listed_info_endpoint_candidates_try_equities_path_first():
     assert "/v2/listed/info" in JQuantsClient.listed_info_endpoints
 
 
+def test_listed_info_rate_limit_does_not_fall_back_to_legacy_endpoints(monkeypatch):
+    class Response:
+        status_code = 429
+        text = "slow down"
+        request = httpx.Request("GET", "https://api.jquants.com/v2/equities/master")
+
+    class Client:
+        calls = []
+
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, url, **_kwargs):
+            self.calls.append(url)
+            return Response()
+
+    monkeypatch.setattr("app.collectors.jquants.httpx.Client", Client)
+
+    client = JQuantsClient()
+    client.settings.jquants_api_key = "test-key"
+    with pytest.raises(DataProviderError) as error:
+        client.fetch_listed_info()
+
+    assert error.value.category == "rate_limited"
+    assert error.value.retryable is True
+    assert Client.calls == ["https://api.jquants.com/v2/equities/master"]
+
+
 def test_parse_listed_info_response_accepts_master_key():
     assets = parse_listed_info_response({"master": [{"Code": "86970", "CompanyName": "日本取引所グループ"}]})
 
