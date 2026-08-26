@@ -8,7 +8,10 @@ from sqlalchemy.orm import Session
 
 from app.analysis.movement_candidates import build_movement_candidates
 from app.analysis.screening import SCREENING_MIN_HISTORY, screen_assets
-from app.analysis.technical import STOCHASTIC_RULE_VERSION
+from app.analysis.technical import (
+    STOCHASTIC_RULE_VERSION,
+    SUPPORT_RESISTANCE_RULE_VERSION,
+)
 from app.backtest.audit import frame_hash, json_value, stable_payload_hash
 from app.core.config import get_settings
 from app.core.data_source_policy import SOURCE_POLICY_VERSION
@@ -25,7 +28,7 @@ from app.database.repositories import (
 
 
 ASSET_ANALYSIS_NAME = "phase3_asset_screening"
-ASSET_ANALYSIS_RULE_VERSION = "phase3-all-assets-v3"
+ASSET_ANALYSIS_RULE_VERSION = "phase3-all-assets-v4"
 ASSET_ANALYSIS_PAGE_SIZE_MAX = 200
 INDEX_SYMBOLS = ["NASDAQCOM", "DJIA", "SP500", "NIKKEI225"]
 
@@ -233,6 +236,7 @@ def run_all_asset_analysis(session: Session, *, started_at: datetime | None = No
             "calendar_return_policy": "completed_xtks_period_close_to_close_v1",
             "atr_policy": "adjusted_ohlc_atr14_v1",
             "stochastic_policy": STOCHASTIC_RULE_VERSION,
+            "support_resistance_policy": SUPPORT_RESISTANCE_RULE_VERSION,
             "relative_strength_policy": "exact_20_session_return_difference_v1",
             "sector_peer_minimum_total_assets": 3,
             "distance_52week_policy": "latest_close_vs_adjusted_high_252_contiguous_v1",

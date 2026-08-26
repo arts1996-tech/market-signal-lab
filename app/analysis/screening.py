@@ -8,10 +8,27 @@ from app.analysis.technical import (
     distance_from_rolling_high,
     horizon_relative_strength,
     short_term_indicator_frame,
+    support_resistance_candidates,
 )
 
 
 SCREENING_MIN_HISTORY = 30
+
+
+def _nearest_active_level(candidates: pd.DataFrame, level_type: str) -> dict:
+    if candidates.empty:
+        return {}
+    levels = candidates[
+        (candidates["level_type"] == level_type)
+        & (candidates["status"] == "active")
+    ].copy()
+    if level_type == "support":
+        levels = levels[levels["price_level"] <= levels["latest_close"]]
+    else:
+        levels = levels[levels["price_level"] >= levels["latest_close"]]
+    if levels.empty:
+        return {}
+    return levels.loc[levels["distance_to_latest"].abs().idxmin()].to_dict()
 
 
 def technical_attention_snapshot(latest: pd.Series, observations: int) -> dict:
@@ -145,6 +162,17 @@ def screen_assets(
         "relative_strength_vs_sector_20d",
         "sector_peer_count",
         "distance_from_52week_high",
+        "nearest_support_level",
+        "nearest_support_band_low",
+        "nearest_support_band_high",
+        "nearest_support_touch_count",
+        "nearest_support_invalidation_price",
+        "nearest_resistance_level",
+        "nearest_resistance_band_low",
+        "nearest_resistance_band_high",
+        "nearest_resistance_touch_count",
+        "nearest_resistance_invalidation_price",
+        "support_resistance_candidates",
         "metric_quality_reasons",
     ]
     if prices.empty or assets.empty:
@@ -205,6 +233,10 @@ def screen_assets(
         monthly = completed_period_returns(close, "monthly")
         benchmark = horizon_relative_strength(close, benchmark_close, horizon=20)
         distance_52week = distance_from_rolling_high(close, high=high, window=252)
+        support_resistance = support_resistance_candidates(high, low, close)
+        levels = support_resistance["candidates"]
+        nearest_support = _nearest_active_level(levels, "support")
+        nearest_resistance = _nearest_active_level(levels, "resistance")
         if weekly.empty:
             metric_quality_reasons.append("weekly_return_insufficient_completed_periods")
             attention["quality_warnings"].append("週次リターンに必要な完了週が不足")
@@ -227,6 +259,16 @@ def screen_assets(
         if distance_52week is None:
             metric_quality_reasons.append("distance_52week_insufficient_history")
             attention["quality_warnings"].append("52週高値乖離に必要な252営業日が不足")
+        for reason in support_resistance["quality_reasons"]:
+            metric_quality_reasons.append(reason)
+            if reason == "support_resistance_unavailable_missing_valid_ohlc":
+                attention["quality_warnings"].append(
+                    "支持・抵抗候補に必要な連続した有効OHLCが不足"
+                )
+            elif reason == "support_resistance_insufficient_contiguous_valid_ohlc":
+                attention["quality_warnings"].append(
+                    "支持・抵抗候補に必要な連続した有効OHLCが30営業日未満"
+                )
         if total_observations > contiguous_observations:
             attention["quality_warnings"].append(
                 f"非連続の過去観測{total_observations - contiguous_observations}件を除外"
@@ -260,6 +302,17 @@ def screen_assets(
             "relative_strength_vs_sector_20d": None,
             "sector_peer_count": 0,
             "distance_from_52week_high": distance_52week,
+            "nearest_support_level": nearest_support.get("price_level"),
+            "nearest_support_band_low": nearest_support.get("price_band_low"),
+            "nearest_support_band_high": nearest_support.get("price_band_high"),
+            "nearest_support_touch_count": nearest_support.get("touch_count"),
+            "nearest_support_invalidation_price": nearest_support.get("invalidation_price"),
+            "nearest_resistance_level": nearest_resistance.get("price_level"),
+            "nearest_resistance_band_low": nearest_resistance.get("price_band_low"),
+            "nearest_resistance_band_high": nearest_resistance.get("price_band_high"),
+            "nearest_resistance_touch_count": nearest_resistance.get("touch_count"),
+            "nearest_resistance_invalidation_price": nearest_resistance.get("invalidation_price"),
+            "support_resistance_candidates": levels.to_dict(orient="records"),
             "metric_quality_reasons": metric_quality_reasons,
         })
     result = pd.DataFrame(rows, columns=columns)

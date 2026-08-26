@@ -33,6 +33,8 @@ from app.analysis.technical import (
     STOCHASTIC_RULE_VERSION,
     short_term_indicator_frame,
     short_term_signal_snapshot,
+    support_resistance_candidates,
+    SUPPORT_RESISTANCE_RULE_VERSION,
 )
 from app.analysis.virtual_trading import (
     build_virtual_trades,
@@ -829,7 +831,11 @@ def load_short_term_analysis(session: Session, symbol: str) -> dict:
             "prices": prices,
             "indicators": pd.DataFrame(),
             "snapshot": short_term_signal_snapshot(pd.DataFrame()),
-            "indicator_rule_versions": {"stochastic": STOCHASTIC_RULE_VERSION},
+            "support_resistance": support_resistance_candidates(None, None, pd.Series(dtype=float)),
+            "indicator_rule_versions": {
+                "stochastic": STOCHASTIC_RULE_VERSION,
+                "support_resistance": SUPPORT_RESISTANCE_RULE_VERSION,
+            },
         }
 
     frame = prices.copy()
@@ -844,11 +850,16 @@ def load_short_term_analysis(session: Session, symbol: str) -> dict:
     high = ordered["high"] if "high" in ordered else None
     low = ordered["low"] if "low" in ordered else None
     indicators = short_term_indicator_frame(close, high=high, low=low)
+    support_resistance = support_resistance_candidates(high, low, close)
     return {
         "prices": frame,
         "indicators": indicators,
         "snapshot": short_term_signal_snapshot(indicators),
-        "indicator_rule_versions": {"stochastic": STOCHASTIC_RULE_VERSION},
+        "support_resistance": support_resistance,
+        "indicator_rule_versions": {
+            "stochastic": STOCHASTIC_RULE_VERSION,
+            "support_resistance": SUPPORT_RESISTANCE_RULE_VERSION,
+        },
         "source": frame["source"].dropna().iloc[-1] if not frame["source"].dropna().empty else "-",
         "fetched_at": frame["fetched_at"].dropna().iloc[-1] if not frame["fetched_at"].dropna().empty else None,
     }

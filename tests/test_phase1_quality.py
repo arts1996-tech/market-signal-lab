@@ -115,3 +115,4 @@ def test_short_term_analysis_uses_available_high_low_for_stochastic(monkeypatch)
 
     assert result["indicators"]["stoch_d_14_3_3"].notna().any()
     assert result["indicator_rule_versions"]["stochastic"].endswith("v1")
+    assert result["indicator_rule_versions"]["support_resistance"].endswith("v1")

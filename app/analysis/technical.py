@@ -10,6 +10,31 @@ STOCHASTIC_HIGH_LOW_WINDOW = 14
 STOCHASTIC_K_SMOOTHING = 3
 STOCHASTIC_D_WINDOW = 3
 STOCHASTIC_RULE_VERSION = "stochastic-slow-14-3-3-sma-v1"
+SUPPORT_RESISTANCE_LOOKBACK = 60
+SUPPORT_RESISTANCE_MIN_OBSERVATIONS = 30
+SUPPORT_RESISTANCE_SWING_WINDOW = 2
+SUPPORT_RESISTANCE_BAND_RATIO = 0.015
+SUPPORT_RESISTANCE_MIN_TOUCHES = 2
+SUPPORT_RESISTANCE_RULE_VERSION = "support-resistance-swing-60-2-1.5pct-v1"
+
+
+def _support_resistance_empty_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=[
+            "level_type",
+            "price_level",
+            "price_band_low",
+            "price_band_high",
+            "touch_count",
+            "first_touch_time",
+            "last_touch_time",
+            "latest_close",
+            "distance_to_latest",
+            "status",
+            "invalidation_price",
+            "invalidation_condition",
+        ]
+    )
 
 
 def _normalized_series(values: pd.Series) -> pd.Series:
@@ -149,6 +174,166 @@ def stochastic_oscillator(
             slow_d_name: slow_d,
         }
     )
+
+
+def support_resistance_candidates(
+    high: pd.Series | None,
+    low: pd.Series | None,
+    close: pd.Series,
+    *,
+    lookback: int = SUPPORT_RESISTANCE_LOOKBACK,
+    min_observations: int = SUPPORT_RESISTANCE_MIN_OBSERVATIONS,
+    swing_window: int = SUPPORT_RESISTANCE_SWING_WINDOW,
+    band_ratio: float = SUPPORT_RESISTANCE_BAND_RATIO,
+    min_touches: int = SUPPORT_RESISTANCE_MIN_TOUCHES,
+) -> dict:
+    """Find confirmed support/resistance price bands from past valid OHLC only.
+
+    A swing is confirmed only after ``swing_window`` subsequent observations.  Calling
+    the function with a historical slice therefore cannot use data after that slice's
+    analysis timestamp.  Invalid or missing OHLC breaks the usable sequence instead
+    of being filled.
+    """
+
+    integer_parameters = {
+        "lookback": lookback,
+        "min_observations": min_observations,
+        "swing_window": swing_window,
+        "min_touches": min_touches,
+    }
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 1
+        for value in integer_parameters.values()
+    ):
+        raise ValueError("support/resistance integer parameters must be positive integers")
+    if min_observations > lookback:
+        raise ValueError("min_observations must not exceed lookback")
+    if not isinstance(band_ratio, (int, float)) or isinstance(band_ratio, bool) or not 0 < band_ratio < 1:
+        raise ValueError("band_ratio must be a number between zero and one")
+    if high is None or low is None:
+        return {
+            "candidates": _support_resistance_empty_frame(),
+            "quality_reasons": ["support_resistance_unavailable_missing_valid_ohlc"],
+            "rule_version": SUPPORT_RESISTANCE_RULE_VERSION,
+        }
+
+    ordered = pd.DataFrame(
+        {
+            "high": pd.to_numeric(high, errors="coerce"),
+            "low": pd.to_numeric(low, errors="coerce"),
+            "close": pd.to_numeric(close, errors="coerce"),
+        }
+    ).sort_index()
+    valid = (
+        ordered.notna().all(axis=1)
+        & (ordered["high"] > 0)
+        & (ordered["low"] > 0)
+        & (ordered["close"] > 0)
+        & (ordered["high"] >= ordered["low"])
+        & (ordered["high"] >= ordered["close"])
+        & (ordered["low"] <= ordered["close"])
+    )
+    if not valid.any():
+        return {
+            "candidates": _support_resistance_empty_frame(),
+            "quality_reasons": ["support_resistance_unavailable_missing_valid_ohlc"],
+            "rule_version": SUPPORT_RESISTANCE_RULE_VERSION,
+        }
+
+    # A missing or invalid observation is a hard boundary: do not bridge it with a
+    # price band that would make the measurement look more complete than it is.
+    invalid_positions = (~valid.to_numpy()).nonzero()[0]
+    first_latest_run = int(invalid_positions[-1]) + 1 if len(invalid_positions) else 0
+    usable = ordered.iloc[first_latest_run:]
+    if len(usable) < min_observations:
+        return {
+            "candidates": _support_resistance_empty_frame(),
+            "quality_reasons": ["support_resistance_insufficient_contiguous_valid_ohlc"],
+            "rule_version": SUPPORT_RESISTANCE_RULE_VERSION,
+        }
+    usable = usable.tail(lookback)
+    latest_close = float(usable["close"].iloc[-1])
+
+    def confirmed_swings(column: str, *, is_low: bool) -> list[dict]:
+        points: list[dict] = []
+        values = usable[column]
+        for position in range(swing_window, len(values) - swing_window):
+            value = float(values.iloc[position])
+            neighbors = pd.concat(
+                [
+                    values.iloc[position - swing_window : position],
+                    values.iloc[position + 1 : position + swing_window + 1],
+                ]
+            )
+            is_swing = (value < neighbors).all() if is_low else (value > neighbors).all()
+            if is_swing:
+                points.append({"price": value, "time": values.index[position]})
+        return points
+
+    def grouped_levels(points: list[dict], level_type: str) -> list[dict]:
+        grouped: list[list[dict]] = []
+        for point in sorted(points, key=lambda item: item["price"]):
+            if not grouped:
+                grouped.append([point])
+                continue
+            previous = grouped[-1]
+            center = float(pd.Series(item["price"] for item in previous).median())
+            if abs(point["price"] - center) / center <= band_ratio:
+                previous.append(point)
+            else:
+                grouped.append([point])
+
+        rows: list[dict] = []
+        for group in grouped:
+            if len(group) < min_touches:
+                continue
+            level = float(pd.Series(item["price"] for item in group).median())
+            band_low = level * (1 - band_ratio)
+            band_high = level * (1 + band_ratio)
+            if level_type == "support":
+                status = "active" if latest_close >= band_low else "invalidated"
+                invalidation_price = band_low
+                condition = "終値が支持帯下限を下回った場合"
+            else:
+                status = "active" if latest_close <= band_high else "invalidated"
+                invalidation_price = band_high
+                condition = "終値が抵抗帯上限を上回った場合"
+            rows.append(
+                {
+                    "level_type": level_type,
+                    "price_level": level,
+                    "price_band_low": band_low,
+                    "price_band_high": band_high,
+                    "touch_count": len(group),
+                    "first_touch_time": min(item["time"] for item in group),
+                    "last_touch_time": max(item["time"] for item in group),
+                    "latest_close": latest_close,
+                    "distance_to_latest": level / latest_close - 1,
+                    "status": status,
+                    "invalidation_price": invalidation_price,
+                    "invalidation_condition": condition,
+                }
+            )
+        return rows
+
+    rows = grouped_levels(confirmed_swings("low", is_low=True), "support")
+    rows.extend(grouped_levels(confirmed_swings("high", is_low=False), "resistance"))
+    candidates = pd.DataFrame(rows, columns=_support_resistance_empty_frame().columns)
+    if not candidates.empty:
+        candidates = candidates.sort_values(
+            ["status", "distance_to_latest", "touch_count"],
+            key=lambda values: (
+                values.map({"active": 0, "invalidated": 1})
+                if values.name == "status"
+                else values.abs() if values.name == "distance_to_latest" else -values
+            ),
+            kind="stable",
+        ).reset_index(drop=True)
+    return {
+        "candidates": candidates,
+        "quality_reasons": [],
+        "rule_version": SUPPORT_RESISTANCE_RULE_VERSION,
+    }
 
 
 def completed_period_returns(

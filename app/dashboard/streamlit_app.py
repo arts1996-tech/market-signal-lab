@@ -512,6 +512,58 @@ if active_page == "短期分析":
                 "ストキャスティクスは連続した有効な高値・安値・終値が不足しているため未算出です。"
             )
 
+        st.subheader("支持・抵抗候補")
+        support_resistance = short.get("support_resistance", {})
+        level_candidates = pd.DataFrame(support_resistance.get("candidates", []))
+        if level_candidates.empty:
+            st.info(
+                "支持・抵抗候補は、連続した有効OHLCから確認済みの価格帯を"
+                "2回以上検出できた場合だけ表示します。"
+            )
+        else:
+            level_view = level_candidates.copy()
+            for column in [
+                "price_level",
+                "price_band_low",
+                "price_band_high",
+                "latest_close",
+                "distance_to_latest",
+                "invalidation_price",
+            ]:
+                level_view[column] = pd.to_numeric(level_view[column], errors="coerce")
+            level_view["distance_to_latest"] = level_view["distance_to_latest"].map(
+                format_percent
+            )
+            for column in ["first_touch_time", "last_touch_time"]:
+                level_view[column] = level_view[column].map(
+                    lambda value: "-" if pd.isna(value) else pd.Timestamp(value).strftime("%Y-%m-%d")
+                )
+            st.dataframe(
+                level_view.rename(
+                    columns={
+                        "level_type": "種別",
+                        "price_level": "中心価格",
+                        "price_band_low": "価格帯下限",
+                        "price_band_high": "価格帯上限",
+                        "touch_count": "接触数",
+                        "first_touch_time": "初回接触",
+                        "last_touch_time": "最終接触",
+                        "latest_close": "最新終値",
+                        "distance_to_latest": "終値との乖離",
+                        "status": "状態",
+                        "invalidation_price": "無効化価格",
+                        "invalidation_condition": "無効条件",
+                    }
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+        st.caption(
+            "支持・抵抗版: "
+            f"{short.get('indicator_rule_versions', {}).get('support_resistance', '-')}。"
+            "局所高値・安値を後続2観測で確認してから集計し、注目度や売買判断へ自動加点しません。"
+        )
+
         macd_fig = go.Figure()
         macd_fig.add_trace(
             go.Scatter(x=chart_frame["price_time"], y=chart_frame["macd"], name="MACD", mode="lines")
@@ -565,9 +617,10 @@ if active_page == "銘柄・ETF分析":
         )
         st.caption(
             f"分析版: {analysis_run['rule_version']}。"
-            "週次・月次リターン、ATR、ストキャスティクス、日経平均・同業種相対強度、52週高値乖離は実装済みですが、"
+            "週次・月次リターン、ATR、ストキャスティクス、支持・抵抗、日経平均・同業種相対強度、52週高値乖離は実装済みですが、"
             "各指標の必要履歴・OHLC・比較対象がそろうまで値を表示しません。"
-            f"ストキャスティクス版: {analysis_run['details'].get('stochastic_policy', '-')}。"
+            f"ストキャスティクス版: {analysis_run['details'].get('stochastic_policy', '-')} / "
+            f"支持・抵抗版: {analysis_run['details'].get('support_resistance_policy', '-')}。"
         )
     else:
         filter_cols = st.columns(3)
@@ -629,6 +682,16 @@ if active_page == "銘柄・ETF分析":
                 "relative_strength_vs_sector_20d",
                 "sector_peer_count",
                 "distance_from_52week_high",
+                "nearest_support_level",
+                "nearest_support_band_low",
+                "nearest_support_band_high",
+                "nearest_support_touch_count",
+                "nearest_support_invalidation_price",
+                "nearest_resistance_level",
+                "nearest_resistance_band_low",
+                "nearest_resistance_band_high",
+                "nearest_resistance_touch_count",
+                "nearest_resistance_invalidation_price",
             ]:
                 if column not in view:
                     view[column] = None
@@ -669,6 +732,17 @@ if active_page == "銘柄・ETF分析":
                 )
             view["rsi_14"] = view["rsi_14"].round(1)
             view["atr_14"] = pd.to_numeric(view["atr_14"], errors="coerce").round(2)
+            for column in [
+                "nearest_support_level",
+                "nearest_support_band_low",
+                "nearest_support_band_high",
+                "nearest_support_invalidation_price",
+                "nearest_resistance_level",
+                "nearest_resistance_band_low",
+                "nearest_resistance_band_high",
+                "nearest_resistance_invalidation_price",
+            ]:
+                view[column] = pd.to_numeric(view[column], errors="coerce").round(2)
             view["stoch_raw_k_14"] = pd.to_numeric(
                 view["stoch_raw_k_14"], errors="coerce"
             ).round(1)
@@ -698,6 +772,16 @@ if active_page == "銘柄・ETF分析":
                 "relative_strength_vs_sector_20d",
                 "sector_peer_count",
                 "distance_from_52week_high",
+                "nearest_support_level",
+                "nearest_support_band_low",
+                "nearest_support_band_high",
+                "nearest_support_touch_count",
+                "nearest_support_invalidation_price",
+                "nearest_resistance_level",
+                "nearest_resistance_band_low",
+                "nearest_resistance_band_high",
+                "nearest_resistance_touch_count",
+                "nearest_resistance_invalidation_price",
                 "rsi_14",
                 "stoch_raw_k_14",
                 "stoch_k_14_3",
@@ -726,6 +810,16 @@ if active_page == "銘柄・ETF分析":
                         "relative_strength_vs_sector_20d": "同業種比20日",
                         "sector_peer_count": "同業種比較数",
                         "distance_from_52week_high": "52週高値乖離",
+                        "nearest_support_level": "最寄り支持",
+                        "nearest_support_band_low": "支持帯下限",
+                        "nearest_support_band_high": "支持帯上限",
+                        "nearest_support_touch_count": "支持接触数",
+                        "nearest_support_invalidation_price": "支持無効化",
+                        "nearest_resistance_level": "最寄り抵抗",
+                        "nearest_resistance_band_low": "抵抗帯下限",
+                        "nearest_resistance_band_high": "抵抗帯上限",
+                        "nearest_resistance_touch_count": "抵抗接触数",
+                        "nearest_resistance_invalidation_price": "抵抗無効化",
                         "rsi_14": "RSI 14",
                         "stoch_raw_k_14": "Raw %K (14)",
                         "stoch_k_14_3": "Slow %K (14-3)",
@@ -744,7 +838,8 @@ if active_page == "銘柄・ETF分析":
             "バッチは品質ゲート通過全銘柄を対象とし、200件は画面の1ページ上限です。"
             "週次・月次は東証カレンダー上で完了した期間の終値同士、相対強度は同一20営業日の騰落率差です。"
             "同業種比は同じ分析日の他2銘柄以上がある場合だけ計算します。"
-            f"ストキャスティクス版: {analysis_run['details'].get('stochastic_policy', '-')}。"
+            f"ストキャスティクス版: {analysis_run['details'].get('stochastic_policy', '-')} / "
+            f"支持・抵抗版: {analysis_run['details'].get('support_resistance_policy', '-')}。"
             "これらの追加指標は注目度へ加点せず、上昇確率や投資推奨順位ではありません。"
         )
     selected_financial_symbol = render_fundamental_summary(screening)

@@ -14,6 +14,7 @@ from app.analysis.technical import (
     rsi,
     simple_moving_average,
     stochastic_oscillator,
+    support_resistance_candidates,
 )
 from app.analysis.market_calendar import (
     exchange_calendar,
@@ -177,6 +178,52 @@ def test_short_term_indicator_frame_adds_stochastic_only_from_valid_ohlc():
     assert available["stoch_d_14_3_3"].dropna().iloc[-1] == pytest.approx(87.5)
     assert unavailable["stoch_k_14_3"].isna().all()
     assert unavailable["stoch_d_14_3_3"].isna().all()
+
+
+def test_support_resistance_candidates_use_confirmed_past_swings_and_price_bands():
+    closes = [
+        110, 112, 115, 112, 108, 105, 108, 112, 115, 112, 108, 105,
+        108, 112, 115, 112, 108, 105, 108, 112, 115, 112, 108, 105,
+        108, 112, 115, 112, 108, 105, 108, 112, 115, 112, 108, 110,
+    ]
+    index = pd.date_range("2026-01-01", periods=len(closes), tz="UTC")
+    close = pd.Series(closes, index=index, dtype=float)
+
+    result = support_resistance_candidates(close + 2, close - 2, close)
+    candidates = result["candidates"]
+
+    support = candidates[candidates["level_type"] == "support"].iloc[0]
+    resistance = candidates[candidates["level_type"] == "resistance"].iloc[0]
+    assert result["quality_reasons"] == []
+    assert support["price_level"] == pytest.approx(103)
+    assert support["touch_count"] >= 2
+    assert support["status"] == "active"
+    assert support["invalidation_price"] == pytest.approx(103 * 0.985)
+    assert resistance["price_level"] == pytest.approx(117)
+    assert resistance["touch_count"] >= 2
+    assert resistance["status"] == "active"
+    assert resistance["last_touch_time"] <= index[-3]
+
+
+def test_support_resistance_candidates_do_not_fill_missing_ohlc_or_accept_invalid_parameters():
+    index = pd.date_range("2026-01-01", periods=30, tz="UTC")
+    close = pd.Series(range(100, 130), index=index, dtype=float)
+
+    missing = support_resistance_candidates(None, None, close)
+    interrupted = support_resistance_candidates(
+        close + 2, (close - 2).mask((close - 2).index == index[10]), close
+    )
+
+    assert missing["candidates"].empty
+    assert missing["quality_reasons"] == [
+        "support_resistance_unavailable_missing_valid_ohlc"
+    ]
+    assert interrupted["candidates"].empty
+    assert interrupted["quality_reasons"] == [
+        "support_resistance_insufficient_contiguous_valid_ohlc"
+    ]
+    with pytest.raises(ValueError, match="min_observations"):
+        support_resistance_candidates(close + 2, close - 2, close, lookback=30, min_observations=31)
 
 
 def test_completed_period_returns_excludes_incomplete_week_and_month():

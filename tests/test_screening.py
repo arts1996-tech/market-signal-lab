@@ -2,6 +2,7 @@ import pandas as pd
 
 from app.analysis.market_calendar import exchange_calendar
 from app.analysis.screening import screen_assets, technical_attention_snapshot
+from app.analysis.technical import short_term_indicator_frame
 
 
 def _xtks_sessions(start: str, end: str, count: int) -> pd.DatetimeIndex:
@@ -189,3 +190,45 @@ def test_screen_assets_marks_stochastic_unavailable_without_valid_ohlc():
     assert "stochastic_unavailable_missing_valid_ohlc" in result.iloc[0][
         "metric_quality_reasons"
     ]
+    assert "support_resistance_unavailable_missing_valid_ohlc" in result.iloc[0][
+        "metric_quality_reasons"
+    ]
+
+
+def test_screen_assets_persists_nearest_active_support_and_resistance_without_score_change():
+    sessions = _xtks_sessions("2026-01-01", "2026-03-31", 36)
+    closes = [
+        110, 112, 115, 112, 108, 105, 108, 112, 115, 112, 108, 105,
+        108, 112, 115, 112, 108, 105, 108, 112, 115, 112, 108, 105,
+        108, 112, 115, 112, 108, 105, 108, 112, 115, 112, 108, 110,
+    ]
+    prices = pd.DataFrame(
+        {
+            "symbol": "13060",
+            "price_time": sessions,
+            "close": closes,
+            "high": [value + 2 for value in closes],
+            "low": [value - 2 for value in closes],
+            "price_basis": "raw_ohlcv_with_adjusted",
+        }
+    )
+    assets = pd.DataFrame(
+        [{"symbol": "13060", "name": "ETF", "asset_type": "etf", "metadata_json": {}}]
+    )
+
+    result = screen_assets(prices, assets)
+    row = result.iloc[0]
+
+    assert row["nearest_support_level"] == 103
+    assert row["nearest_support_touch_count"] >= 2
+    assert row["nearest_resistance_level"] == 117
+    assert row["nearest_resistance_touch_count"] >= 2
+    assert len(row["support_resistance_candidates"]) >= 2
+    indicators = short_term_indicator_frame(
+        prices.set_index("price_time")["close"],
+        prices.set_index("price_time")["high"],
+        prices.set_index("price_time")["low"],
+    )
+    assert row["attention_score"] == technical_attention_snapshot(
+        indicators.iloc[-1], observations=36
+    )["attention_score"]
