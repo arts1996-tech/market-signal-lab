@@ -55,6 +55,8 @@ Market Signal Labは原則無料で利用できるデータソースを優先し
 12. テーマデータは`docs/27_theme_sector_etf.md`に従い、説明変数ごとに`effective_at`、`available_at`、`fetched_at`、source、権利、品質を保持する。
 13. テーマランキングは、現在価格・ニュース等が未採用の間は`delayed_historical`研究に限定し、最新ニュースを遅延価格へ混ぜない。
 
+信用取引については`app/providers/margin.py`の`MarginTradingProvider`と不変スナップショット型、`app/analysis/trade_modes.py`の4モード・時点品質境界まで実装済みである。有料プラン契約後も型や分析側へAPI固有項目を直接追加せず、公式応答をこの境界へ正規化するadapterを追加する。契約前は実データ取得、信用可否の推測、DB保存、仮想約定を行わない。
+
 ## Provider境界と来歴
 
 外部APIを分析ロジックや画面へ直接結合しない。providerは必要な範囲で次の共通能力を実装する。
@@ -66,6 +68,7 @@ Market Signal Labは原則無料で利用できるデータソースを優先し
 - `fetch_etf_profile`
 - `fetch_theme_factors`
 - `fetch_liquidity_snapshots`
+- `fetch_margin_snapshots`
 - `health_check`
 
 取得済み範囲をDBへ保存し、差分取得、キャッシュ、同一リクエスト抑制、レート制限記録を行う。各値にはsource、source symbol、`effective_at`、`available_at`、`fetched_at`、revision、qualityを保存する。取得不能値をゼロや取引可能として補完しない。
