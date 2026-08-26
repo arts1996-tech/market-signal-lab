@@ -194,6 +194,7 @@ def advance_forward_accounts_as_of(
     fx_rates: pd.DataFrame | None = None,
     fx_accounting_policy: FxAccountingPolicy | None = None,
     tax_accounting_policy: TaxAccountingPolicy | None = None,
+    account_rules: tuple[ForwardAccountRule, ...] | None = None,
 ) -> dict:
     """Advance independent short/mid virtual accounts through ``as_of``.
 
@@ -233,15 +234,21 @@ def advance_forward_accounts_as_of(
         maximum_sector_rate=0.50,
         maximum_position_correlation=0.85,
     )
+    rules = account_rules or FORWARD_ACCOUNT_RULES
+    if not rules:
+        raise ValueError("at least one forward account rule is required")
+    account_names = [rule.account_name for rule in rules]
+    if len(account_names) != len(set(account_names)):
+        raise ValueError("forward account rule names must be unique")
     prior = previous_states or {}
     unknown_accounts = set(prior).difference(
-        rule.account_name for rule in FORWARD_ACCOUNT_RULES
+        account_names
     )
     if unknown_accounts:
         raise ValueError(f"unknown previous account states: {sorted(unknown_accounts)}")
 
     accounts: dict[str, dict] = {}
-    for rule in FORWARD_ACCOUNT_RULES:
+    for rule in rules:
         previous_history = _previous_signal_history(
             prior.get(rule.account_name), rule, cutoff
         )

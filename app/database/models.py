@@ -779,6 +779,18 @@ class VirtualAccount(Base):
     __tablename__ = "virtual_accounts"
     __table_args__ = (
         UniqueConstraint("account_name", name="uq_virtual_accounts_account_name"),
+        CheckConstraint(
+            "account_scope IN ('standard', 'selected_universe')",
+            name="ck_virtual_accounts_scope",
+        ),
+        CheckConstraint(
+            "(account_scope = 'selected_universe' AND allowed_selection_id IS NOT NULL "
+            "AND allowed_selection_version IS NOT NULL "
+            "AND allowed_selection_composition_hash IS NOT NULL) "
+            "OR (account_scope = 'standard' AND allowed_selection_id IS NULL "
+            "AND allowed_selection_version IS NULL AND allowed_selection_composition_hash IS NULL)",
+            name="ck_virtual_accounts_selection_scope",
+        ),
     )
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
@@ -788,6 +800,15 @@ class VirtualAccount(Base):
     initial_cash: Mapped[float] = mapped_column(Numeric(20, 4), nullable=False)
     strategy_version: Mapped[str] = mapped_column(String(64), nullable=False)
     state_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    account_scope: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="standard"
+    )
+    allowed_selection_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("user_asset_selections.id")
+    )
+    allowed_selection_version: Mapped[int | None] = mapped_column(Integer)
+    allowed_selection_composition_hash: Mapped[str | None] = mapped_column(String(64))
+    selection_change_policy: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

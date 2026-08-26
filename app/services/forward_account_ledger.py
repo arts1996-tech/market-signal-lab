@@ -9,7 +9,11 @@ import pandas as pd
 from sqlalchemy.orm import Session
 
 from app.backtest.audit import json_value, stable_payload_hash
-from app.backtest.forward_account import advance_forward_accounts_as_of
+from app.backtest.forward_account import (
+    FORWARD_ACCOUNT_RULES,
+    ForwardAccountRule,
+    advance_forward_accounts_as_of,
+)
 from app.backtest.ohlc import MarketImpactAssumptions, PortfolioRiskRules
 from app.backtest.portfolio import ExecutionAssumptions
 from app.analysis.decision_tracks import DECISION_TRACK_CURRENT, DECISION_TRACKS
@@ -122,6 +126,13 @@ def build_virtual_account_daily_state(
 
     deterministic = {
         "account_name": account["account_name"],
+        "account_scope": account.get("account_scope", "standard"),
+        "allowed_selection_id": account.get("allowed_selection_id"),
+        "allowed_selection_version": account.get("allowed_selection_version"),
+        "allowed_selection_composition_hash": account.get(
+            "allowed_selection_composition_hash"
+        ),
+        "selection_change_policy": account.get("selection_change_policy"),
         "decision_track": decision_track,
         "session_date": session_date.isoformat(),
         "run_id": run_id,
@@ -162,6 +173,13 @@ def build_virtual_account_daily_state(
             "initial_cash": float(account["initial_cash"]),
             "strategy_version": str(account["strategy_version"]),
             "state_version": str(account["state_version"]),
+            "account_scope": str(account.get("account_scope", "standard")),
+            "allowed_selection_id": account.get("allowed_selection_id"),
+            "allowed_selection_version": account.get("allowed_selection_version"),
+            "allowed_selection_composition_hash": account.get(
+                "allowed_selection_composition_hash"
+            ),
+            "selection_change_policy": account.get("selection_change_policy"),
         },
         "state": {
             "decision_track": decision_track,
@@ -204,6 +222,15 @@ def build_virtual_account_daily_state(
                 "manifest": json_value(manifest),
                 "metrics": json_value(account.get("metrics", {})),
                 "account_rule": json_value(account.get("account_rule", {})),
+                "account_scope": account.get("account_scope", "standard"),
+                "allowed_selection": {
+                    "selection_id": account.get("allowed_selection_id"),
+                    "selection_version": account.get("allowed_selection_version"),
+                    "composition_hash": account.get(
+                        "allowed_selection_composition_hash"
+                    ),
+                    "change_policy": account.get("selection_change_policy"),
+                },
                 "point_in_time_decisions": decision_records,
                 "decision_observation": json_value(observation),
                 "pending_dividends": pending_dividends,
@@ -463,8 +490,10 @@ def persist_forward_accounts(
     observation = _validated_observation(observation)
     observed = _utc_timestamp(observation["observed_at"])
     accounts = result.get("accounts") or {}
-    if set(accounts) != {"short_term", "mid_term"}:
-        raise ValueError("forward ledger requires independent short_term and mid_term accounts")
+    if len(accounts) != 2:
+        raise ValueError(
+            "forward ledger requires an independent short_term and mid_term account pair"
+        )
     persisted: dict[str, dict] = {}
     for account_name, account_state in accounts.items():
         payload = build_virtual_account_daily_state(
@@ -513,6 +542,7 @@ def advance_and_persist_forward_accounts(
     assumptions: ExecutionAssumptions | None = None,
     market_impact: MarketImpactAssumptions | None = None,
     risk_rules: PortfolioRiskRules | None = None,
+    account_rules: tuple[ForwardAccountRule, ...] | None = None,
 ) -> dict:
     """Restore, advance and append both accounts in one caller-owned transaction."""
 
@@ -522,8 +552,11 @@ def advance_and_persist_forward_accounts(
         and observation["quality_gate_status"] != "passed"
     ):
         raise ValueError("current_market account advancement requires a passed quality gate")
+    rules = account_rules or FORWARD_ACCOUNT_RULES
     previous_states = load_latest_forward_account_states(
-        session, str(observation["decision_track"])
+        session,
+        str(observation["decision_track"]),
+        account_names={rule.account_name for rule in rules},
     )
     result = advance_forward_accounts_as_of(
         signals,
@@ -533,6 +566,7 @@ def advance_and_persist_forward_accounts(
         assumptions=assumptions,
         market_impact=market_impact,
         risk_rules=risk_rules,
+        account_rules=rules,
     )
     result["ledger"] = persist_forward_accounts(
         session,
@@ -546,13 +580,20 @@ def advance_and_persist_forward_accounts(
 def load_latest_forward_account_states(
     session: Session,
     decision_track: str,
+    *,
+    account_names: set[str] | None = None,
 ) -> dict[str, dict]:
     """Restore the latest frozen states in the format accepted by the engine."""
 
     if decision_track not in DECISION_TRACKS:
         raise ValueError(f"unsupported decision_track: {decision_track}")
+    requested_names = account_names or {
+        rule.account_name for rule in FORWARD_ACCOUNT_RULES
+    }
     restored: dict[str, dict] = {}
     for account in list_virtual_accounts(session):
+        if account.account_name not in requested_names:
+            continue
         state = latest_virtual_account_daily_state(session, account.id, decision_track)
         if state is None:
             continue
@@ -562,6 +603,13 @@ def load_latest_forward_account_states(
             "initial_cash": float(account.initial_cash),
             "strategy_version": account.strategy_version,
             "state_version": account.state_version,
+            "account_scope": account.account_scope,
+            "allowed_selection_id": account.allowed_selection_id,
+            "allowed_selection_version": account.allowed_selection_version,
+            "allowed_selection_composition_hash": (
+                account.allowed_selection_composition_hash
+            ),
+            "selection_change_policy": account.selection_change_policy,
             "state_as_of": state.observed_at,
             "decision_track": state.decision_track,
             "last_market_session": state.last_market_session,
@@ -611,6 +659,13 @@ def build_virtual_account_day_export(
             "initial_cash": account.initial_cash,
             "strategy_version": account.strategy_version,
             "state_version": account.state_version,
+            "account_scope": account.account_scope,
+            "allowed_selection_id": account.allowed_selection_id,
+            "allowed_selection_version": account.allowed_selection_version,
+            "allowed_selection_composition_hash": (
+                account.allowed_selection_composition_hash
+            ),
+            "selection_change_policy": account.selection_change_policy,
         },
         "daily_state": {
             column: getattr(state, column)

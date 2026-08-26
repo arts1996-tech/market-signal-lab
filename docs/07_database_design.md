@@ -168,9 +168,9 @@ DB変更は追加マイグレーションで行い、既存の現物ポジショ
 - `selected_universe_validation_claims`: 集合版、検証期間、戦略版、入力版、`precommitted_unseen`／`retrospective_user_selected`分類、クレーム時刻を保持する
 - `selected_universe_backtest_runs`: `scope=selected_universe_portfolio`、selection_id、selection_version、分析スナップショット、入力・シミュレーションハッシュ、短期／中期、現物モード、初期資金、結果を保存する
 - `selected_universe_backtest_asset_results`: run_id、asset_id、品質状態・理由、シグナル数、約定数、実現損益、資産別結果を保存する
-- `virtual_accounts`: `account_scope=selected_universe`、allowed_selection_id、allowed_selection_versionを保存する
+- `virtual_accounts`: `account_scope=selected_universe`、allowed_selection_id、allowed_selection_version、構成ハッシュ、集合変更方針を不変メタデータとして保存する
 
-集合の追加・削除・並べ替えはUPDATEで過去構成を置換せず、同じ`selection_key`の新版として保存する。選択集合の分析スナップショットは、既存の全銘柄分析runから選択した資産だけを追記コピーし、品質ゲートで除外された資産も`insufficient_data`と理由を保存する。過去シミュレーションは短期・中期ごとに独立した2,500,000 JPYの現物買い系列として保存し、既存の継続仮想口座やデモ口座を更新しない。検証開始前に集合が作成・適用済みでなければ、その結果を`retrospective_user_selected`として保存する。集合版を変更した後に同じ検証期間を`precommitted_unseen`として再利用することはDBの一意制約とサービス境界で拒否する。現行の共通OHLCエンジンがJPXセッション前提のため、JPX・JPY以外の選択資産は不足として保存し、米国資産・為替・信用取引を推測して実行しない。既存シミュレーションと継続口座は開始時の集合版・分析スナップショットを参照し続ける。指定集合外の`asset_id`を仮想注文・ポジションへ保存しようとした場合はサービス境界で拒否する。
+集合の追加・削除・並べ替えはUPDATEで過去構成を置換せず、同じ`selection_key`の新版として保存する。選択集合の分析スナップショットは、既存の全銘柄分析runから選択した資産だけを追記コピーし、品質ゲートで除外された資産も`insufficient_data`と理由を保存する。過去シミュレーションは短期・中期ごとに独立した2,500,000 JPYの現物買い系列として保存し、既存の継続仮想口座やデモ口座を更新しない。検証開始前に集合が作成・適用済みでなければ、その結果を`retrospective_user_selected`として保存する。集合版を変更した後に同じ検証期間を`precommitted_unseen`として再利用することはDBの一意制約とサービス境界で拒否する。現行の共通OHLCエンジンがJPXセッション前提のため、JPX・JPY以外の選択資産は不足として保存し、米国資産・為替・信用取引を推測して実行しない。継続口座は選択集合の不変な行IDごとに短期・中期の別口座を持ち、集合外の新規建てをサービス境界で拒否する。集合新版は別口座を開始し、旧版口座の新規建てを停止する。旧版口座には価格を供給し続け、既存ルールによる決済まで保有を追跡するため、過去状態や既存保有を変更・暗黙決済しない。口座復元時も対象口座名だけを読み、通常口座、別集合版、デモ系列を混在させない。
 
 ## シミュレーションレビューとナレッジ
 

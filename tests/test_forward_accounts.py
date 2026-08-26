@@ -3,7 +3,10 @@ import pytest
 
 from app.analysis.market_calendar import exchange_calendar
 from app.analysis.decision_tracks import DECISION_TRACK_DELAYED
-from app.backtest.forward_account import advance_forward_accounts_as_of
+from app.backtest.forward_account import (
+    ForwardAccountRule,
+    advance_forward_accounts_as_of,
+)
 from app.backtest.ohlc import MarketImpactAssumptions, PortfolioRiskRules
 from app.backtest.portfolio import ExecutionAssumptions
 from app.services.forward_account_ledger import (
@@ -117,6 +120,54 @@ def test_forward_accounts_start_with_independent_jpy_2_5m_balances():
         assert account["equity"] == 2_500_000
         assert account["tax_summary"]["evaluation_basis"] == "pretax"
         assert account["tax_summary"]["tax_model_status"] == "not_implemented"
+
+
+def test_forward_engine_accepts_isolated_custom_account_rules():
+    rules = (
+        ForwardAccountRule(
+            "selection_short", "指定短期", "selected-v1", -0.05, 0.08, 10
+        ),
+        ForwardAccountRule(
+            "selection_mid", "指定中期", "selected-v1", -0.10, 0.18, 60
+        ),
+    )
+    assumptions, market_impact, risk_rules = _execution()
+
+    result = advance_forward_accounts_as_of(
+        _signal(),
+        _prices(),
+        as_of=_sessions()[0],
+        assumptions=assumptions,
+        market_impact=market_impact,
+        risk_rules=risk_rules,
+        account_rules=rules,
+    )
+
+    assert set(result["accounts"]) == {"selection_short", "selection_mid"}
+    assert all(
+        account["initial_cash"] == 2_500_000
+        for account in result["accounts"].values()
+    )
+
+
+def test_forward_engine_rejects_previous_state_from_another_account_scope():
+    rules = (
+        ForwardAccountRule(
+            "selection_short", "指定短期", "selected-v1", -0.05, 0.08, 10
+        ),
+        ForwardAccountRule(
+            "selection_mid", "指定中期", "selected-v1", -0.10, 0.18, 60
+        ),
+    )
+
+    with pytest.raises(ValueError, match="unknown previous account states"):
+        advance_forward_accounts_as_of(
+            pd.DataFrame(),
+            _prices(),
+            as_of=_sessions()[0],
+            previous_states={"short_term": {}},
+            account_rules=rules,
+        )
 
 
 def test_forward_accounts_carry_orders_positions_and_balances_to_next_session():

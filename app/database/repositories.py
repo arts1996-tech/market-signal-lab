@@ -830,7 +830,17 @@ def get_or_create_virtual_account(session: Session, values: dict) -> VirtualAcco
     )
     if account is None:
         raise RuntimeError("virtual account could not be created or loaded")
-    immutable_fields = ("label", "currency", "strategy_version", "state_version")
+    immutable_fields = (
+        "label",
+        "currency",
+        "strategy_version",
+        "state_version",
+        "account_scope",
+        "allowed_selection_id",
+        "allowed_selection_version",
+        "allowed_selection_composition_hash",
+        "selection_change_policy",
+    )
     mismatched = [
         field
         for field in immutable_fields

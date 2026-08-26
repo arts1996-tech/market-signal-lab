@@ -109,6 +109,15 @@ def test_virtual_account_ledger_has_freeze_and_event_idempotency_constraints():
     }
 
     assert "uq_virtual_accounts_account_name" in account_constraints
+    assert "ck_virtual_accounts_scope" in account_constraints
+    assert "ck_virtual_accounts_selection_scope" in account_constraints
+    assert {
+        "account_scope",
+        "allowed_selection_id",
+        "allowed_selection_version",
+        "allowed_selection_composition_hash",
+        "selection_change_policy",
+    }.issubset(VirtualAccount.__table__.columns.keys())
     assert "uq_virtual_account_daily_state_track_session" in state_constraints
     assert "uq_virtual_account_event_id" in event_constraints
     assert {
