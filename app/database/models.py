@@ -562,6 +562,73 @@ class UserAssetSelectionItem(Base):
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class UserAssetSelectionAnalysisRun(Base):
+    __tablename__ = "user_asset_selection_analysis_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "selection_id",
+            "source_asset_analysis_run_id",
+            name="uq_user_selection_analysis_source",
+        ),
+        CheckConstraint(
+            "status IN ('success', 'partial', 'insufficient_data')",
+            name="ck_user_selection_analysis_run_status",
+        ),
+        Index(
+            "ix_user_selection_analysis_runs_latest",
+            "selection_id",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    selection_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("user_asset_selections.id"), nullable=False
+    )
+    selection_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    selection_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    selection_composition_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_asset_analysis_run_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("asset_analysis_runs.id"), nullable=False
+    )
+    data_scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    analysis_rule_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_data_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    data_as_of: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class UserAssetSelectionAnalysisResult(Base):
+    __tablename__ = "user_asset_selection_analysis_results"
+    __table_args__ = (
+        UniqueConstraint("run_id", "asset_id", name="uq_user_selection_analysis_result_asset"),
+        CheckConstraint(
+            "analysis_status IN ('analyzed', 'insufficient_data')",
+            name="ck_user_selection_analysis_result_status",
+        ),
+        Index("ix_user_selection_analysis_results_status", "run_id", "analysis_status"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    run_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("user_asset_selection_analysis_runs.id"), nullable=False
+    )
+    asset_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("assets.id"), nullable=False)
+    source_asset_analysis_result_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("asset_analysis_results.id")
+    )
+    analysis_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    data_as_of: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    observations: Mapped[int | None] = mapped_column(Integer)
+    input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    quality_reasons: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    result: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class PriceCollectionTarget(Base):
     __tablename__ = "price_collection_targets"
     __table_args__ = (UniqueConstraint("source", "session_date", name="uq_price_collection_target"),)

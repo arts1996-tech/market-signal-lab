@@ -12,6 +12,8 @@ from app.database.models import (
     VirtualAccount,
     VirtualAccountDailyState,
     VirtualAccountEvent,
+    UserAssetSelectionAnalysisResult,
+    UserAssetSelectionAnalysisRun,
 )
 from app.database.repositories import chunked
 from app.core.config import Settings
@@ -139,6 +141,31 @@ def test_asset_analysis_has_version_and_per_run_asset_constraints():
         "eligible_asset_count",
         "result_count",
     }.issubset(AssetAnalysisRun.__table__.columns.keys())
+
+
+def test_user_selection_analysis_snapshots_are_idempotent_and_separate_from_accounts():
+    run_constraints = {
+        constraint.name for constraint in UserAssetSelectionAnalysisRun.__table__.constraints
+    }
+    result_constraints = {
+        constraint.name
+        for constraint in UserAssetSelectionAnalysisResult.__table__.constraints
+    }
+
+    assert "uq_user_selection_analysis_source" in run_constraints
+    assert "uq_user_selection_analysis_result_asset" in result_constraints
+    assert {
+        "selection_id",
+        "selection_key",
+        "selection_version",
+        "selection_composition_hash",
+        "source_asset_analysis_run_id",
+        "snapshot_hash",
+        "input_data_version",
+    }.issubset(UserAssetSelectionAnalysisRun.__table__.columns.keys())
+    assert {"analysis_status", "quality_reasons", "input_hash", "result"}.issubset(
+        UserAssetSelectionAnalysisResult.__table__.columns.keys()
+    )
 
 
 def test_chunked_splits_large_payloads():
