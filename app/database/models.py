@@ -629,6 +629,78 @@ class UserAssetSelectionAnalysisResult(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class SelectedUniverseBacktestRun(Base):
+    __tablename__ = "selected_universe_backtest_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "analysis_snapshot_run_id",
+            "horizon",
+            "simulation_hash",
+            name="uq_selected_universe_backtest_input",
+        ),
+        CheckConstraint(
+            "horizon IN ('short_term', 'mid_term')", name="ck_selected_universe_backtest_horizon"
+        ),
+        CheckConstraint("trade_mode = 'cash'", name="ck_selected_universe_backtest_cash_only"),
+        CheckConstraint(
+            "status IN ('success', 'insufficient_data')",
+            name="ck_selected_universe_backtest_status",
+        ),
+        Index("ix_selected_universe_backtest_latest", "selection_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    analysis_snapshot_run_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("user_asset_selection_analysis_runs.id"), nullable=False
+    )
+    selection_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("user_asset_selections.id"), nullable=False
+    )
+    selection_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    selection_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    selection_composition_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    scope: Mapped[str] = mapped_column(String(64), nullable=False, default="selected_universe_portfolio")
+    horizon: Mapped[str] = mapped_column(String(32), nullable=False)
+    trade_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="cash")
+    initial_cash: Mapped[float] = mapped_column(Numeric(20, 4), nullable=False)
+    strategy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    execution_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    data_scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    input_data_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    simulation_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    period_start: Mapped[date | None] = mapped_column(Date)
+    period_end: Mapped[date | None] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    reasons: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    result: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SelectedUniverseBacktestAssetResult(Base):
+    __tablename__ = "selected_universe_backtest_asset_results"
+    __table_args__ = (
+        UniqueConstraint("run_id", "asset_id", name="uq_selected_universe_backtest_asset"),
+        CheckConstraint(
+            "status IN ('eligible', 'insufficient_data')",
+            name="ck_selected_universe_backtest_asset_status",
+        ),
+        Index("ix_selected_universe_backtest_asset_status", "run_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    run_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("selected_universe_backtest_runs.id"), nullable=False
+    )
+    asset_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("assets.id"), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason_codes: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    signal_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    transaction_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    realized_pnl: Mapped[float | None] = mapped_column(Numeric(20, 4))
+    result: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class PriceCollectionTarget(Base):
     __tablename__ = "price_collection_targets"
     __table_args__ = (UniqueConstraint("source", "session_date", name="uq_price_collection_target"),)

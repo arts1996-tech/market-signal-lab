@@ -14,6 +14,8 @@ from app.database.models import (
     VirtualAccountEvent,
     UserAssetSelectionAnalysisResult,
     UserAssetSelectionAnalysisRun,
+    SelectedUniverseBacktestAssetResult,
+    SelectedUniverseBacktestRun,
 )
 from app.database.repositories import chunked
 from app.core.config import Settings
@@ -166,6 +168,30 @@ def test_user_selection_analysis_snapshots_are_idempotent_and_separate_from_acco
     assert {"analysis_status", "quality_reasons", "input_hash", "result"}.issubset(
         UserAssetSelectionAnalysisResult.__table__.columns.keys()
     )
+
+
+def test_selected_universe_backtests_are_cash_only_and_separate_from_virtual_accounts():
+    run_constraints = {
+        constraint.name for constraint in SelectedUniverseBacktestRun.__table__.constraints
+    }
+    result_constraints = {
+        constraint.name
+        for constraint in SelectedUniverseBacktestAssetResult.__table__.constraints
+    }
+
+    assert "uq_selected_universe_backtest_input" in run_constraints
+    assert "ck_selected_universe_backtest_cash_only" in run_constraints
+    assert "uq_selected_universe_backtest_asset" in result_constraints
+    assert {
+        "analysis_snapshot_run_id",
+        "selection_id",
+        "selection_version",
+        "scope",
+        "trade_mode",
+        "initial_cash",
+        "simulation_hash",
+        "result",
+    }.issubset(SelectedUniverseBacktestRun.__table__.columns.keys())
 
 
 def test_chunked_splits_large_payloads():

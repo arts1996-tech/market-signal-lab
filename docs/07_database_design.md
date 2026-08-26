@@ -165,10 +165,11 @@ DB変更は追加マイグレーションで行い、既存の現物ポジショ
 - `user_asset_selection_items`: selection_id、asset_id、追加日時、表示順、状態
 - `user_asset_selection_analysis_runs`: selection_id、selection_key、selection_version、構成ハッシュ、元の全銘柄分析run、時点、入力版、分析版、スナップショットハッシュ、状態を関連付ける
 - `user_asset_selection_analysis_results`: run_id、asset_id、元の分析結果ID、時点、観測数、品質理由、入力ハッシュ、結果JSONを保持する
-- `backtest_runs`: `scope=selected_universe`、selection_id、selection_version、分析スナップショット集合ハッシュを保存する
+- `selected_universe_backtest_runs`: `scope=selected_universe_portfolio`、selection_id、selection_version、分析スナップショット、入力・シミュレーションハッシュ、短期／中期、現物モード、初期資金、結果を保存する
+- `selected_universe_backtest_asset_results`: run_id、asset_id、品質状態・理由、シグナル数、約定数、実現損益、資産別結果を保存する
 - `virtual_accounts`: `account_scope=selected_universe`、allowed_selection_id、allowed_selection_versionを保存する
 
-集合の追加・削除・並べ替えはUPDATEで過去構成を置換せず、同じ`selection_key`の新版として保存する。選択集合の分析スナップショットは、既存の全銘柄分析runから選択した資産だけを追記コピーし、品質ゲートで除外された資産も`insufficient_data`と理由を保存する。既存シミュレーションと継続口座は開始時の集合版・分析スナップショットを参照し続ける。指定集合外の`asset_id`を仮想注文・ポジションへ保存しようとした場合はサービス境界で拒否する。
+集合の追加・削除・並べ替えはUPDATEで過去構成を置換せず、同じ`selection_key`の新版として保存する。選択集合の分析スナップショットは、既存の全銘柄分析runから選択した資産だけを追記コピーし、品質ゲートで除外された資産も`insufficient_data`と理由を保存する。過去シミュレーションは短期・中期ごとに独立した2,500,000 JPYの現物買い系列として保存し、既存の継続仮想口座やデモ口座を更新しない。現行の共通OHLCエンジンがJPXセッション前提のため、JPX・JPY以外の選択資産は不足として保存し、米国資産・為替・信用取引を推測して実行しない。既存シミュレーションと継続口座は開始時の集合版・分析スナップショットを参照し続ける。指定集合外の`asset_id`を仮想注文・ポジションへ保存しようとした場合はサービス境界で拒否する。
 
 ## シミュレーションレビューとナレッジ
 
