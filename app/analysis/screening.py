@@ -133,6 +133,9 @@ def screen_assets(
         "return_20d",
         "volatility_20d",
         "rsi_14",
+        "stoch_raw_k_14",
+        "stoch_k_14_3",
+        "stoch_d_14_3_3",
         "atr_14",
         "atr_pct_14",
         "benchmark_symbol",
@@ -211,6 +214,13 @@ def screen_assets(
         if pd.isna(latest.get("atr_14")):
             metric_quality_reasons.append("atr_unavailable_missing_valid_ohlc")
             attention["quality_warnings"].append("ATRに必要な有効な高値・安値が不足")
+        if pd.isna(latest.get("stoch_k_14_3")) or pd.isna(
+            latest.get("stoch_d_14_3_3")
+        ):
+            metric_quality_reasons.append("stochastic_unavailable_missing_valid_ohlc")
+            attention["quality_warnings"].append(
+                "ストキャスティクスに必要な連続した有効OHLCが不足"
+            )
         if benchmark["relative_strength"] is None:
             metric_quality_reasons.append("benchmark_relative_strength_unavailable")
             attention["quality_warnings"].append("日経平均と同じ20営業日の比較データが不足")
@@ -238,6 +248,9 @@ def screen_assets(
             "return_20d": latest.get("return_20d"),
             "volatility_20d": latest.get("volatility_20d"),
             "rsi_14": latest.get("rsi_14"),
+            "stoch_raw_k_14": latest.get("stoch_raw_k_14"),
+            "stoch_k_14_3": latest.get("stoch_k_14_3"),
+            "stoch_d_14_3_3": latest.get("stoch_d_14_3_3"),
             "atr_14": latest.get("atr_14"),
             "atr_pct_14": latest.get("atr_pct_14"),
             "benchmark_symbol": benchmark_symbol,

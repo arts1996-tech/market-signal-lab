@@ -143,6 +143,9 @@ def test_screen_assets_adds_completed_returns_atr_relative_strength_and_52week()
     assert result["weekly_return"].notna().all()
     assert result["monthly_return"].notna().all()
     assert result["atr_14"].notna().all()
+    assert result["stoch_raw_k_14"].notna().all()
+    assert result["stoch_k_14_3"].notna().all()
+    assert result["stoch_d_14_3_3"].notna().all()
     assert result["relative_strength_vs_benchmark_20d"].notna().all()
     assert result["relative_strength_vs_sector_20d"].notna().all()
     assert (result["sector_peer_count"] == 2).all()
@@ -151,3 +154,38 @@ def test_screen_assets_adds_completed_returns_atr_relative_strength_and_52week()
         "distance_52week_insufficient_history" not in reasons
         for reasons in result["metric_quality_reasons"]
     )
+    assert all(
+        "stochastic_unavailable_missing_valid_ohlc" not in reasons
+        for reasons in result["metric_quality_reasons"]
+    )
+
+
+def test_screen_assets_marks_stochastic_unavailable_without_valid_ohlc():
+    sessions = _xtks_sessions("2026-04-01", "2026-06-30", 30)
+    prices = pd.DataFrame(
+        {
+            "symbol": "13060",
+            "price_time": sessions,
+            "close": range(100, 130),
+            "price_basis": "raw_ohlcv_with_adjusted",
+        }
+    )
+    assets = pd.DataFrame(
+        [
+            {
+                "symbol": "13060",
+                "name": "ETF",
+                "asset_type": "etf",
+                "metadata_json": {},
+            }
+        ]
+    )
+
+    result = screen_assets(prices, assets)
+
+    assert pd.isna(result.iloc[0]["stoch_raw_k_14"])
+    assert pd.isna(result.iloc[0]["stoch_k_14_3"])
+    assert pd.isna(result.iloc[0]["stoch_d_14_3_3"])
+    assert "stochastic_unavailable_missing_valid_ohlc" in result.iloc[0][
+        "metric_quality_reasons"
+    ]

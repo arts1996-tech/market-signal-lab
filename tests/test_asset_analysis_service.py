@@ -2,10 +2,15 @@ import pandas as pd
 
 from app.analysis.market_calendar import exchange_calendar
 from app.services.asset_analysis_service import (
+    ASSET_ANALYSIS_RULE_VERSION,
     ASSET_ANALYSIS_PAGE_SIZE_MAX,
     build_all_asset_analysis,
     load_asset_analysis_page,
 )
+
+
+def test_asset_analysis_rule_version_advances_for_stochastic_output():
+    assert ASSET_ANALYSIS_RULE_VERSION == "phase3-all-assets-v3"
 
 
 def test_all_asset_analysis_does_not_truncate_universe_at_10_or_200():

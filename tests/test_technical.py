@@ -13,6 +13,7 @@ from app.analysis.technical import (
     short_term_signal_snapshot,
     rsi,
     simple_moving_average,
+    stochastic_oscillator,
 )
 from app.analysis.market_calendar import (
     exchange_calendar,
@@ -107,6 +108,75 @@ def test_short_term_indicator_frame_adds_atr_only_from_valid_ohlc():
     assert available["atr_14"].dropna().iloc[-1] == pytest.approx(3.0)
     assert available["atr_pct_14"].dropna().iloc[-1] == pytest.approx(3 / 129)
     assert unavailable["atr_14"].isna().all()
+
+
+def test_stochastic_oscillator_calculates_slow_14_3_3_with_sma_smoothing():
+    high = pd.Series(range(1, 21), dtype=float)
+    low = high - 10
+    close = high - 2
+
+    result = stochastic_oscillator(high, low, close)
+
+    expected = 100 * 21 / 23
+    assert result["stoch_raw_k_14"].dropna().iloc[-1] == pytest.approx(expected)
+    assert result["stoch_k_14_3"].dropna().iloc[-1] == pytest.approx(expected)
+    assert result["stoch_d_14_3_3"].dropna().iloc[-1] == pytest.approx(expected)
+    assert result["stoch_d_14_3_3"].first_valid_index() == 17
+
+
+def test_stochastic_oscillator_does_not_impute_missing_invalid_or_zero_range_ohlc():
+    high = pd.Series([10.0] * 20)
+    low = pd.Series([10.0] * 20)
+    close = pd.Series([10.0] * 20)
+
+    zero_range = stochastic_oscillator(high, low, close)
+    missing = stochastic_oscillator(high.mask(high.index == 5), low, close)
+    invalid = stochastic_oscillator(high, low, close.mask(close.index == 19, 11.0))
+
+    assert zero_range.isna().all().all()
+    assert pd.isna(missing.loc[13, "stoch_raw_k_14"])
+    assert pd.isna(missing.loc[15, "stoch_k_14_3"])
+    assert invalid.iloc[-1].isna().all()
+
+
+def test_stochastic_oscillator_rejects_invalid_parameters():
+    values = pd.Series(range(20), dtype=float)
+
+    with pytest.raises(ValueError, match="positive integers"):
+        stochastic_oscillator(values, values, values, high_low_window=0)
+
+
+def test_stochastic_oscillator_names_custom_versioned_parameters():
+    high = pd.Series(range(10, 30), dtype=float)
+    low = high - 5
+    close = high - 1
+
+    result = stochastic_oscillator(
+        high, low, close, high_low_window=5, k_smoothing=2, d_window=2
+    )
+
+    assert list(result.columns) == [
+        "stoch_raw_k_5",
+        "stoch_k_5_2",
+        "stoch_d_5_2_2",
+    ]
+
+
+def test_short_term_indicator_frame_adds_stochastic_only_from_valid_ohlc():
+    sessions = exchange_calendar("XTKS").sessions_in_range(
+        "2026-01-05", "2026-03-31"
+    )[:30]
+    close = pd.Series(range(100, 130), index=sessions, dtype=float)
+    high = close + 2
+    low = close - 1
+
+    available = short_term_indicator_frame(close, high=high, low=low)
+    unavailable = short_term_indicator_frame(close)
+
+    assert available["stoch_k_14_3"].dropna().iloc[-1] == pytest.approx(87.5)
+    assert available["stoch_d_14_3_3"].dropna().iloc[-1] == pytest.approx(87.5)
+    assert unavailable["stoch_k_14_3"].isna().all()
+    assert unavailable["stoch_d_14_3_3"].isna().all()
 
 
 def test_completed_period_returns_excludes_incomplete_week_and_month():

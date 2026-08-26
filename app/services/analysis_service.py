@@ -29,7 +29,11 @@ from app.analysis.spillover import TARGET_METRICS, spillover_conditional_stats, 
 from app.analysis.sensitivity import sector_sensitivity
 from app.analysis.screening import SCREENING_MIN_HISTORY, screen_assets
 from app.analysis.signal_generation import generate_signals_as_of
-from app.analysis.technical import short_term_indicator_frame, short_term_signal_snapshot
+from app.analysis.technical import (
+    STOCHASTIC_RULE_VERSION,
+    short_term_indicator_frame,
+    short_term_signal_snapshot,
+)
 from app.analysis.virtual_trading import (
     build_virtual_trades,
     summarize_virtual_trade_feedback,
@@ -821,17 +825,30 @@ def persist_us_japan_spillover_features(
 def load_short_term_analysis(session: Session, symbol: str) -> dict:
     prices = market_prices_frame(session, [symbol], source_policy=market_price_source_policy())
     if prices.empty:
-        return {"prices": prices, "indicators": pd.DataFrame(), "snapshot": short_term_signal_snapshot(pd.DataFrame())}
+        return {
+            "prices": prices,
+            "indicators": pd.DataFrame(),
+            "snapshot": short_term_signal_snapshot(pd.DataFrame()),
+            "indicator_rule_versions": {"stochastic": STOCHASTIC_RULE_VERSION},
+        }
 
     frame = prices.copy()
     frame["price_time"] = pd.to_datetime(frame["price_time"], utc=True).dt.normalize()
-    frame["close"] = pd.to_numeric(frame["close"])
-    close = frame.drop_duplicates("price_time").set_index("price_time")["close"].sort_index()
-    indicators = short_term_indicator_frame(close)
+    frame["close"] = pd.to_numeric(frame["close"], errors="coerce")
+    ordered = (
+        frame.drop_duplicates("price_time", keep="last")
+        .set_index("price_time")
+        .sort_index()
+    )
+    close = ordered["close"]
+    high = ordered["high"] if "high" in ordered else None
+    low = ordered["low"] if "low" in ordered else None
+    indicators = short_term_indicator_frame(close, high=high, low=low)
     return {
         "prices": frame,
         "indicators": indicators,
         "snapshot": short_term_signal_snapshot(indicators),
+        "indicator_rule_versions": {"stochastic": STOCHASTIC_RULE_VERSION},
         "source": frame["source"].dropna().iloc[-1] if not frame["source"].dropna().empty else "-",
         "fetched_at": frame["fetched_at"].dropna().iloc[-1] if not frame["fetched_at"].dropna().empty else None,
     }

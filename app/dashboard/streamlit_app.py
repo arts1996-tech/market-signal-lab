@@ -465,6 +465,53 @@ if active_page == "短期分析":
         rsi_fig.update_layout(xaxis_title="日付", yaxis_title="RSI")
         st.plotly_chart(rsi_fig, use_container_width=True)
 
+        stochastic_columns = [
+            "stoch_raw_k_14",
+            "stoch_k_14_3",
+            "stoch_d_14_3_3",
+        ]
+        if all(column in chart_frame for column in stochastic_columns) and chart_frame[
+            stochastic_columns
+        ].notna().any().any():
+            stochastic_fig = go.Figure()
+            stochastic_fig.add_trace(
+                go.Scatter(
+                    x=chart_frame["price_time"],
+                    y=chart_frame["stoch_raw_k_14"],
+                    name="Raw %K (14)",
+                    mode="lines",
+                    line={"dash": "dot"},
+                )
+            )
+            stochastic_fig.add_trace(
+                go.Scatter(
+                    x=chart_frame["price_time"],
+                    y=chart_frame["stoch_k_14_3"],
+                    name="Slow %K (14-3)",
+                    mode="lines",
+                )
+            )
+            stochastic_fig.add_trace(
+                go.Scatter(
+                    x=chart_frame["price_time"],
+                    y=chart_frame["stoch_d_14_3_3"],
+                    name="%D (14-3-3)",
+                    mode="lines",
+                )
+            )
+            stochastic_fig.add_hline(y=80, line_dash="dot")
+            stochastic_fig.add_hline(y=20, line_dash="dot")
+            stochastic_fig.update_layout(
+                xaxis_title="日付",
+                yaxis_title="ストキャスティクス",
+                yaxis_range=[0, 100],
+            )
+            st.plotly_chart(stochastic_fig, use_container_width=True)
+        else:
+            st.info(
+                "ストキャスティクスは連続した有効な高値・安値・終値が不足しているため未算出です。"
+            )
+
         macd_fig = go.Figure()
         macd_fig.add_trace(
             go.Scatter(x=chart_frame["price_time"], y=chart_frame["macd"], name="MACD", mode="lines")
@@ -487,9 +534,13 @@ if active_page == "短期分析":
             st.write(snapshot["negative_reasons"] or ["目立った減点要因はありません"])
 
         st.caption(
-            "FRED由来の指数データは高値、安値、出来高を含まないため、ローソク足、出来高、ATRは今後のデータソース追加後に表示します。"
+            "FRED由来の指数データは高値、安値、出来高を含まないため、ローソク足、出来高、ATR、ストキャスティクスは表示しません。"
         )
-        st.caption(f"データソース: {short.get('source', '-')} / 最終取得: {format_jst(short.get('fetched_at'))}")
+        st.caption(
+            f"データソース: {short.get('source', '-')} / "
+            f"最終取得: {format_jst(short.get('fetched_at'))} / "
+            f"ストキャスティクス版: {short.get('indicator_rule_versions', {}).get('stochastic', '-')}"
+        )
 
 if active_page == "銘柄・ETF分析":
     st.subheader("銘柄・ETFスクリーニング")
@@ -514,8 +565,9 @@ if active_page == "銘柄・ETF分析":
         )
         st.caption(
             f"分析版: {analysis_run['rule_version']}。"
-            "週次・月次リターン、ATR、日経平均・同業種相対強度、52週高値乖離は実装済みですが、"
+            "週次・月次リターン、ATR、ストキャスティクス、日経平均・同業種相対強度、52週高値乖離は実装済みですが、"
             "各指標の必要履歴・OHLC・比較対象がそろうまで値を表示しません。"
+            f"ストキャスティクス版: {analysis_run['details'].get('stochastic_policy', '-')}。"
         )
     else:
         filter_cols = st.columns(3)
@@ -568,6 +620,9 @@ if active_page == "銘柄・ETF分析":
                 "monthly_period_end",
                 "atr_14",
                 "atr_pct_14",
+                "stoch_raw_k_14",
+                "stoch_k_14_3",
+                "stoch_d_14_3_3",
                 "benchmark_return_20d",
                 "relative_strength_vs_benchmark_20d",
                 "sector_peer_return_20d",
@@ -614,6 +669,15 @@ if active_page == "銘柄・ETF分析":
                 )
             view["rsi_14"] = view["rsi_14"].round(1)
             view["atr_14"] = pd.to_numeric(view["atr_14"], errors="coerce").round(2)
+            view["stoch_raw_k_14"] = pd.to_numeric(
+                view["stoch_raw_k_14"], errors="coerce"
+            ).round(1)
+            view["stoch_k_14_3"] = pd.to_numeric(
+                view["stoch_k_14_3"], errors="coerce"
+            ).round(1)
+            view["stoch_d_14_3_3"] = pd.to_numeric(
+                view["stoch_d_14_3_3"], errors="coerce"
+            ).round(1)
             display_columns = [
                 "symbol",
                 "name",
@@ -635,6 +699,9 @@ if active_page == "銘柄・ETF分析":
                 "sector_peer_count",
                 "distance_from_52week_high",
                 "rsi_14",
+                "stoch_raw_k_14",
+                "stoch_k_14_3",
+                "stoch_d_14_3_3",
                 "quality_warnings",
             ]
             st.dataframe(
@@ -660,6 +727,9 @@ if active_page == "銘柄・ETF分析":
                         "sector_peer_count": "同業種比較数",
                         "distance_from_52week_high": "52週高値乖離",
                         "rsi_14": "RSI 14",
+                        "stoch_raw_k_14": "Raw %K (14)",
+                        "stoch_k_14_3": "Slow %K (14-3)",
+                        "stoch_d_14_3_3": "%D (14-3-3)",
                         "quality_warnings": "品質警告",
                     }
                 ),
@@ -674,6 +744,7 @@ if active_page == "銘柄・ETF分析":
             "バッチは品質ゲート通過全銘柄を対象とし、200件は画面の1ページ上限です。"
             "週次・月次は東証カレンダー上で完了した期間の終値同士、相対強度は同一20営業日の騰落率差です。"
             "同業種比は同じ分析日の他2銘柄以上がある場合だけ計算します。"
+            f"ストキャスティクス版: {analysis_run['details'].get('stochastic_policy', '-')}。"
             "これらの追加指標は注目度へ加点せず、上昇確率や投資推奨順位ではありません。"
         )
     selected_financial_symbol = render_fundamental_summary(screening)

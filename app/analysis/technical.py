@@ -6,6 +6,10 @@ from app.analysis.market_calendar import consecutive_weekday_returns, exchange_c
 
 
 PERIOD_FREQUENCIES = {"weekly": "W-FRI", "monthly": "M"}
+STOCHASTIC_HIGH_LOW_WINDOW = 14
+STOCHASTIC_K_SMOOTHING = 3
+STOCHASTIC_D_WINDOW = 3
+STOCHASTIC_RULE_VERSION = "stochastic-slow-14-3-3-sma-v1"
 
 
 def _normalized_series(values: pd.Series) -> pd.Series:
@@ -85,6 +89,66 @@ def atr(high: pd.Series, low: pd.Series, close: pd.Series, window: int = 14) -> 
         axis=1,
     ).max(axis=1)
     return true_range.rolling(window=window, min_periods=window).mean()
+
+
+def stochastic_oscillator(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    *,
+    high_low_window: int = STOCHASTIC_HIGH_LOW_WINDOW,
+    k_smoothing: int = STOCHASTIC_K_SMOOTHING,
+    d_window: int = STOCHASTIC_D_WINDOW,
+) -> pd.DataFrame:
+    """Calculate slow stochastic values without imputing invalid OHLC."""
+
+    parameters = {
+        "high_low_window": high_low_window,
+        "k_smoothing": k_smoothing,
+        "d_window": d_window,
+    }
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 1
+        for value in parameters.values()
+    ):
+        raise ValueError("stochastic windows and smoothing must be positive integers")
+
+    ordered = pd.DataFrame(
+        {
+            "high": pd.to_numeric(high, errors="coerce"),
+            "low": pd.to_numeric(low, errors="coerce"),
+            "close": pd.to_numeric(close, errors="coerce"),
+        }
+    ).sort_index()
+    valid = (
+        ordered.notna().all(axis=1)
+        & (ordered["high"] >= ordered["low"])
+        & (ordered["high"] >= ordered["close"])
+        & (ordered["low"] <= ordered["close"])
+    )
+    validated = ordered.where(valid)
+    rolling_high = validated["high"].rolling(
+        high_low_window, min_periods=high_low_window
+    ).max()
+    rolling_low = validated["low"].rolling(
+        high_low_window, min_periods=high_low_window
+    ).min()
+    price_range = rolling_high - rolling_low
+    raw_k = (
+        100 * (validated["close"] - rolling_low) / price_range.where(price_range > 0)
+    )
+    slow_k = raw_k.rolling(k_smoothing, min_periods=k_smoothing).mean()
+    slow_d = slow_k.rolling(d_window, min_periods=d_window).mean()
+    raw_name = f"stoch_raw_k_{high_low_window}"
+    slow_k_name = f"stoch_k_{high_low_window}_{k_smoothing}"
+    slow_d_name = f"stoch_d_{high_low_window}_{k_smoothing}_{d_window}"
+    return pd.DataFrame(
+        {
+            raw_name: raw_k,
+            slow_k_name: slow_k,
+            slow_d_name: slow_d,
+        }
+    )
 
 
 def completed_period_returns(
@@ -241,9 +305,13 @@ def short_term_indicator_frame(
         aligned_low = aligned_low.where(valid)
         frame["atr_14"] = atr(aligned_high, aligned_low, ordered, 14)
         frame["atr_pct_14"] = frame["atr_14"] / ordered.where(ordered > 0)
+        frame = frame.join(stochastic_oscillator(aligned_high, aligned_low, ordered))
     else:
         frame["atr_14"] = pd.NA
         frame["atr_pct_14"] = pd.NA
+        frame["stoch_raw_k_14"] = pd.NA
+        frame["stoch_k_14_3"] = pd.NA
+        frame["stoch_d_14_3_3"] = pd.NA
     return frame
 
 

@@ -9,7 +9,11 @@ from app.analysis.market_calendar import (
 )
 from app.providers.fred import FredMarketProvider
 from app.core.config import Settings
-from app.services.analysis_service import build_analysis_status, build_data_quality_warnings
+from app.services.analysis_service import (
+    build_analysis_status,
+    build_data_quality_warnings,
+    load_short_term_analysis,
+)
 
 
 def test_fred_provider_exposes_phase1_common_interface():
@@ -86,3 +90,28 @@ def test_exchange_session_preserves_japan_local_calendar_date():
     japan_midnight = pd.Timestamp("2026-08-17", tz="Asia/Tokyo")
 
     assert is_exchange_session(japan_midnight, "XTKS") is True
+
+
+def test_short_term_analysis_uses_available_high_low_for_stochastic(monkeypatch):
+    dates = pd.date_range("2026-01-01", periods=30, tz="UTC")
+    close = pd.Series(range(100, 130), dtype=float)
+    prices = pd.DataFrame(
+        {
+            "symbol": "13060",
+            "price_time": dates,
+            "high": close + 2,
+            "low": close - 1,
+            "close": close,
+            "source": "jquants",
+            "fetched_at": pd.Timestamp("2026-08-01", tz="UTC"),
+        }
+    )
+    monkeypatch.setattr(
+        "app.services.analysis_service.market_prices_frame",
+        lambda *_args, **_kwargs: prices,
+    )
+
+    result = load_short_term_analysis(object(), "13060")
+
+    assert result["indicators"]["stoch_d_14_3_3"].notna().any()
+    assert result["indicator_rule_versions"]["stochastic"].endswith("v1")
