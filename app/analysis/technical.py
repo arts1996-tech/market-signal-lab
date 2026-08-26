@@ -16,6 +16,12 @@ SUPPORT_RESISTANCE_SWING_WINDOW = 2
 SUPPORT_RESISTANCE_BAND_RATIO = 0.015
 SUPPORT_RESISTANCE_MIN_TOUCHES = 2
 SUPPORT_RESISTANCE_RULE_VERSION = "support-resistance-swing-60-2-1.5pct-v1"
+BREAKOUT_LOOKBACK = 20
+BREAKOUT_MIN_OBSERVATIONS = 30
+BREAKOUT_VOLUME_WINDOW = 20
+BREAKOUT_VOLUME_RATIO = 1.5
+BREAKOUT_FAILURE_HORIZON = 5
+BREAKOUT_RULE_VERSION = "breakout-close-20-volume-20-1.5x-failure-5-v1"
 
 
 def _support_resistance_empty_frame() -> pd.DataFrame:
@@ -35,6 +41,10 @@ def _support_resistance_empty_frame() -> pd.DataFrame:
             "invalidation_condition",
         ]
     )
+
+
+def _none_if_na(value):
+    return None if pd.isna(value) else float(value)
 
 
 def _normalized_series(values: pd.Series) -> pd.Series:
@@ -333,6 +343,149 @@ def support_resistance_candidates(
         "candidates": candidates,
         "quality_reasons": [],
         "rule_version": SUPPORT_RESISTANCE_RULE_VERSION,
+    }
+
+
+def breakout_snapshot(
+    open_price: pd.Series | None,
+    close: pd.Series,
+    volume: pd.Series | None,
+    *,
+    lookback: int = BREAKOUT_LOOKBACK,
+    min_observations: int = BREAKOUT_MIN_OBSERVATIONS,
+    volume_window: int = BREAKOUT_VOLUME_WINDOW,
+    volume_ratio: float = BREAKOUT_VOLUME_RATIO,
+    failure_horizon: int = BREAKOUT_FAILURE_HORIZON,
+) -> dict:
+    """Describe observed close breakouts without treating them as a trade signal.
+
+    The current breakout uses only the current close and prior observations.  A past
+    event is marked failed only after its following ``failure_horizon`` observed
+    sessions are available, so a historical snapshot never labels an event using
+    later data than its own analysis timestamp.
+    """
+
+    integer_parameters = {
+        "lookback": lookback,
+        "min_observations": min_observations,
+        "volume_window": volume_window,
+        "failure_horizon": failure_horizon,
+    }
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 1
+        for value in integer_parameters.values()
+    ):
+        raise ValueError("breakout integer parameters must be positive integers")
+    if min_observations < max(lookback + 1, volume_window + 1):
+        raise ValueError("min_observations must cover breakout and volume windows")
+    if not isinstance(volume_ratio, (int, float)) or isinstance(volume_ratio, bool) or volume_ratio <= 0:
+        raise ValueError("volume_ratio must be a positive number")
+
+    empty = {
+        "latest": {
+            "status": "unavailable",
+            "breakout_level": None,
+            "breakout_distance": None,
+            "volume_ratio": None,
+            "gap_return": None,
+            "turnover": None,
+            "liquidity_status": "unavailable",
+        },
+        "recent_events": [],
+        "quality_reasons": [],
+        "rule_version": BREAKOUT_RULE_VERSION,
+    }
+    if open_price is None or volume is None:
+        empty["quality_reasons"].append("breakout_unavailable_missing_valid_ohlcv")
+        return empty
+
+    ordered = pd.DataFrame(
+        {
+            "open": pd.to_numeric(open_price, errors="coerce"),
+            "close": pd.to_numeric(close, errors="coerce"),
+            "volume": pd.to_numeric(volume, errors="coerce"),
+        }
+    ).sort_index()
+    valid = (
+        ordered.notna().all(axis=1)
+        & (ordered["open"] > 0)
+        & (ordered["close"] > 0)
+        & (ordered["volume"] >= 0)
+    )
+    invalid_positions = (~valid.to_numpy()).nonzero()[0]
+    first_latest_run = int(invalid_positions[-1]) + 1 if len(invalid_positions) else 0
+    usable = ordered.iloc[first_latest_run:]
+    if len(usable) < min_observations:
+        empty["quality_reasons"].append("breakout_insufficient_contiguous_valid_ohlcv")
+        return empty
+
+    prior_high = usable["close"].rolling(lookback, min_periods=lookback).max().shift(1)
+    prior_volume = usable["volume"].rolling(volume_window, min_periods=volume_window).mean().shift(1)
+    breakout = usable["close"] > prior_high
+    observed_volume_ratio = usable["volume"] / prior_volume.where(prior_volume > 0)
+    confirmed = breakout & (observed_volume_ratio >= volume_ratio)
+    previous_close = usable["close"].shift(1)
+    gap_return = usable["open"] / previous_close.where(previous_close > 0) - 1
+    turnover = usable["close"] * usable["volume"]
+
+    latest_index = usable.index[-1]
+    latest_breakout = bool(breakout.iloc[-1]) if pd.notna(breakout.iloc[-1]) else False
+    latest_ratio = observed_volume_ratio.iloc[-1]
+    if latest_breakout and pd.notna(latest_ratio) and latest_ratio >= volume_ratio:
+        status = "confirmed"
+    elif latest_breakout:
+        status = "unconfirmed_volume"
+    else:
+        status = "not_breakout"
+    latest = {
+        "status": status,
+        "as_of": latest_index,
+        "breakout_level": _none_if_na(prior_high.iloc[-1]),
+        "breakout_distance": (
+            None
+            if pd.isna(prior_high.iloc[-1])
+            else float(usable["close"].iloc[-1] / prior_high.iloc[-1] - 1)
+        ),
+        "volume_ratio": _none_if_na(latest_ratio),
+        "gap_return": _none_if_na(gap_return.iloc[-1]),
+        "turnover": _none_if_na(turnover.iloc[-1]),
+        "liquidity_status": (
+            "zero_volume"
+            if usable["volume"].iloc[-1] == 0
+            else "observed"
+        ),
+    }
+
+    events: list[dict] = []
+    confirmed_positions = confirmed[confirmed].index
+    for event_index in confirmed_positions[-10:]:
+        position = usable.index.get_loc(event_index)
+        level = float(prior_high.loc[event_index])
+        following = usable["close"].iloc[position + 1 : position + 1 + failure_horizon]
+        if len(following) < failure_horizon:
+            event_status = "pending"
+            available_at = None
+        elif (following < level).any():
+            event_status = "failed"
+            available_at = following.index[-1]
+        else:
+            event_status = "held"
+            available_at = following.index[-1]
+        events.append(
+            {
+                "event_time": event_index,
+                "breakout_level": level,
+                "close": float(usable.loc[event_index, "close"]),
+                "volume_ratio": float(observed_volume_ratio.loc[event_index]),
+                "status": event_status,
+                "evaluation_available_at": available_at,
+            }
+        )
+    return {
+        "latest": latest,
+        "recent_events": events,
+        "quality_reasons": [],
+        "rule_version": BREAKOUT_RULE_VERSION,
     }
 
 

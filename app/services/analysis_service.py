@@ -30,11 +30,13 @@ from app.analysis.sensitivity import sector_sensitivity
 from app.analysis.screening import SCREENING_MIN_HISTORY, screen_assets
 from app.analysis.signal_generation import generate_signals_as_of
 from app.analysis.technical import (
+    BREAKOUT_RULE_VERSION,
     STOCHASTIC_RULE_VERSION,
+    SUPPORT_RESISTANCE_RULE_VERSION,
+    breakout_snapshot,
     short_term_indicator_frame,
     short_term_signal_snapshot,
     support_resistance_candidates,
-    SUPPORT_RESISTANCE_RULE_VERSION,
 )
 from app.analysis.virtual_trading import (
     build_virtual_trades,
@@ -832,9 +834,11 @@ def load_short_term_analysis(session: Session, symbol: str) -> dict:
             "indicators": pd.DataFrame(),
             "snapshot": short_term_signal_snapshot(pd.DataFrame()),
             "support_resistance": support_resistance_candidates(None, None, pd.Series(dtype=float)),
+            "breakout": breakout_snapshot(None, pd.Series(dtype=float), None),
             "indicator_rule_versions": {
                 "stochastic": STOCHASTIC_RULE_VERSION,
                 "support_resistance": SUPPORT_RESISTANCE_RULE_VERSION,
+                "breakout": BREAKOUT_RULE_VERSION,
             },
         }
 
@@ -849,16 +853,21 @@ def load_short_term_analysis(session: Session, symbol: str) -> dict:
     close = ordered["close"]
     high = ordered["high"] if "high" in ordered else None
     low = ordered["low"] if "low" in ordered else None
+    open_price = ordered["open"] if "open" in ordered else None
+    volume = ordered["volume"] if "volume" in ordered else None
     indicators = short_term_indicator_frame(close, high=high, low=low)
     support_resistance = support_resistance_candidates(high, low, close)
+    breakout = breakout_snapshot(open_price, close, volume)
     return {
         "prices": frame,
         "indicators": indicators,
         "snapshot": short_term_signal_snapshot(indicators),
         "support_resistance": support_resistance,
+        "breakout": breakout,
         "indicator_rule_versions": {
             "stochastic": STOCHASTIC_RULE_VERSION,
             "support_resistance": SUPPORT_RESISTANCE_RULE_VERSION,
+            "breakout": BREAKOUT_RULE_VERSION,
         },
         "source": frame["source"].dropna().iloc[-1] if not frame["source"].dropna().empty else "-",
         "fetched_at": frame["fetched_at"].dropna().iloc[-1] if not frame["fetched_at"].dropna().empty else None,

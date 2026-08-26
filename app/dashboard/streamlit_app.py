@@ -564,6 +564,59 @@ if active_page == "短期分析":
             "局所高値・安値を後続2観測で確認してから集計し、注目度や売買判断へ自動加点しません。"
         )
 
+        st.subheader("ブレイクアウト観測")
+        breakout = short.get("breakout", {})
+        breakout_latest = breakout.get("latest", {})
+        if breakout.get("quality_reasons"):
+            st.info(
+                "ブレイクアウトは、連続した有効な寄付き・終値・出来高がそろう場合だけ"
+                "20営業日高値、出来高比率、寄付きギャップ、売買代金を表示します。"
+            )
+        else:
+            breakout_cols = st.columns(4)
+            breakout_cols[0].metric("状態", breakout_latest.get("status", "-"))
+            breakout_cols[1].metric(
+                "20日高値",
+                "-"
+                if breakout_latest.get("breakout_level") is None
+                else f"{breakout_latest['breakout_level']:,.2f}",
+            )
+            breakout_cols[2].metric(
+                "出来高比率",
+                "-"
+                if breakout_latest.get("volume_ratio") is None
+                else f"{breakout_latest['volume_ratio']:.2f}x",
+            )
+            breakout_cols[3].metric(
+                "寄付きギャップ", format_percent(breakout_latest.get("gap_return"))
+            )
+            recent_breakouts = pd.DataFrame(breakout.get("recent_events", []))
+            if not recent_breakouts.empty:
+                for column in ["event_time", "evaluation_available_at"]:
+                    recent_breakouts[column] = recent_breakouts[column].map(
+                        lambda value: "-" if pd.isna(value) else pd.Timestamp(value).strftime("%Y-%m-%d")
+                    )
+                st.dataframe(
+                    recent_breakouts.rename(
+                        columns={
+                            "event_time": "発生日",
+                            "breakout_level": "ブレイク水準",
+                            "close": "終値",
+                            "volume_ratio": "出来高比率",
+                            "status": "追跡状態",
+                            "evaluation_available_at": "評価可能日",
+                        }
+                    ),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+        st.caption(
+            "ブレイクアウト版: "
+            f"{short.get('indicator_rule_versions', {}).get('breakout', '-')}。"
+            "終値による高値更新と過去出来高だけを比較し、5観測後に下回った過去事例を失敗例として保存します。"
+            "投資推奨や注目度への自動加点は行いません。"
+        )
+
         macd_fig = go.Figure()
         macd_fig.add_trace(
             go.Scatter(x=chart_frame["price_time"], y=chart_frame["macd"], name="MACD", mode="lines")
@@ -692,6 +745,13 @@ if active_page == "銘柄・ETF分析":
                 "nearest_resistance_band_high",
                 "nearest_resistance_touch_count",
                 "nearest_resistance_invalidation_price",
+                "breakout_status",
+                "breakout_level",
+                "breakout_distance",
+                "breakout_volume_ratio",
+                "breakout_gap_return",
+                "breakout_turnover",
+                "breakout_liquidity_status",
             ]:
                 if column not in view:
                     view[column] = None
@@ -724,6 +784,8 @@ if active_page == "銘柄・ETF分析":
                 "sector_peer_return_20d",
                 "relative_strength_vs_sector_20d",
                 "distance_from_52week_high",
+                "breakout_distance",
+                "breakout_gap_return",
             ]:
                 view[column] = view[column].map(format_percent)
             for column in ["weekly_period_end", "monthly_period_end"]:
@@ -741,6 +803,8 @@ if active_page == "銘柄・ETF分析":
                 "nearest_resistance_band_low",
                 "nearest_resistance_band_high",
                 "nearest_resistance_invalidation_price",
+                "breakout_level",
+                "breakout_turnover",
             ]:
                 view[column] = pd.to_numeric(view[column], errors="coerce").round(2)
             view["stoch_raw_k_14"] = pd.to_numeric(
@@ -752,6 +816,9 @@ if active_page == "銘柄・ETF分析":
             view["stoch_d_14_3_3"] = pd.to_numeric(
                 view["stoch_d_14_3_3"], errors="coerce"
             ).round(1)
+            view["breakout_volume_ratio"] = pd.to_numeric(
+                view["breakout_volume_ratio"], errors="coerce"
+            ).round(2)
             display_columns = [
                 "symbol",
                 "name",
@@ -782,6 +849,13 @@ if active_page == "銘柄・ETF分析":
                 "nearest_resistance_band_high",
                 "nearest_resistance_touch_count",
                 "nearest_resistance_invalidation_price",
+                "breakout_status",
+                "breakout_level",
+                "breakout_distance",
+                "breakout_volume_ratio",
+                "breakout_gap_return",
+                "breakout_turnover",
+                "breakout_liquidity_status",
                 "rsi_14",
                 "stoch_raw_k_14",
                 "stoch_k_14_3",
@@ -820,6 +894,13 @@ if active_page == "銘柄・ETF分析":
                         "nearest_resistance_band_high": "抵抗帯上限",
                         "nearest_resistance_touch_count": "抵抗接触数",
                         "nearest_resistance_invalidation_price": "抵抗無効化",
+                        "breakout_status": "ブレイク状態",
+                        "breakout_level": "20日高値",
+                        "breakout_distance": "高値乖離",
+                        "breakout_volume_ratio": "出来高比率",
+                        "breakout_gap_return": "寄付きギャップ",
+                        "breakout_turnover": "売買代金",
+                        "breakout_liquidity_status": "流動性状態",
                         "rsi_14": "RSI 14",
                         "stoch_raw_k_14": "Raw %K (14)",
                         "stoch_k_14_3": "Slow %K (14-3)",
@@ -839,7 +920,8 @@ if active_page == "銘柄・ETF分析":
             "週次・月次は東証カレンダー上で完了した期間の終値同士、相対強度は同一20営業日の騰落率差です。"
             "同業種比は同じ分析日の他2銘柄以上がある場合だけ計算します。"
             f"ストキャスティクス版: {analysis_run['details'].get('stochastic_policy', '-')} / "
-            f"支持・抵抗版: {analysis_run['details'].get('support_resistance_policy', '-')}。"
+            f"支持・抵抗版: {analysis_run['details'].get('support_resistance_policy', '-')} / "
+            f"ブレイクアウト版: {analysis_run['details'].get('breakout_policy', '-')}。"
             "これらの追加指標は注目度へ加点せず、上昇確率や投資推奨順位ではありません。"
         )
     selected_financial_symbol = render_fundamental_summary(screening)

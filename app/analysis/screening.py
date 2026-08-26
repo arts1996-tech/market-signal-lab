@@ -4,6 +4,7 @@ import pandas as pd
 
 from app.analysis.market_calendar import latest_contiguous_exchange_observations
 from app.analysis.technical import (
+    breakout_snapshot,
     completed_period_returns,
     distance_from_rolling_high,
     horizon_relative_strength,
@@ -173,6 +174,14 @@ def screen_assets(
         "nearest_resistance_touch_count",
         "nearest_resistance_invalidation_price",
         "support_resistance_candidates",
+        "breakout_status",
+        "breakout_level",
+        "breakout_distance",
+        "breakout_volume_ratio",
+        "breakout_gap_return",
+        "breakout_turnover",
+        "breakout_liquidity_status",
+        "breakout_recent_events",
         "metric_quality_reasons",
     ]
     if prices.empty or assets.empty:
@@ -217,6 +226,8 @@ def screen_assets(
         close = indexed["close"]
         high = indexed["high"] if "high" in indexed else None
         low = indexed["low"] if "low" in indexed else None
+        open_price = indexed["open"] if "open" in indexed else None
+        volume = indexed["volume"] if "volume" in indexed else None
         indicators = short_term_indicator_frame(close, high=high, low=low)
         if indicators.empty:
             continue
@@ -234,6 +245,7 @@ def screen_assets(
         benchmark = horizon_relative_strength(close, benchmark_close, horizon=20)
         distance_52week = distance_from_rolling_high(close, high=high, window=252)
         support_resistance = support_resistance_candidates(high, low, close)
+        breakout = breakout_snapshot(open_price, close, volume)
         levels = support_resistance["candidates"]
         nearest_support = _nearest_active_level(levels, "support")
         nearest_resistance = _nearest_active_level(levels, "resistance")
@@ -268,6 +280,16 @@ def screen_assets(
             elif reason == "support_resistance_insufficient_contiguous_valid_ohlc":
                 attention["quality_warnings"].append(
                     "支持・抵抗候補に必要な連続した有効OHLCが30営業日未満"
+                )
+        for reason in breakout["quality_reasons"]:
+            metric_quality_reasons.append(reason)
+            if reason == "breakout_unavailable_missing_valid_ohlcv":
+                attention["quality_warnings"].append(
+                    "ブレイクアウト確認に必要な有効な寄付き・終値・出来高が不足"
+                )
+            elif reason == "breakout_insufficient_contiguous_valid_ohlcv":
+                attention["quality_warnings"].append(
+                    "ブレイクアウト確認に必要な連続した有効OHLCVが30営業日未満"
                 )
         if total_observations > contiguous_observations:
             attention["quality_warnings"].append(
@@ -313,6 +335,14 @@ def screen_assets(
             "nearest_resistance_touch_count": nearest_resistance.get("touch_count"),
             "nearest_resistance_invalidation_price": nearest_resistance.get("invalidation_price"),
             "support_resistance_candidates": levels.to_dict(orient="records"),
+            "breakout_status": breakout["latest"]["status"],
+            "breakout_level": breakout["latest"]["breakout_level"],
+            "breakout_distance": breakout["latest"]["breakout_distance"],
+            "breakout_volume_ratio": breakout["latest"]["volume_ratio"],
+            "breakout_gap_return": breakout["latest"]["gap_return"],
+            "breakout_turnover": breakout["latest"]["turnover"],
+            "breakout_liquidity_status": breakout["latest"]["liquidity_status"],
+            "breakout_recent_events": breakout["recent_events"],
             "metric_quality_reasons": metric_quality_reasons,
         })
     result = pd.DataFrame(rows, columns=columns)

@@ -13,6 +13,7 @@ from app.analysis.technical import (
     short_term_signal_snapshot,
     rsi,
     simple_moving_average,
+    breakout_snapshot,
     stochastic_oscillator,
     support_resistance_candidates,
 )
@@ -224,6 +225,57 @@ def test_support_resistance_candidates_do_not_fill_missing_ohlc_or_accept_invali
     ]
     with pytest.raises(ValueError, match="min_observations"):
         support_resistance_candidates(close + 2, close - 2, close, lookback=30, min_observations=31)
+
+
+def test_breakout_snapshot_records_current_confirmation_and_past_failure_without_leakage():
+    index = pd.date_range("2026-01-01", periods=35, tz="UTC")
+    close = pd.Series(list(range(100, 128)) + [132, 126, 125, 124, 123, 122, 121], index=index, dtype=float)
+    volume = pd.Series([100.0] * 28 + [200.0] + [100.0] * 6, index=index)
+    open_price = close.shift(1).fillna(close.iloc[0])
+    open_price.loc[index[28]] = 130
+
+    result = breakout_snapshot(open_price, close, volume)
+
+    assert result["latest"]["status"] == "not_breakout"
+    assert result["quality_reasons"] == []
+    assert result["recent_events"] == [
+        {
+            "event_time": index[28],
+            "breakout_level": 127.0,
+            "close": 132.0,
+            "volume_ratio": 2.0,
+            "status": "failed",
+            "evaluation_available_at": index[33],
+        }
+    ]
+
+    current_close = pd.Series(list(range(100, 129)) + [135], index=index[:30], dtype=float)
+    current_volume = pd.Series([100.0] * 29 + [200.0], index=index[:30])
+    current_open = current_close.shift(1).fillna(current_close.iloc[0])
+    current_open.iloc[-1] = 130
+    current = breakout_snapshot(current_open, current_close, current_volume)
+
+    assert current["latest"]["status"] == "confirmed"
+    assert current["latest"]["breakout_level"] == 128.0
+    assert current["latest"]["volume_ratio"] == 2.0
+    assert current["latest"]["gap_return"] == pytest.approx(130 / 128 - 1)
+    assert current["recent_events"][-1]["status"] == "pending"
+
+
+def test_breakout_snapshot_does_not_impute_missing_ohlcv_or_accept_invalid_parameters():
+    index = pd.date_range("2026-01-01", periods=30, tz="UTC")
+    close = pd.Series(range(100, 130), index=index, dtype=float)
+    volume = pd.Series([100.0] * 30, index=index)
+
+    missing = breakout_snapshot(None, close, volume)
+    interrupted = breakout_snapshot(close.shift(1), close, volume)
+
+    assert missing["quality_reasons"] == ["breakout_unavailable_missing_valid_ohlcv"]
+    assert interrupted["quality_reasons"] == [
+        "breakout_insufficient_contiguous_valid_ohlcv"
+    ]
+    with pytest.raises(ValueError, match="min_observations"):
+        breakout_snapshot(close, close, volume, min_observations=20)
 
 
 def test_completed_period_returns_excludes_incomplete_week_and_month():

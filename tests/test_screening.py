@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from app.analysis.market_calendar import exchange_calendar
 from app.analysis.screening import screen_assets, technical_attention_snapshot
@@ -231,4 +232,37 @@ def test_screen_assets_persists_nearest_active_support_and_resistance_without_sc
     )
     assert row["attention_score"] == technical_attention_snapshot(
         indicators.iloc[-1], observations=36
+    )["attention_score"]
+
+
+def test_screen_assets_persists_breakout_observation_without_changing_attention_score():
+    sessions = _xtks_sessions("2026-01-01", "2026-03-31", 30)
+    closes = list(range(100, 129)) + [135]
+    prices = pd.DataFrame(
+        {
+            "symbol": "13060",
+            "price_time": sessions,
+            "open": [100] + list(range(100, 128)) + [130],
+            "close": closes,
+            "volume": [100] * 29 + [200],
+            "price_basis": "raw_ohlcv_with_adjusted",
+        }
+    )
+    assets = pd.DataFrame(
+        [{"symbol": "13060", "name": "ETF", "asset_type": "etf", "metadata_json": {}}]
+    )
+
+    result = screen_assets(prices, assets)
+    row = result.iloc[0]
+    indicators = short_term_indicator_frame(
+        prices.set_index("price_time")["close"]
+    )
+
+    assert row["breakout_status"] == "confirmed"
+    assert row["breakout_level"] == 128.0
+    assert row["breakout_volume_ratio"] == 2.0
+    assert row["breakout_gap_return"] == pytest.approx(130 / 128 - 1)
+    assert row["breakout_recent_events"][-1]["status"] == "pending"
+    assert row["attention_score"] == technical_attention_snapshot(
+        indicators.iloc[-1], observations=30
     )["attention_score"]
