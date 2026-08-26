@@ -629,6 +629,44 @@ class UserAssetSelectionAnalysisResult(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class SelectedUniverseValidationClaim(Base):
+    __tablename__ = "selected_universe_validation_claims"
+    __table_args__ = (
+        UniqueConstraint(
+            "selection_id",
+            "period_start",
+            "period_end",
+            "strategy_version",
+            "input_data_version",
+            name="uq_selected_universe_validation_claim",
+        ),
+        CheckConstraint("period_start <= period_end", name="ck_selected_universe_validation_period"),
+        CheckConstraint(
+            "classification IN ('precommitted_unseen', 'retrospective_user_selected')",
+            name="ck_selected_universe_validation_classification",
+        ),
+        Index(
+            "ix_selected_universe_validation_lookup",
+            "selection_key",
+            "period_start",
+            "period_end",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    selection_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("user_asset_selections.id"), nullable=False
+    )
+    selection_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    selection_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    period_start: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    strategy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_data_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    classification: Mapped[str] = mapped_column(String(32), nullable=False)
+    claimed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class SelectedUniverseBacktestRun(Base):
     __tablename__ = "selected_universe_backtest_runs"
     __table_args__ = (
@@ -653,6 +691,9 @@ class SelectedUniverseBacktestRun(Base):
     analysis_snapshot_run_id: Mapped[str] = mapped_column(
         UUID(as_uuid=False), ForeignKey("user_asset_selection_analysis_runs.id"), nullable=False
     )
+    validation_claim_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("selected_universe_validation_claims.id")
+    )
     selection_id: Mapped[str] = mapped_column(
         UUID(as_uuid=False), ForeignKey("user_asset_selections.id"), nullable=False
     )
@@ -671,6 +712,9 @@ class SelectedUniverseBacktestRun(Base):
     period_start: Mapped[date | None] = mapped_column(Date)
     period_end: Mapped[date | None] = mapped_column(Date)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
+    evaluation_classification: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="retrospective_user_selected"
+    )
     reasons: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     result: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

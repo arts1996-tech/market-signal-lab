@@ -16,6 +16,7 @@ from app.database.models import (
     UserAssetSelectionAnalysisRun,
     SelectedUniverseBacktestAssetResult,
     SelectedUniverseBacktestRun,
+    SelectedUniverseValidationClaim,
 )
 from app.database.repositories import chunked
 from app.core.config import Settings
@@ -192,6 +193,19 @@ def test_selected_universe_backtests_are_cash_only_and_separate_from_virtual_acc
         "simulation_hash",
         "result",
     }.issubset(SelectedUniverseBacktestRun.__table__.columns.keys())
+
+
+def test_selected_universe_validation_claims_preserve_period_and_classification():
+    constraints = {
+        constraint.name for constraint in SelectedUniverseValidationClaim.__table__.constraints
+    }
+
+    assert "uq_selected_universe_validation_claim" in constraints
+    assert "ck_selected_universe_validation_period" in constraints
+    assert "ck_selected_universe_validation_classification" in constraints
+    assert {"validation_claim_id", "evaluation_classification"}.issubset(
+        SelectedUniverseBacktestRun.__table__.columns.keys()
+    )
 
 
 def test_chunked_splits_large_payloads():

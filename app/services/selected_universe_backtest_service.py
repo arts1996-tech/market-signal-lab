@@ -205,7 +205,10 @@ def run_selected_universe_backtest(
         "cash_long_only",
         "not_forward_performance_evidence",
     ]
-    result: dict = {"eligibility": eligibility}
+    result: dict = {
+        "eligibility": eligibility,
+        "evaluation_classification": "retrospective_user_selected",
+    }
     if not eligible_symbols:
         reasons.append("no_assets_passed_selected_universe_quality_gate")
         status = "insufficient_data"
@@ -273,6 +276,7 @@ def run_selected_universe_backtest(
         period_start=period_start,
         period_end=period_end,
         status=status,
+        evaluation_classification="retrospective_user_selected",
         reasons=reasons,
         result=result,
     )
