@@ -12,4 +12,6 @@ ops_logs/
 *.log
 backups/
 data/
+!app/analysis/data/
+!app/analysis/data/initial_themes.json
 *.egg-info/

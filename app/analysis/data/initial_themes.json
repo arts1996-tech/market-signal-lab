@@ -1,0 +1,19 @@
+{
+  "definition_version": "theme-definition-input-v1",
+  "effective_from": "2026-08-26",
+  "themes": [
+    {"identifier":"semiconductor","name":"半導体","baseline_tier":"tier_1","effective_from":"2026-08-26","description":"日本半導体ETFと承認済み先行資産を別モデルで監視する。","asset_memberships":[{"symbol":"200A","name":"NEXT FUNDS 日経半導体株指数連動型上場投信","role":"target_etf","effective_from":"2026-08-26","source_reference":"JPX ETF全銘柄"},{"symbol":"2644","name":"グローバルX 半導体関連-日本株式 ETF","role":"target_etf","effective_from":"2026-08-26","source_reference":"JPX ETF全銘柄"},{"symbol":"282A","name":"グローバルX 半導体・トップ10-日本株式 ETF","role":"target_etf","effective_from":"2026-08-26","source_reference":"JPX ETF全銘柄"}]},
+    {"identifier":"ai_infrastructure","name":"AIインフラ／データセンター","baseline_tier":"tier_1","effective_from":"2026-08-26","description":"データセンター、電力、ネットワーク、冷却、半導体への波及を扱う。","asset_memberships":[{"symbol":"552A","name":"MAXIS米国AIインフラ株上場投信","role":"target_etf","effective_from":"2026-08-26","source_reference":"JPX ETF全銘柄"}]},
+    {"identifier":"defense","name":"防衛","baseline_tier":"tier_1","effective_from":"2026-08-26","description":"公式確認済みの関連資産を後続版で追加する。"},
+    {"identifier":"gold","name":"金","baseline_tier":"tier_1","effective_from":"2026-08-26","description":"金価格、為替、金利とETFを別系列で扱う。","asset_memberships":[{"symbol":"1540","name":"純金上場信託（現物国内保管型）","role":"target_etf","effective_from":"2026-08-26","source_reference":"JPX ETF全銘柄"}]},
+    {"identifier":"robotics_fa","name":"ロボティクス／FA","baseline_tier":"tier_2","effective_from":"2026-08-26","description":"FA・産業ロボットと半導体の重複を評価する。","asset_memberships":[{"symbol":"2638","name":"グローバルX ロボティクス＆AI-日本株式 ETF","role":"target_etf","effective_from":"2026-08-26","source_reference":"JPX ETF全銘柄"}]},
+    {"identifier":"electrification","name":"電力・電化","baseline_tier":"tier_2","effective_from":"2026-08-26","description":"公式確認済みの関連資産を後続版で追加する。"},
+    {"identifier":"copper","name":"銅","baseline_tier":"tier_2","effective_from":"2026-08-26","description":"銅価格と関連企業ETFを混同しない。","asset_memberships":[{"symbol":"580A","name":"グローバルX 銅ビジネス ETF","role":"target_etf","effective_from":"2026-08-26","source_reference":"JPX ETF全銘柄"}]},
+    {"identifier":"silver","name":"銀","baseline_tier":"tier_2","effective_from":"2026-08-26","description":"銀価格ETFと銀関連企業ETFを別系列で扱う。","asset_memberships":[{"symbol":"568A","name":"iシェアーズ シルバー ETF","role":"target_etf","effective_from":"2026-08-26","source_reference":"JPX ETF全銘柄"},{"symbol":"577A","name":"グローバルX シルバー ETF","role":"target_etf","effective_from":"2026-08-26","source_reference":"JPX ETF全銘柄"},{"symbol":"578A","name":"グローバルX シルバー ETF（為替ヘッジあり）","role":"target_etf","effective_from":"2026-08-26","source_reference":"JPX ETF全銘柄"},{"symbol":"579A","name":"グローバルX 銀ビジネス ETF","role":"target_etf","effective_from":"2026-08-26","source_reference":"JPX ETF全銘柄"}]},
+    {"identifier":"space","name":"宇宙","baseline_tier":"tier_2","effective_from":"2026-08-26","description":"防衛との構成重複・相関を評価する。","asset_memberships":[{"symbol":"610A","name":"グローバルX 宇宙テック・トップ10 ETF（除く日本）","role":"target_etf","effective_from":"2026-08-26","source_reference":"JPX ETF全銘柄"}]},
+    {"identifier":"cybersecurity","name":"サイバーセキュリティ","baseline_tier":"tier_3","effective_from":"2026-08-26","description":"公式確認済みの関連資産を後続版で追加する。"},
+    {"identifier":"stablecoin_tokenization","name":"ステーブルコイン／トークン化","baseline_tier":"tier_3","effective_from":"2026-08-26","description":"暗号資産現物でなく関連企業ETFを対象とする。","asset_memberships":[{"symbol":"512A","name":"グローバルX ステーブルコイン＆トークンビジネス ETF（除く日本）","role":"target_etf","effective_from":"2026-08-26","source_reference":"JPX ETF全銘柄"}]},
+    {"identifier":"high_dividend","name":"高配当","baseline_tier":"tier_3","effective_from":"2026-08-26","description":"利回りだけでなく配当持続性と金利感応度を扱う。"},
+    {"identifier":"cash_flow","name":"キャッシュフロー重視","baseline_tier":"tier_3","effective_from":"2026-08-26","description":"フリーキャッシュフローと財務健全性を扱う。"}
+  ]
+}
