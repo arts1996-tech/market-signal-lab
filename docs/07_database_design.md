@@ -161,13 +161,13 @@ DB変更は追加マイグレーションで行い、既存の現物ポジショ
 
 詳細は[24 利用者指定ティッカー分析・仮想口座仕様](24_user_selected_ticker_simulation.md)を参照する。
 
-- `user_asset_selections`: 名称、版、作成日時、適用開始、作成者、状態、選定理由、構成ハッシュ
+- `user_asset_selections`: 安定した`selection_key`、名称、版、作成日時、適用開始、作成者、状態、選定理由、構成ハッシュ
 - `user_asset_selection_items`: selection_id、asset_id、追加日時、表示順、状態
 - `analysis_runs`: selection_id、selection_version、asset_id、as_of、入力ハッシュ、分析版を関連付ける
 - `backtest_runs`: `scope=selected_universe`、selection_id、selection_version、分析スナップショット集合ハッシュを保存する
 - `virtual_accounts`: `account_scope=selected_universe`、allowed_selection_id、allowed_selection_versionを保存する
 
-集合の追加・削除はUPDATEで過去構成を置換せず新版として保存する。既存シミュレーションと継続口座は開始時の集合版を参照し続ける。指定集合外の`asset_id`を仮想注文・ポジションへ保存しようとした場合はサービス境界で拒否する。
+集合の追加・削除・並べ替えはUPDATEで過去構成を置換せず、同じ`selection_key`の新版として保存する。既存シミュレーションと継続口座は開始時の集合版を参照し続ける。指定集合外の`asset_id`を仮想注文・ポジションへ保存しようとした場合はサービス境界で拒否する。
 
 ## シミュレーションレビューとナレッジ
 

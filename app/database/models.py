@@ -515,6 +515,53 @@ class ThemeAssetMembership(Base):
     notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
 
+class UserAssetSelection(Base):
+    __tablename__ = "user_asset_selections"
+    __table_args__ = (
+        UniqueConstraint("selection_key", "version", name="uq_user_asset_selection_version"),
+        CheckConstraint("version > 0", name="ck_user_asset_selection_version_positive"),
+        CheckConstraint(
+            "status IN ('active', 'inactive')", name="ck_user_asset_selection_status"
+        ),
+        Index("ix_user_asset_selections_effective", "selection_key", "effective_from"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    selection_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_by: Mapped[str] = mapped_column(String(100), nullable=False)
+    effective_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    rationale: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    composition_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class UserAssetSelectionItem(Base):
+    __tablename__ = "user_asset_selection_items"
+    __table_args__ = (
+        UniqueConstraint("selection_id", "asset_id", name="uq_user_asset_selection_item_asset"),
+        UniqueConstraint(
+            "selection_id", "display_order", name="uq_user_asset_selection_item_order"
+        ),
+        CheckConstraint("display_order > 0", name="ck_user_asset_selection_item_order_positive"),
+        CheckConstraint(
+            "status IN ('active', 'inactive')", name="ck_user_asset_selection_item_status"
+        ),
+        Index("ix_user_asset_selection_items_asset", "asset_id"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    selection_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("user_asset_selections.id"), nullable=False
+    )
+    asset_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("assets.id"), nullable=False)
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class PriceCollectionTarget(Base):
     __tablename__ = "price_collection_targets"
     __table_args__ = (UniqueConstraint("source", "session_date", name="uq_price_collection_target"),)
