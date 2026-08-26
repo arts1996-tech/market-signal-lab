@@ -466,6 +466,55 @@ class AssetAnalysisResult(Base):
     )
 
 
+class Theme(Base):
+    __tablename__ = "themes"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    identifier: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ThemeVersion(Base):
+    __tablename__ = "theme_versions"
+    __table_args__ = (
+        UniqueConstraint("theme_id", "composition_hash", name="uq_theme_version_composition"),
+        Index("ix_theme_versions_effective", "theme_id", "effective_from"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    theme_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("themes.id"), nullable=False)
+    baseline_tier: Mapped[str] = mapped_column(String(16), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    margin_trading_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    effective_to: Mapped[date | None] = mapped_column(Date)
+    definition_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    composition_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="approved")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ThemeAssetMembership(Base):
+    __tablename__ = "theme_asset_memberships"
+    __table_args__ = (
+        UniqueConstraint("theme_version_id", "asset_id", "role", "effective_from", name="uq_theme_asset_membership"),
+        Index("ix_theme_asset_memberships_asset", "asset_id", "effective_from"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    theme_version_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("theme_versions.id"), nullable=False)
+    asset_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("assets.id"), nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    effective_to: Mapped[date | None] = mapped_column(Date)
+    source_reference: Mapped[str] = mapped_column(String(500), nullable=False)
+    notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+
 class PriceCollectionTarget(Base):
     __tablename__ = "price_collection_targets"
     __table_args__ = (UniqueConstraint("source", "session_date", name="uq_price_collection_target"),)

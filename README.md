@@ -81,6 +81,7 @@ cp .env.example .env
 ```bash
 docker compose up -d db
 docker compose run --rm app alembic upgrade head
+docker compose exec app python jobs/seed_theme_definitions.py
 docker compose up -d --build app lite
 ```
 
