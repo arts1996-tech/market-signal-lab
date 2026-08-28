@@ -20,6 +20,7 @@ from app.database.models import (
     SelectedUniverseBacktestAssetResult,
     SelectedUniverseBacktestRun,
     SelectedUniverseValidationClaim,
+    SimulationReview,
     TradeModeBacktestRun,
 )
 from app.database.repositories import chunked
@@ -284,6 +285,33 @@ def test_trade_mode_backtest_runs_are_append_only_research_series():
         "input_hash",
         "result",
     }.issubset(TradeModeBacktestRun.__table__.columns.keys())
+
+
+def test_simulation_reviews_preserve_decision_links_and_performance_scope():
+    constraints = {
+        constraint.name for constraint in SimulationReview.__table__.constraints
+    }
+
+    assert "uq_simulation_review_id" in constraints
+    assert "ck_simulation_review_subject" in constraints
+    assert "ck_simulation_review_status" in constraints
+    assert "ck_simulation_review_horizon" in constraints
+    assert "ck_simulation_review_data_scope" in constraints
+    assert "ck_simulation_review_performance_scope" in constraints
+    assert "ck_simulation_review_research_only" in constraints
+    assert "ck_simulation_review_time_order" in constraints
+    assert {
+        "decision_id",
+        "source_reference_type",
+        "source_reference_id",
+        "subject",
+        "decision_input_hash",
+        "outcome_input_hash",
+        "review_input_hash",
+        "result_hash",
+        "included_in_performance",
+        "result",
+    }.issubset(SimulationReview.__table__.columns.keys())
 
 
 def test_chunked_splits_large_payloads():

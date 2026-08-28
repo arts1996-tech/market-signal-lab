@@ -38,6 +38,7 @@
 - virtual_accounts
 - virtual_account_daily_states
 - virtual_account_events
+- simulation_reviews
 - user_asset_selections
 - user_asset_selection_items
 - themes
@@ -188,13 +189,15 @@ DB変更は追加マイグレーションで行い、既存の現物ポジショ
 
 詳細は[25 シミュレーション振り返り・ナレッジ更新仕様](25_simulation_knowledge_feedback.md)を参照する。
 
-- `simulation_reviews`: 判断カード、口座イベント、取引結果、見送り結果、ベンチマーク、レビュー版を関連付ける。
+- `simulation_reviews`（KN-P0実装済み）: review_id、元判断・実行元参照、資産、期間、取引モード、判断・結果・レビュー時刻、データscope、判断・結果・レビュー入力ハッシュ、結果ハッシュ、成績算入可否、構造化結果を保持する。
 - `knowledge_items`: 観測、仮説、検証中、検証済み、結論不十分、反証、廃止の状態、適用範囲、構造化条件、版を保持する。
 - `knowledge_evidence_links`: 判断、取引、見送り、検証窓、分析結果、ニュース参照を賛成・反対証拠として関連付ける。
 - `strategy_change_proposals`: 現行戦略版との差、検証証拠、承認状態、承認者、承認時刻を保持する。
 - `knowledge_events`: 状態遷移と承認を追記型監査イベントとして保持する。
 
 結果判明後も当初の入力、判断、仮説を更新しない。訂正、反証、廃止は新しいイベントとして保存する。ニュース本文は保存権限がある場合だけ保持し、それ以外は許可された識別子、URL、時刻、要約、構造化特徴に限定する。
+
+`simulation_reviews`は同じreview_id・同じ内容の再試行だけを冪等に扱い、異なる結果による置換を拒否する。UPDATE／DELETEはDB triggerでも拒否する。見送り・約定不能は`included_in_performance=false`、決済済み仮想取引だけをtrueに固定する。現行DB制約は合成・遅延研究だけを許し、`current_market`を暗黙保存しない。
 
 ## テーマ・セクターETF
 

@@ -1185,3 +1185,85 @@ class TradeModeBacktestRun(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class SimulationReview(Base):
+    """Append-only deterministic review linked to an immutable decision."""
+
+    __tablename__ = "simulation_reviews"
+    __table_args__ = (
+        UniqueConstraint("review_id", name="uq_simulation_review_id"),
+        CheckConstraint(
+            "subject IN ('executed_trade', 'skipped', 'unfilled')",
+            name="ck_simulation_review_subject",
+        ),
+        CheckConstraint(
+            "status IN ('complete', 'insufficient_data')",
+            name="ck_simulation_review_status",
+        ),
+        CheckConstraint(
+            "horizon IN ('short_term', 'mid_term')",
+            name="ck_simulation_review_horizon",
+        ),
+        CheckConstraint(
+            "data_scope IN ('synthetic_research', 'delayed_historical')",
+            name="ck_simulation_review_data_scope",
+        ),
+        CheckConstraint(
+            "decision_mode IN ('cash', 'margin_long', 'margin_short', 'auto_select')",
+            name="ck_simulation_review_decision_mode",
+        ),
+        CheckConstraint(
+            "execution_mode IS NULL OR execution_mode IN "
+            "('cash', 'margin_long', 'margin_short')",
+            name="ck_simulation_review_execution_mode",
+        ),
+        CheckConstraint(
+            "(subject = 'executed_trade' AND included_in_performance = true "
+            "AND execution_mode IS NOT NULL) OR "
+            "(subject IN ('skipped', 'unfilled') "
+            "AND included_in_performance = false)",
+            name="ck_simulation_review_performance_scope",
+        ),
+        CheckConstraint(
+            "research_only = true",
+            name="ck_simulation_review_research_only",
+        ),
+        CheckConstraint(
+            "decision_at <= outcome_at AND outcome_at <= reviewed_at",
+            name="ck_simulation_review_time_order",
+        ),
+        Index(
+            "ix_simulation_reviews_decision",
+            "decision_id",
+            "reviewed_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    review_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    decision_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_reference_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_reference_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    asset_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    horizon: Mapped[str] = mapped_column(String(32), nullable=False)
+    subject: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    decision_mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    execution_mode: Mapped[str | None] = mapped_column(String(32))
+    data_scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    decision_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    outcome_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    review_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    decision_input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    outcome_input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    review_input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    result_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    included_in_performance: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    research_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    result: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
