@@ -1,5 +1,7 @@
 """Persist immutable versions of explicitly user-selected asset collections."""
 
+from datetime import UTC, datetime
+
 from hashlib import sha256
 import json
 from uuid import uuid4
@@ -7,7 +9,7 @@ from uuid import uuid4
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.analysis.user_selection import SelectionDraft
+from app.analysis.user_selection import SelectionDraft, TickerInput
 from app.database.models import Asset, UserAssetSelection, UserAssetSelectionItem
 
 
@@ -28,6 +30,18 @@ def _canonical_items(items: list[dict]) -> list[dict]:
 def _composition_hash(items: list[dict]) -> str:
     canonical = json.dumps(_canonical_items(items), sort_keys=True, separators=(",", ":"))
     return sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _matches_immutable_version(
+    selection: UserAssetSelection, draft: SelectionDraft, status: str
+) -> bool:
+    return (
+        selection.name == draft.name
+        and selection.created_by == draft.created_by
+        and selection.effective_from == draft.effective_from
+        and selection.rationale == draft.rationale
+        and selection.status == status
+    )
 
 
 def _validated_items(session: Session, resolution: dict) -> list[dict]:
@@ -80,22 +94,29 @@ def create_selection_version(
     if not selection_key or len(selection_key) > 64:
         raise ValueError("selection key must be between 1 and 64 characters")
 
-    matching_version = session.scalar(
+    matching_versions = list(session.scalars(
         select(UserAssetSelection).where(
             UserAssetSelection.selection_key == selection_key,
             UserAssetSelection.composition_hash == resolution["composition_hash"],
         )
+        .order_by(UserAssetSelection.version.desc())
+    ))
+    for matching_version in matching_versions:
+        if _matches_immutable_version(matching_version, draft, status):
+            return matching_version, False
+
+    latest_existing = session.scalar(
+        select(UserAssetSelection)
+        .where(UserAssetSelection.selection_key == selection_key)
+        .order_by(UserAssetSelection.version.desc())
+        .limit(1)
     )
-    if matching_version is not None:
-        if (
-            matching_version.name != draft.name
-            or matching_version.created_by != draft.created_by
-            or matching_version.effective_from != draft.effective_from
-            or matching_version.rationale != draft.rationale
-            or matching_version.status != status
-        ):
-            raise ValueError("immutable selection composition already exists with different metadata")
-        return matching_version, False
+    if (
+        latest_existing is not None
+        and latest_existing.composition_hash == resolution["composition_hash"]
+        and latest_existing.status == status
+    ):
+        raise ValueError("immutable selection composition already exists with different metadata")
 
     latest_version = session.scalar(
         select(func.max(UserAssetSelection.version)).where(
@@ -125,3 +146,78 @@ def create_selection_version(
         )
     session.flush()
     return selection, True
+
+
+def deactivate_selection_version(
+    session: Session,
+    *,
+    selection_id: str,
+    created_by: str,
+    rationale: str = "Liteで利用者が無効化",
+    effective_from: datetime | None = None,
+) -> tuple[UserAssetSelection, bool]:
+    """Append an inactive version; never mutate or delete the active version."""
+
+    selection = session.get(UserAssetSelection, selection_id)
+    if selection is None:
+        raise ValueError("user asset selection does not exist")
+    latest_version = session.scalar(
+        select(func.max(UserAssetSelection.version)).where(
+            UserAssetSelection.selection_key == selection.selection_key
+        )
+    )
+    if selection.version != latest_version:
+        raise ValueError("only the latest asset selection version can be deactivated")
+    if selection.status != "active":
+        raise ValueError("asset selection is already inactive")
+    if not created_by or len(created_by) > 100:
+        raise ValueError("created_by must be between 1 and 100 characters")
+
+    rows = list(
+        session.execute(
+            select(UserAssetSelectionItem, Asset)
+            .join(Asset, Asset.id == UserAssetSelectionItem.asset_id)
+            .where(UserAssetSelectionItem.selection_id == selection.id)
+            .order_by(UserAssetSelectionItem.display_order)
+        ).all()
+    )
+    if not rows:
+        raise ValueError("asset selection has no items")
+    items = [
+        {
+            "asset_id": item.asset_id,
+            "symbol": asset.symbol,
+            "exchange": asset.exchange or "",
+            "market": "jp" if (asset.exchange or "").upper() == "JPX" else "us",
+        }
+        for item, asset in rows
+    ]
+    draft = SelectionDraft(
+        name=selection.name,
+        created_by=created_by,
+        effective_from=effective_from or datetime.now(UTC),
+        rationale=rationale,
+        tickers=tuple(
+            TickerInput(
+                market=item["market"],
+                exchange=item["exchange"],
+                symbol=item["symbol"],
+            )
+            for item in items
+        ),
+    )
+    # The persisted assets above are the authoritative resolution. Constructing a
+    # status-only version must not re-resolve or infer different symbols.
+    resolution = {
+        "valid": True,
+        "items": items,
+        "errors": [],
+        "composition_hash": _composition_hash(items),
+    }
+    return create_selection_version(
+        session,
+        draft=draft,
+        resolution=resolution,
+        selection_key=selection.selection_key,
+        status="inactive",
+    )

@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.backtest.audit import stable_payload_hash
@@ -117,6 +117,13 @@ def snapshot_selected_universe_analysis(
         raise ValueError("user asset selection does not exist")
     if selection.status != "active":
         raise ValueError("inactive asset selection cannot start a new analysis snapshot")
+    latest_version = session.scalar(
+        select(func.max(UserAssetSelection.version)).where(
+            UserAssetSelection.selection_key == selection.selection_key
+        )
+    )
+    if selection.version != latest_version:
+        raise ValueError("only the latest asset selection version can start a new analysis snapshot")
     source_run = session.get(AssetAnalysisRun, source_asset_analysis_run_id)
     if source_run is None:
         raise ValueError("source asset analysis run does not exist")
