@@ -8,6 +8,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 from app.core.config import get_settings
 from app.core.exceptions import DataProviderError
+from app.core.security import redact_sensitive_text
 
 
 class JQuantsClient:
@@ -328,7 +329,7 @@ def to_float_or_none(value: Any) -> float | None:
 
 
 def build_http_error_message(response: httpx.Response) -> str:
-    body = response.text.strip().replace("\n", " ")
+    body = redact_sensitive_text(response.text.strip().replace("\n", " "))
     if len(body) > 240:
         body = f"{body[:240]}..."
     message = f"J-Quants rejected request ({response.status_code})"

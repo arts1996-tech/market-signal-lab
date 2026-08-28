@@ -9,6 +9,7 @@ from app.collectors.fred import FRED_INDEX_SERIES
 from app.collectors.jquants import JQuantsClient
 from app.collectors.sample_data import SAMPLE_ASSET_DEFINITIONS, generate_sample_market_data
 from app.core.exceptions import DataProviderError
+from app.core.security import redact_sensitive_text
 from app.database.repositories import (
     ASSET_DEFINITIONS,
     insert_asset_lifecycle_records,
@@ -29,7 +30,7 @@ def concise_error_message(exc: Exception) -> str:
     message = str(exc).splitlines()[0]
     if "[SQL:" in message:
         message = message.split("[SQL:", 1)[0].strip()
-    return f"{exc.__class__.__name__}: {message}"
+    return redact_sensitive_text(f"{exc.__class__.__name__}: {message}")
 
 
 def ensure_asset_master(session: Session, definitions: list[dict] | None = None) -> dict:

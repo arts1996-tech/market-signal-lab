@@ -155,6 +155,19 @@ def test_build_http_error_message_summarizes_bad_request():
     assert "outside available range" in message
 
 
+def test_build_http_error_message_masks_provider_response_credentials():
+    response = httpx.Response(
+        401,
+        text='{"message":"invalid", "api_key":"provider-secret"}',
+        request=httpx.Request("GET", "https://api.jquants.com/v2/equities/bars/daily"),
+    )
+
+    message = build_http_error_message(response)
+
+    assert "provider-secret" not in message
+    assert "[REDACTED]" in message
+
+
 def test_jquants_error_categories_keep_temporary_failures_distinct():
     assert jquants_error_category(429) == "rate_limited"
     assert jquants_error_category(503) == "provider_unavailable"

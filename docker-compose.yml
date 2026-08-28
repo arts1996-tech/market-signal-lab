@@ -5,7 +5,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-market_signal_lab}
       POSTGRES_USER: ${POSTGRES_USER:-market}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-market_password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       TZ: Asia/Tokyo
     ports:
       - "127.0.0.1:5432:5432"
@@ -26,7 +26,7 @@ services:
       - path: .env
         required: false
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://market:market_password@db:5432/market_signal_lab}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
       APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Tokyo}
       MARKET_DATA_MODE: ${MARKET_DATA_MODE:-live}
       FRED_API_KEY: ${FRED_API_KEY:-}
@@ -57,7 +57,7 @@ services:
       - path: .env
         required: false
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://market:market_password@db:5432/market_signal_lab}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
       APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Tokyo}
       MARKET_DATA_MODE: ${MARKET_DATA_MODE:-live}
       DATA_STALE_AFTER_DAYS: ${DATA_STALE_AFTER_DAYS:-7}
@@ -82,7 +82,7 @@ services:
       - path: .env
         required: false
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://market:market_password@db:5432/market_signal_lab}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
       APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Tokyo}
       JQUANTS_API_KEY: ${JQUANTS_API_KEY:-}
       JQUANTS_BASE_URL: ${JQUANTS_BASE_URL:-https://api.jquants.com}

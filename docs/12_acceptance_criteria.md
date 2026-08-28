@@ -4,6 +4,8 @@
 - Mac Apple SiliconとRaspberry Pi ARM64を想定
 - `.env.example` がある
 - 秘密情報がGitに含まれない
+- `.env.example`、アプリ設定、Composeに既定DBパスワードがなく、ComposeはDB認証情報の明示設定を起動前に検証する
+- URL内パスワード、APIキー、Bearerトークン、例外traceback、外部APIエラーの秘密マスキングを自動テストする
 - `docker compose up -d --build` で起動可能
 - READMEに起動・停止・ログ・テスト・バックアップ手順
 - pytestが通る

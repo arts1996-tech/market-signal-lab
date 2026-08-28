@@ -63,7 +63,7 @@ docker/               運用テンプレート
 
 ### 1. 環境変数
 
-初回だけ`.env.example`を`.env`へコピーし、必要な値を設定します。APIキーやパスワードをGitへ追加しないでください。
+初回だけ`.env.example`を`.env`へコピーし、必要な値を設定します。APIキーやパスワードをGitへ追加しないでください。`DATABASE_URL`と`POSTGRES_PASSWORD`には安全な値を明示設定し、URL内のDBパスワードと`POSTGRES_PASSWORD`を一致させます。テンプレートに既定パスワードはなく、空のままではComposeが起動前に停止します。
 
 ```bash
 cp .env.example .env
@@ -75,6 +75,8 @@ cp .env.example .env
 - `JQUANTS_API_KEY`: J-Quants収集
 - `SEC_USER_AGENT`: SEC Company Facts
 - `MARKET_DATA_MODE=demo`: 明示的なデモモード
+
+ログと保存用エラーメッセージは、URL内パスワード、APIキー、トークン等を`[REDACTED]`へ置換します。ただし、秘密値をログ出力へ渡してよいという意味ではありません。`.env`や秘密値そのものを画面、Issue、コミットへ貼り付けないでください。
 
 ### 2. 起動
 
