@@ -20,6 +20,7 @@ from app.database.models import (
     SelectedUniverseBacktestAssetResult,
     SelectedUniverseBacktestRun,
     SelectedUniverseValidationClaim,
+    TradeModeBacktestRun,
 )
 from app.database.repositories import chunked
 from app.core.config import Settings
@@ -263,6 +264,26 @@ def test_selected_universe_validation_claims_preserve_period_and_classification(
     assert {"validation_claim_id", "evaluation_classification"}.issubset(
         SelectedUniverseBacktestRun.__table__.columns.keys()
     )
+
+
+def test_trade_mode_backtest_runs_are_append_only_research_series():
+    constraints = {
+        constraint.name for constraint in TradeModeBacktestRun.__table__.constraints
+    }
+
+    assert "uq_trade_mode_backtest_run_id" in constraints
+    assert "ck_trade_mode_backtest_mode" in constraints
+    assert "ck_trade_mode_backtest_status" in constraints
+    assert "ck_trade_mode_backtest_data_scope" in constraints
+    assert "ck_trade_mode_backtest_research_only" in constraints
+    assert {
+        "run_id",
+        "horizon",
+        "trade_mode",
+        "initial_cash",
+        "input_hash",
+        "result",
+    }.issubset(TradeModeBacktestRun.__table__.columns.keys())
 
 
 def test_chunked_splits_large_payloads():

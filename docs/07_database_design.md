@@ -27,6 +27,7 @@
 - trading_signals
 - backtest_runs
 - backtest_results
+- trade_mode_backtest_runs
 - portfolios
 - positions
 - api_fetch_logs
@@ -154,6 +155,15 @@
 - `virtual_account_daily_states`に現物拘束額、信用必要保証金、利用可能余力、建玉総額、総レバレッジ、口座維持率を保持できるようにする。
 - `backtest_runs`と`backtest_results`は現物、信用買い、信用売り、`auto_select`を別系列・別ルール版として識別する。
 - `auto_select`では比較した全モードの入力ハッシュ、評価、却下理由を監査可能にする。
+
+### `trade_mode_backtest_runs`（MT-P4実装済み）
+
+- run_id / scope / horizon / trade_mode / account_name
+- initial_cash / strategy_version / execution_version
+- data_scope: synthetic_research / delayed_historical
+- status / research_only / input_hash / result / created_at
+
+現物、信用買い、信用売り、`auto_select`を別行として保存する研究用台帳である。`run_id`は一意で、同じ内容の再試行だけを冪等に扱う。異なる内容による上書きとUPDATE／DELETEは、サービス境界とDB triggerの両方で拒否する。`current_market`と実注文を保存できない制約を持ち、結果JSONには判断、費用、品質警告、監査manifestを含める。
 
 3種類の信用スナップショットは`source + provider_record_id + fetched_at`を取得版の一意境界とし、UPDATE／DELETEをDB triggerで拒否する。同じ取得版・同じ入力は冪等に扱い、同じ外部記録を後から再取得した場合は新しい`fetched_at`の行として追記する。判断時点読出しではsourceとbrokerを明示し、`effective_from`、`effective_to`、`available_at`、`fetched_at`をすべて満たす履歴だけを使う。
 

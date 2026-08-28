@@ -14,6 +14,7 @@ import math
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.analysis.margin_risk import MarginAnalysisCard, MarginAnalysisStatus
+from app.analysis.mode_selection import CashExecutionCard
 from app.analysis.trade_modes import TradeMode
 from app.backtest.audit import stable_payload_hash
 from app.providers.margin import MarginMarket, MarginTradingSnapshot
@@ -37,6 +38,7 @@ class MarginEventType(StrEnum):
     FORCED_LIQUIDATION_SCHEDULED = "forced_liquidation_scheduled"
     FORCED_LIQUIDATION_DEFERRED = "forced_liquidation_deferred"
     EXIT_DEFERRED = "exit_deferred"
+    POSITION_CASHFLOW = "position_cashflow"
 
 
 class MarginExecutionPolicy(BaseModel):
@@ -95,7 +97,7 @@ class MarginPositionTerms(BaseModel):
     currency: str = Field(pattern=r"^[A-Z]{3}$")
     mode: TradeMode
     initial_margin_rate: float = Field(gt=0, le=1)
-    maintenance_margin_rate: float = Field(gt=0, le=1)
+    maintenance_margin_rate: float = Field(ge=0, le=1)
     minimum_margin_amount: float = Field(ge=0)
     margin_interest_rate: float | None = Field(default=None, ge=0)
     stock_lending_fee: float | None = Field(default=None, ge=0)
@@ -104,7 +106,7 @@ class MarginPositionTerms(BaseModel):
         default=None,
         ge=0,
     )
-    repayment_term_days: int = Field(gt=0)
+    repayment_term_days: int | None = Field(default=None, gt=0)
     forced_liquidation_rule_version: str = Field(min_length=1, max_length=64)
     effective_from: datetime
     effective_to: datetime | None = None
@@ -124,9 +126,27 @@ class MarginPositionTerms(BaseModel):
             raise ValueError("fetched_at cannot be before available_at")
         if self.initial_margin_rate < self.maintenance_margin_rate:
             raise ValueError("initial margin rate cannot be below maintenance rate")
-        if self.mode == TradeMode.MARGIN_LONG:
+        if self.mode == TradeMode.CASH:
+            if self.initial_margin_rate != 1 or self.maintenance_margin_rate != 0:
+                raise ValueError("cash terms require 100% initial and 0% maintenance")
+            if self.minimum_margin_amount != 0:
+                raise ValueError("cash terms cannot require a minimum margin amount")
+            if any(
+                value is not None
+                for value in (
+                    self.margin_interest_rate,
+                    self.stock_lending_fee,
+                    self.borrow_cost,
+                    self.reverse_stock_borrow_fee_per_share_day,
+                    self.repayment_term_days,
+                )
+            ):
+                raise ValueError("cash terms cannot contain margin-only costs or term")
+        elif self.mode == TradeMode.MARGIN_LONG:
             if self.margin_interest_rate is None:
                 raise ValueError("margin_long terms require margin_interest_rate")
+            if self.repayment_term_days is None:
+                raise ValueError("margin_long terms require repayment_term_days")
             if any(
                 value is not None
                 for value in (
@@ -137,6 +157,8 @@ class MarginPositionTerms(BaseModel):
             ):
                 raise ValueError("margin_long terms cannot contain short-only costs")
         elif self.mode == TradeMode.MARGIN_SHORT:
+            if self.repayment_term_days is None:
+                raise ValueError("margin_short terms require repayment_term_days")
             if self.stock_lending_fee is None:
                 raise ValueError("margin_short terms require stock_lending_fee")
             if self.market == MarginMarket.US and self.borrow_cost is None:
@@ -156,7 +178,7 @@ class MarginPositionTerms(BaseModel):
             if self.market == MarginMarket.JP and self.borrow_cost is not None:
                 raise ValueError("JP margin_short terms cannot use US borrow cost")
         else:
-            raise ValueError("position terms accept only margin_long or margin_short")
+            raise ValueError("position terms accept only cash, margin_long or margin_short")
         if self.market == MarginMarket.JP and self.currency != "JPY":
             raise ValueError("Japanese margin terms must use JPY")
         if self.market == MarginMarket.US and self.currency != "USD":
@@ -191,8 +213,12 @@ class MarginEntryPlan(BaseModel):
                 raise ValueError("entry plan timestamps must be timezone-aware")
         if self.entry_at <= self.decision_at:
             raise ValueError("entry_at must be after decision_at")
-        if self.mode not in {TradeMode.MARGIN_LONG, TradeMode.MARGIN_SHORT}:
-            raise ValueError("entry plan accepts only margin_long or margin_short")
+        if self.mode not in {
+            TradeMode.CASH,
+            TradeMode.MARGIN_LONG,
+            TradeMode.MARGIN_SHORT,
+        }:
+            raise ValueError("entry plan accepts cash, margin_long or margin_short")
         return self
 
 
@@ -267,7 +293,7 @@ class MarginPositionState(BaseModel):
     last_accrual_at: datetime
     held_sessions: int = Field(default=0, ge=0)
     expected_holding_days: int = Field(gt=0)
-    repayment_deadline: datetime
+    repayment_deadline: datetime | None
     last_mark_price: float = Field(gt=0)
     last_fx_rate: float = Field(gt=0)
     forced_liquidation_pending_reason: str | None = None
@@ -287,6 +313,7 @@ class MarginAccountState(BaseModel):
     available_cash: float
     realized_pnl: float = 0.0
     financing_cost_paid: float = Field(default=0.0, ge=0)
+    position_cashflow_pnl: float = 0.0
     positions: tuple[MarginPositionState, ...] = ()
     events: tuple[dict, ...] = ()
     state_as_of: datetime | None = None
@@ -394,6 +421,50 @@ def margin_position_terms_from_snapshot(
     )
 
 
+def cash_position_terms(
+    *,
+    asset_id: str,
+    symbol: str,
+    market: MarginMarket,
+    currency: str,
+    as_of: datetime,
+    source: str = "deterministic_cash_research",
+    source_version: str = "cash-terms-v1",
+) -> MarginPositionTerms:
+    """Create explicit 100%-funded terms for the mixed-mode research engine."""
+
+    cutoff = _utc(as_of)
+    payload = {
+        "asset_id": asset_id,
+        "symbol": symbol,
+        "market": market.value,
+        "currency": currency,
+        "as_of": cutoff,
+        "source": source,
+        "source_version": source_version,
+    }
+    return MarginPositionTerms(
+        provider_record_id=f"cash:{asset_id}:{source_version}",
+        input_hash=stable_payload_hash(payload),
+        asset_id=asset_id,
+        symbol=symbol,
+        source=source,
+        source_version=source_version,
+        terms_basis=MarginTermsBasis.VERSIONED_RESEARCH_PROXY,
+        market=market,
+        currency=currency,
+        mode=TradeMode.CASH,
+        initial_margin_rate=1,
+        maintenance_margin_rate=0,
+        minimum_margin_amount=0,
+        repayment_term_days=None,
+        forced_liquidation_rule_version="not_applicable_cash",
+        effective_from=cutoff,
+        available_at=cutoff,
+        fetched_at=cutoff,
+    )
+
+
 def new_margin_account(
     *,
     account_name: str,
@@ -419,7 +490,7 @@ def _round_lot(value: float, lot_size: int) -> int:
 
 
 def _direction(mode: TradeMode) -> int:
-    return 1 if mode == TradeMode.MARGIN_LONG else -1
+    return 1 if mode in {TradeMode.CASH, TradeMode.MARGIN_LONG} else -1
 
 
 def _position_mark_values(position: MarginPositionState) -> dict[str, float]:
@@ -428,17 +499,23 @@ def _position_mark_values(position: MarginPositionState) -> dict[str, float]:
     )
     entry_value = position.entry_notional
     gross_pnl = _direction(position.mode) * (current_value - entry_value)
-    position_margin_equity = (
-        position.margin_reserved
-        + gross_pnl
-        - position.accrued_financing_cost
+    account_equity_value = (
+        position.margin_reserved + gross_pnl - position.accrued_financing_cost
     )
+    is_margin = position.mode in {
+        TradeMode.MARGIN_LONG,
+        TradeMode.MARGIN_SHORT,
+    }
+    position_margin_equity = account_equity_value if is_margin else 0.0
+    margin_notional = current_value if is_margin else 0.0
     maintenance_required = (
-        current_value * position.margin_terms.maintenance_margin_rate
+        margin_notional * position.margin_terms.maintenance_margin_rate
     )
     return {
         "current_notional": current_value,
         "gross_pnl": gross_pnl,
+        "account_equity_value": account_equity_value,
+        "margin_notional": margin_notional,
         "margin_equity": position_margin_equity,
         "maintenance_required": maintenance_required,
     }
@@ -447,17 +524,20 @@ def _position_mark_values(position: MarginPositionState) -> dict[str, float]:
 def margin_account_summary(account: MarginAccountState) -> dict[str, float | None]:
     marks = [_position_mark_values(position) for position in account.positions]
     gross_notional = sum(item["current_notional"] for item in marks)
+    account_position_equity = sum(item["account_equity_value"] for item in marks)
+    margin_notional = sum(item["margin_notional"] for item in marks)
     margin_equity = sum(item["margin_equity"] for item in marks)
     maintenance_required = sum(item["maintenance_required"] for item in marks)
-    equity = account.available_cash + margin_equity
+    equity = account.available_cash + account_position_equity
     return {
         "equity": equity,
         "gross_notional": gross_notional,
+        "margin_notional": margin_notional,
         "gross_leverage": None if equity <= 0 else gross_notional / equity,
         "margin_equity": margin_equity,
         "maintenance_required": maintenance_required,
         "maintenance_ratio": (
-            None if gross_notional <= 0 else margin_equity / gross_notional
+            None if margin_notional <= 0 else margin_equity / margin_notional
         ),
     }
 
@@ -659,7 +739,7 @@ def open_margin_position(
     *,
     previous_volume: float | None,
     terms: MarginPositionTerms,
-    analysis_card: MarginAnalysisCard,
+    analysis_card: MarginAnalysisCard | CashExecutionCard,
     policy: MarginExecutionPolicy | None = None,
 ) -> MarginEntryResult:
     """Open a virtual position after rechecking the frozen analysis boundary."""
@@ -675,20 +755,22 @@ def open_margin_position(
         raise ValueError("entry plan, terms and analysis card identity must match")
     if plan.mode != terms.mode or plan.mode != analysis_card.mode:
         raise ValueError("entry plan, terms and analysis card modes must match")
-    if analysis_card.market != terms.market:
+    if isinstance(analysis_card, MarginAnalysisCard) and analysis_card.market != terms.market:
         raise ValueError("margin terms market must match the analysis card")
     if _utc(analysis_card.as_of) != _utc(plan.decision_at):
         raise ValueError("analysis card as_of must match decision_at")
     if _utc(analysis_card.data_as_of) > _utc(plan.decision_at):
         return _reject_entry(account, plan, ("analysis_data_not_known_at_decision",))
-    if (
-        analysis_card.provider_record_id is not None
-        and analysis_card.provider_record_id != terms.provider_record_id
-    ):
-        raise ValueError("margin terms must match the analyzed provider record")
+    if isinstance(analysis_card, MarginAnalysisCard):
+        if analysis_card.provider_record_id is not None and (
+            analysis_card.provider_record_id != terms.provider_record_id
+        ):
+            raise ValueError("margin terms must match the analyzed provider record")
+    elif plan.mode != TradeMode.CASH:
+        raise ValueError("margin modes require a margin analysis card")
     if _utc(bar.price_time) != _utc(plan.entry_at):
         raise ValueError("entry bar must match entry_at")
-    if account.state_as_of is not None and _utc(plan.entry_at) <= _utc(account.state_as_of):
+    if account.state_as_of is not None and _utc(plan.entry_at) < _utc(account.state_as_of):
         raise ValueError("account state must advance forward in time")
     cutoff = _utc(plan.decision_at)
     if terms.available_at > cutoff or terms.fetched_at > cutoff:
@@ -697,18 +779,27 @@ def open_margin_position(
         terms.effective_to is not None and cutoff >= terms.effective_to
     ):
         return _reject_entry(account, plan, ("margin_terms_not_effective",))
-    if analysis_card.analysis_status in {
-        MarginAnalysisStatus.BLOCKED,
-        MarginAnalysisStatus.NOT_ELIGIBLE,
-        MarginAnalysisStatus.INSUFFICIENT_DATA,
-    }:
+    blocked_statuses = {
+        MarginAnalysisStatus.BLOCKED.value,
+        MarginAnalysisStatus.NOT_ELIGIBLE.value,
+        MarginAnalysisStatus.INSUFFICIENT_DATA.value,
+        "blocked",
+    }
+    analysis_status = str(analysis_card.analysis_status)
+    if analysis_status in blocked_statuses:
         return _reject_entry(account, plan, ("margin_analysis_not_eligible",))
     if (
-        analysis_card.analysis_status == MarginAnalysisStatus.WARNING
-        and not plan.human_review_approved
+        analysis_status == MarginAnalysisStatus.WARNING.value
+        and not (
+            plan.human_review_approved
+            or (
+                isinstance(analysis_card, CashExecutionCard)
+                and analysis_card.human_review_approved
+            )
+        )
     ):
         return _reject_entry(account, plan, ("margin_analysis_review_not_approved",))
-    if analysis_card.hard_block_codes:
+    if isinstance(analysis_card, MarginAnalysisCard) and analysis_card.hard_block_codes:
         return _reject_entry(account, plan, ("margin_analysis_hard_block",))
     account_summary = margin_account_summary(account)
     if any(
@@ -716,10 +807,15 @@ def open_margin_position(
         for position in account.positions
     ):
         return _reject_entry(account, plan, ("forced_liquidation_pending",))
-    if account.positions and account_summary["maintenance_ratio"] is not None:
+    margin_positions = [
+        position
+        for position in account.positions
+        if position.mode in {TradeMode.MARGIN_LONG, TradeMode.MARGIN_SHORT}
+    ]
+    if margin_positions and account_summary["maintenance_ratio"] is not None:
         highest_rate = max(
             position.margin_terms.maintenance_margin_rate
-            for position in account.positions
+            for position in margin_positions
         )
         if float(account_summary["maintenance_ratio"]) <= (
             highest_rate + selected_policy.maintenance_warning_buffer
@@ -731,13 +827,13 @@ def open_margin_position(
         return _reject_entry(account, plan, ("symbol_already_held",))
     if not bar.tradable or bar.suspended or bar.special_quote:
         return _reject_entry(account, plan, ("entry_not_tradable",))
-    if plan.mode == TradeMode.MARGIN_LONG and bar.limit_up:
+    if plan.mode in {TradeMode.CASH, TradeMode.MARGIN_LONG} and bar.limit_up:
         return _reject_entry(account, plan, ("margin_long_limit_up_no_fill",))
     if plan.mode == TradeMode.MARGIN_SHORT and bar.limit_down:
         return _reject_entry(account, plan, ("margin_short_limit_down_no_fill",))
 
     entry_price = _entry_execution_price(plan.mode, bar.open, selected_policy)
-    if plan.mode == TradeMode.MARGIN_LONG:
+    if plan.mode in {TradeMode.CASH, TradeMode.MARGIN_LONG}:
         if not plan.stop_price < entry_price < plan.take_profit_price:
             return _reject_entry(account, plan, ("invalid_margin_long_exit_levels",))
     elif not plan.take_profit_price < entry_price < plan.stop_price:
@@ -811,12 +907,19 @@ def open_margin_position(
         planned_loss=planned_loss,
         last_accrual_at=_utc(plan.entry_at),
         expected_holding_days=plan.expected_holding_days,
-        repayment_deadline=_utc(plan.entry_at)
-        + timedelta(days=terms.repayment_term_days),
+        repayment_deadline=(
+            None
+            if terms.repayment_term_days is None
+            else _utc(plan.entry_at) + timedelta(days=terms.repayment_term_days)
+        ),
         last_mark_price=entry_price,
         last_fx_rate=bar.fx_rate_to_account,
         analysis_input_hash=analysis_card.input_hash,
-        analysis_rule_version=analysis_card.risk_rule_version,
+        analysis_rule_version=(
+            analysis_card.risk_rule_version
+            if isinstance(analysis_card, MarginAnalysisCard)
+            else analysis_card.rule_version
+        ),
         margin_terms=terms,
     )
     event = _event(
@@ -877,6 +980,8 @@ def _financing_cost(
     if days == 0:
         return 0.0, 0
     selected_terms = terms or position.margin_terms
+    if position.mode == TradeMode.CASH:
+        return 0.0, days
     if position.mode == TradeMode.MARGIN_LONG:
         annualized_rate = float(selected_terms.margin_interest_rate)
     else:
@@ -965,10 +1070,15 @@ def _session_financing_cost(
     updated = position.model_copy(
         update={
             "margin_terms": terms_update,
-            "repayment_deadline": min(
-                _utc(position.repayment_deadline),
-                _utc(position.opened_at)
-                + timedelta(days=terms_update.repayment_term_days),
+            "repayment_deadline": (
+                None
+                if position.repayment_deadline is None
+                or terms_update.repayment_term_days is None
+                else min(
+                    _utc(position.repayment_deadline),
+                    _utc(position.opened_at)
+                    + timedelta(days=terms_update.repayment_term_days),
+                )
             ),
         }
     )
@@ -978,7 +1088,7 @@ def _session_financing_cost(
 def _can_close(position: MarginPositionState, bar: MarginOhlcBar) -> bool:
     if not bar.tradable or bar.suspended or bar.special_quote:
         return False
-    if position.mode == TradeMode.MARGIN_LONG and bar.limit_down:
+    if position.mode in {TradeMode.CASH, TradeMode.MARGIN_LONG} and bar.limit_down:
         return False
     if position.mode == TradeMode.MARGIN_SHORT and bar.limit_up:
         return False
@@ -1038,11 +1148,83 @@ def _close_position(
     return updated, event
 
 
+def apply_position_cashflow(
+    account: MarginAccountState,
+    *,
+    event_at: datetime,
+    entitlement_at: datetime,
+    candidate_id: str,
+    position_id: str,
+    symbol: str,
+    mode: TradeMode,
+    quantity: int,
+    amount_per_share: float,
+    fx_rate_to_account: float,
+    cashflow_kind: str,
+    input_hash: str,
+) -> tuple[MarginAccountState, dict]:
+    """Apply a frozen dividend/distribution entitlement without broker activity."""
+
+    if quantity <= 0 or amount_per_share < 0 or fx_rate_to_account <= 0:
+        raise ValueError("position cashflow amount inputs are invalid")
+    if mode not in {TradeMode.CASH, TradeMode.MARGIN_LONG, TradeMode.MARGIN_SHORT}:
+        raise ValueError("position cashflow mode is not executable")
+    allowed_cashflow_kinds = {
+        "cash_dividend",
+        "cash_distribution",
+        "short_dividend_equivalent",
+    }
+    if cashflow_kind not in allowed_cashflow_kinds:
+        raise ValueError("unsupported position cashflow kind")
+    if mode == TradeMode.MARGIN_SHORT:
+        if cashflow_kind != "short_dividend_equivalent":
+            raise ValueError("short positions require a dividend-equivalent cashflow")
+    elif cashflow_kind == "short_dividend_equivalent":
+        raise ValueError("long positions cannot receive a short dividend equivalent")
+    if len(input_hash) != 64 or any(
+        character not in "0123456789abcdef" for character in input_hash
+    ):
+        raise ValueError("position cashflow input_hash must be a SHA-256 hex digest")
+    direction = -1 if mode == TradeMode.MARGIN_SHORT else 1
+    signed_amount = direction * quantity * amount_per_share * fx_rate_to_account
+    event = _event(
+        MarginEventType.POSITION_CASHFLOW,
+        event_at=event_at,
+        symbol=symbol,
+        details={
+            "candidate_id": candidate_id,
+            "position_id": position_id,
+            "mode": mode.value,
+            "quantity": quantity,
+            "amount_per_share": amount_per_share,
+            "fx_rate_to_account": fx_rate_to_account,
+            "signed_amount": signed_amount,
+            "cashflow_kind": cashflow_kind,
+            "entitlement_at": _utc(entitlement_at).isoformat(),
+            "input_hash": input_hash,
+            "real_order_sent": False,
+        },
+    )
+    updated = account.model_copy(
+        update={
+            "available_cash": account.available_cash + signed_amount,
+            "realized_pnl": account.realized_pnl + signed_amount,
+            "position_cashflow_pnl": account.position_cashflow_pnl + signed_amount,
+            "events": (*account.events, event),
+            "state_as_of": max(
+                _utc(event_at),
+                _utc(account.state_as_of) if account.state_as_of is not None else _utc(event_at),
+            ),
+        }
+    )
+    return updated, event
+
+
 def _regular_exit(
     position: MarginPositionState,
     bar: MarginOhlcBar,
 ) -> tuple[float | None, str | None]:
-    if position.mode == TradeMode.MARGIN_LONG:
+    if position.mode in {TradeMode.CASH, TradeMode.MARGIN_LONG}:
         if bar.open <= position.stop_price:
             return bar.open, "stop_loss_gap"
         if bar.open >= position.take_profit_price:
@@ -1061,6 +1243,80 @@ def _regular_exit(
         if bar.low <= position.take_profit_price:
             return position.take_profit_price, "take_profit"
     return None, None
+
+
+def evaluate_margin_maintenance(
+    account: MarginAccountState,
+    *,
+    event_at: datetime,
+    policy: MarginExecutionPolicy | None = None,
+) -> tuple[MarginAccountState, tuple[dict, ...]]:
+    """Apply warning or next-open liquidation state without advancing prices."""
+
+    selected_policy = policy or MarginExecutionPolicy()
+    working = account
+    events: list[dict] = []
+    margin_positions = [
+        position
+        for position in working.positions
+        if position.mode in {TradeMode.MARGIN_LONG, TradeMode.MARGIN_SHORT}
+    ]
+    summary = margin_account_summary(working)
+    if margin_positions and float(summary["margin_equity"]) <= float(
+        summary["maintenance_required"]
+    ):
+        scheduled: list[MarginPositionState] = []
+        for position in working.positions:
+            if position.mode == TradeMode.CASH:
+                scheduled.append(position)
+                continue
+            if position.forced_liquidation_pending_reason is not None:
+                scheduled.append(position)
+                continue
+            reason = "maintenance_margin_breach"
+            scheduled.append(
+                position.model_copy(
+                    update={"forced_liquidation_pending_reason": reason}
+                )
+            )
+            event = _event(
+                MarginEventType.FORCED_LIQUIDATION_SCHEDULED,
+                event_at=event_at,
+                symbol=position.symbol,
+                details={
+                    "position_id": position.position_id,
+                    "reason": reason,
+                    "maintenance_ratio": summary["maintenance_ratio"],
+                    "maintenance_required": summary["maintenance_required"],
+                    "timing": selected_policy.forced_liquidation_timing,
+                    "real_order_sent": False,
+                },
+            )
+            events.append(event)
+            working = working.model_copy(update={"events": (*working.events, event)})
+        working = working.model_copy(update={"positions": tuple(scheduled)})
+    elif margin_positions and summary["maintenance_ratio"] is not None:
+        highest_rate = max(
+            position.margin_terms.maintenance_margin_rate
+            for position in margin_positions
+        )
+        if float(summary["maintenance_ratio"]) <= (
+            highest_rate + selected_policy.maintenance_warning_buffer
+        ):
+            event = _event(
+                MarginEventType.MAINTENANCE_WARNING,
+                event_at=event_at,
+                symbol=None,
+                details={
+                    "maintenance_ratio": summary["maintenance_ratio"],
+                    "warning_threshold": (
+                        highest_rate + selected_policy.maintenance_warning_buffer
+                    ),
+                },
+            )
+            events.append(event)
+            working = working.model_copy(update={"events": (*working.events, event)})
+    return working, tuple(events)
 
 
 def advance_margin_account_session(
@@ -1119,7 +1375,10 @@ def advance_margin_account_session(
             terms_update=terms_by_symbol.get(position.symbol),
         )
         pending_reason = position.forced_liquidation_pending_reason
-        if session_at >= _utc(position.repayment_deadline):
+        if (
+            position.repayment_deadline is not None
+            and session_at >= _utc(position.repayment_deadline)
+        ):
             pending_reason = pending_reason or "repayment_deadline_reached"
         exit_pending_reason = position.exit_pending_reason
         if pending_reason is not None or exit_pending_reason is not None:
@@ -1276,58 +1535,12 @@ def advance_margin_account_session(
         )
         session_events.append(accrual_event)
 
-    summary = margin_account_summary(working)
-    if working.positions and float(summary["margin_equity"]) <= float(
-        summary["maintenance_required"]
-    ):
-        scheduled: list[MarginPositionState] = []
-        for position in working.positions:
-            if position.forced_liquidation_pending_reason is not None:
-                scheduled.append(position)
-                continue
-            reason = "maintenance_margin_breach"
-            scheduled.append(
-                position.model_copy(
-                    update={"forced_liquidation_pending_reason": reason}
-                )
-            )
-            event = _event(
-                MarginEventType.FORCED_LIQUIDATION_SCHEDULED,
-                event_at=session_at,
-                symbol=position.symbol,
-                details={
-                    "position_id": position.position_id,
-                    "reason": reason,
-                    "maintenance_ratio": summary["maintenance_ratio"],
-                    "maintenance_required": summary["maintenance_required"],
-                    "timing": selected_policy.forced_liquidation_timing,
-                    "real_order_sent": False,
-                },
-            )
-            session_events.append(event)
-            working = working.model_copy(update={"events": (*working.events, event)})
-        working = working.model_copy(update={"positions": tuple(scheduled)})
-    elif working.positions and summary["maintenance_ratio"] is not None:
-        highest_rate = max(
-            position.margin_terms.maintenance_margin_rate
-            for position in working.positions
-        )
-        if float(summary["maintenance_ratio"]) <= (
-            highest_rate + selected_policy.maintenance_warning_buffer
-        ):
-            event = _event(
-                MarginEventType.MAINTENANCE_WARNING,
-                event_at=session_at,
-                symbol=None,
-                details={
-                    "maintenance_ratio": summary["maintenance_ratio"],
-                    "warning_threshold": (
-                        highest_rate + selected_policy.maintenance_warning_buffer
-                    ),
-                },
-            )
-            session_events.append(event)
-            working = working.model_copy(update={"events": (*working.events, event)})
+    working, maintenance_events = evaluate_margin_maintenance(
+        working,
+        event_at=session_at,
+        policy=selected_policy,
+    )
+    session_events.extend(maintenance_events)
 
     working = working.model_copy(update={"state_as_of": session_at})
     final_summary = margin_account_summary(working)

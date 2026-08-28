@@ -138,6 +138,7 @@ def test_new_margin_account_starts_with_independent_2_5m_research_balance():
     assert margin_account_summary(account) == {
         "equity": 2_500_000,
         "gross_notional": 0,
+        "margin_notional": 0,
         "gross_leverage": 0.0,
         "margin_equity": 0,
         "maintenance_required": 0,

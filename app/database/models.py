@@ -1138,3 +1138,50 @@ class VirtualAccountEvent(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class TradeModeBacktestRun(Base):
+    """Append-only research result for one cash/margin/auto-select series."""
+
+    __tablename__ = "trade_mode_backtest_runs"
+    __table_args__ = (
+        UniqueConstraint("run_id", name="uq_trade_mode_backtest_run_id"),
+        CheckConstraint(
+            "trade_mode IN ('cash', 'margin_long', 'margin_short', 'auto_select')",
+            name="ck_trade_mode_backtest_mode",
+        ),
+        CheckConstraint(
+            "status IN ('success', 'insufficient_data')",
+            name="ck_trade_mode_backtest_status",
+        ),
+        CheckConstraint(
+            "data_scope IN ('synthetic_research', 'delayed_historical')",
+            name="ck_trade_mode_backtest_data_scope",
+        ),
+        CheckConstraint("initial_cash > 0", name="ck_trade_mode_backtest_initial_cash"),
+        CheckConstraint("research_only = true", name="ck_trade_mode_backtest_research_only"),
+        Index(
+            "ix_trade_mode_backtest_lookup",
+            "horizon",
+            "trade_mode",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    scope: Mapped[str] = mapped_column(String(64), nullable=False)
+    horizon: Mapped[str] = mapped_column(String(32), nullable=False)
+    trade_mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    account_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    initial_cash: Mapped[float] = mapped_column(Numeric(20, 4), nullable=False)
+    strategy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    execution_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    data_scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    research_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    result: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

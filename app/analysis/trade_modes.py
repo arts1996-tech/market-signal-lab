@@ -112,7 +112,7 @@ def assess_trade_mode_data(
         return TradeModeEligibility(
             mode=selected_mode,
             status=EligibilityStatus.INSUFFICIENT_DATA,
-            reason_codes=("auto_select_strategy_comparison_not_implemented",),
+            reason_codes=("auto_select_requires_three_mode_comparison_input",),
             human_review_required=True,
             provider_record_id=(None if snapshot is None else snapshot.provider_record_id),
         )

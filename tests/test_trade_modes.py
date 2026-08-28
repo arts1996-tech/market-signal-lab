@@ -84,7 +84,7 @@ def test_cash_does_not_require_margin_data_but_missing_margin_data_never_falls_b
     assert results["auto_select"].status == EligibilityStatus.INSUFFICIENT_DATA
     assert results["margin_long"].reason_codes == ("margin_snapshot_missing",)
     assert results["auto_select"].reason_codes == (
-        "auto_select_strategy_comparison_not_implemented",
+        "auto_select_requires_three_mode_comparison_input",
     )
 
 

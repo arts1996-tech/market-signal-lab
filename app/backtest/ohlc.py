@@ -119,6 +119,9 @@ def _empty_result(
 ) -> dict:
     empty = pd.DataFrame()
     return {
+        "status": "success",
+        "scope": "cash_mode_backtest",
+        "trade_mode": "cash",
         "account_name": account_name,
         "account_currency": fx_accounting_policy.account_currency,
         "initial_cash": float(initial_cash),
@@ -189,6 +192,7 @@ def _empty_result(
             or fx_gate["warnings"]
             else "complete"
         ),
+        "real_order_sent": False,
     }
 
 
@@ -1630,6 +1634,9 @@ def simulate_ohlc_portfolio(
             drop=True
         )
     return {
+        "status": "success",
+        "scope": "cash_mode_backtest",
+        "trade_mode": "cash",
         "account_name": account_name,
         "account_currency": fx_accounting_policy.account_currency,
         "initial_cash": float(initial_cash),
@@ -1700,4 +1707,5 @@ def simulate_ohlc_portfolio(
             or fx_gate["warnings"]
             else "complete"
         ),
+        "real_order_sent": False,
     }
