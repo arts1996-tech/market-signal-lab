@@ -77,6 +77,7 @@ cp .env.example .env
 - `MARKET_DATA_MODE=demo`: 明示的なデモモード
 - `DEPLOYMENT_TARGET=mac`: MacとRaspberry Piの公開規則を分離
 - `STREAMLIT_HOST_BIND_ADDRESS=127.0.0.1`: MacではLab/LiteをこのMacだけへ公開
+- `JOB_LOCK_DIR=/app/data/job_locks`: 同一ホスト上のDockerコンテナで共有するジョブ排他領域
 
 ログと保存用エラーメッセージは、URL内パスワード、APIキー、トークン等を`[REDACTED]`へ置換します。ただし、秘密値をログ出力へ渡してよいという意味ではありません。`.env`や秘密値そのものを画面、Issue、コミットへ貼り付けないでください。
 
@@ -149,12 +150,15 @@ docker compose exec app python jobs/run_short_term_analysis.py
 docker compose exec app python jobs/run_spillover_analysis.py --jp-symbol 13060
 docker compose exec app python jobs/run_mid_term_analysis.py
 docker compose exec app python jobs/run_backtest.py
+docker compose run --rm app python jobs/run_selected_universe_forward.py
 
 # 運用・監査
 docker compose exec app python jobs/check_operations.py
 docker compose exec app python jobs/verify_audit_integrity.py
 docker compose exec app python jobs/backup_database.py
 ```
+
+通常の前向き口座、明示的に有効化した指定集合口座、重い分析は共有ファイルロックで多重起動を拒否します。後発実行は一時失敗の終了コード`75`となり、同日再試行できます。通常口座と指定集合口座は別系列ですが、どちらも価格読込・分析中は重い分析ロックを共有します。指定集合日次ジョブは、追記型の有効化操作が保存された集合版だけを処理し、画面表示、分析実行、集合作成だけでは開始しません。現時点では定期スケジュールへ追加しておらず、`LITE-P4`の明示確認画面完成後に有効化します。
 
 J-Quants Freeは遅延とレート制限を考慮し、少数件から確認します。Raspberry Piの常駐collectorが動いている間、同じAPIキーでMac collectorを同時実行しません。収集設計と採用状態は[データソース方針](docs/data_sources.md)を参照してください。
 

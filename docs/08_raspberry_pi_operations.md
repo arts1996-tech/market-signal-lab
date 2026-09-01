@@ -76,6 +76,7 @@ Raspberry Pi停止中の正式記録をMacの古いDBで代替しない。
 - 本番マイグレーション前にrevision、バックアップ、downgrade可否、停止影響を確認する。
 - Compose起動時にマイグレーションを自動適用しない。破壊的変更は別移行として承認を得る。
 - 配置後は対象テスト、HTTPヘルス、DB revision、collector継続、ログを確認する。
+- Pythonジョブの`JOB_LOCK_DIR`は`/app/data/job_locks`とし、プロジェクトのbind mountを通じてComposeの一時コンテナ間でも共有する。ロック競合の終了コード`75`は再試行可能な多重起動拒否であり、計算失敗と区別する。
 
 ## 8. バックアップ・復旧
 
@@ -110,5 +111,7 @@ docker compose exec db dropdb -U market market_signal_lab_restore_check
 - 外部アクセスが必要な場合はTailscale等の料金、規約、認証、失効、復旧を確認し、承認後に導入する。
 - ログの秘密マスキングをテストする。
 - 将来のSlack通知は補助であり、Slack障害時もDB記録とローカル運用確認を維持する。
+- 通常前向き口座は`forward-standard`、指定集合口座は`forward-selected`、全銘柄分析・相関回帰・バックテストは`analysis-heavy`で排他する。前向き口座は分析中に`analysis-heavy`も取得し、ラズパイのCPU・DBを重い処理で重複占有しない。
+- 指定集合日次ジョブをcronへ追加するのは、Liteの明示有効化画面と運用確認が完成してからとする。有効化イベントのない集合版をスケジュール対象にしない。
 
 本運用は仮想評価と研究のためのものであり、実注文や予測能力の証明には使わない。

@@ -38,6 +38,7 @@ services:
       BACKUP_DIR: ${BACKUP_DIR:-/backups}
       DEPLOYMENT_TARGET: ${DEPLOYMENT_TARGET:-mac}
       STREAMLIT_HOST_BIND_ADDRESS: ${STREAMLIT_HOST_BIND_ADDRESS:-127.0.0.1}
+      JOB_LOCK_DIR: ${JOB_LOCK_DIR:-/app/data/job_locks}
       PYTHONPATH: /app
     depends_on:
       db:
@@ -65,6 +66,7 @@ services:
       DATA_STALE_AFTER_DAYS: ${DATA_STALE_AFTER_DAYS:-7}
       DEPLOYMENT_TARGET: ${DEPLOYMENT_TARGET:-mac}
       STREAMLIT_HOST_BIND_ADDRESS: ${STREAMLIT_HOST_BIND_ADDRESS:-127.0.0.1}
+      JOB_LOCK_DIR: ${JOB_LOCK_DIR:-/app/data/job_locks}
       PYTHONPATH: /app
     depends_on:
       db:

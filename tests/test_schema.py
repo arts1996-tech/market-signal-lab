@@ -19,6 +19,7 @@ from app.database.models import (
     UserAssetSelectionAnalysisRun,
     SelectedUniverseBacktestAssetResult,
     SelectedUniverseBacktestRun,
+    SelectedUniverseForwardActivationEvent,
     SelectedUniverseValidationClaim,
     SimulationReview,
     TradeModeBacktestRun,
@@ -137,6 +138,24 @@ def test_virtual_account_ledger_has_freeze_and_event_idempotency_constraints():
     assert "decision_track" in VirtualAccountEvent.__table__.columns
     for column in ("equity", "unrealized_pnl", "cumulative_pnl", "maximum_drawdown"):
         assert VirtualAccountDailyState.__table__.columns[column].nullable
+
+
+def test_selected_forward_activation_events_are_explicit_and_idempotent():
+    constraints = {
+        constraint.name
+        for constraint in SelectedUniverseForwardActivationEvent.__table__.constraints
+    }
+
+    assert "uq_selected_forward_activation_request" in constraints
+    assert {
+        "selection_id",
+        "enabled",
+        "request_id",
+        "requested_at",
+        "requested_by",
+        "activation_version",
+        "input_hash",
+    }.issubset(SelectedUniverseForwardActivationEvent.__table__.columns.keys())
 
 
 def test_margin_snapshots_are_separate_append_only_ready_histories():

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from app.core.logging import configure_logging
+from app.core.job_lock import HEAVY_ANALYSIS_LOCK, prevent_concurrent_runs
 from app.database.session import SessionLocal
 from app.services.market_service import record_job
 from app.analysis.demo_portfolio import run_demo_portfolio_environment
@@ -29,6 +30,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+@prevent_concurrent_runs(HEAVY_ANALYSIS_LOCK)
 def main() -> None:
     args = parse_args()
     configure_logging()

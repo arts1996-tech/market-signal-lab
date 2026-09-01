@@ -562,6 +562,36 @@ class UserAssetSelectionItem(Base):
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class SelectedUniverseForwardActivationEvent(Base):
+    __tablename__ = "selected_universe_forward_activation_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "request_id", name="uq_selected_forward_activation_request"
+        ),
+        Index(
+            "ix_selected_forward_activation_latest",
+            "selection_id",
+            "requested_at",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=uuid_pk)
+    request_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    selection_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("user_asset_selections.id"), nullable=False
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    requested_by: Mapped[str] = mapped_column(String(100), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    activation_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class UserAssetSelectionAnalysisRun(Base):
     __tablename__ = "user_asset_selection_analysis_runs"
     __table_args__ = (

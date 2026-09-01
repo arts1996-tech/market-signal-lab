@@ -31,3 +31,4 @@ def test_mac_forward_shadow_wrapper_classifies_host_failures():
     assert "docker_unavailable" in source
     assert "database_unavailable" in source
     assert "jobs/run_forward_shadow.py --daily --not-before-jst 18:30" in source
+    assert 'record_attempt "skipped" "concurrent_run" "$STATUS"' in source

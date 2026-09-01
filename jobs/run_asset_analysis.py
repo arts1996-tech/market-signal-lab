@@ -5,11 +5,13 @@ import json
 
 from app.backtest.audit import json_value
 from app.core.logging import configure_logging
+from app.core.job_lock import HEAVY_ANALYSIS_LOCK, prevent_concurrent_runs
 from app.database.session import SessionLocal
 from app.services.asset_analysis_service import run_all_asset_analysis
 from app.services.market_service import record_job
 
 
+@prevent_concurrent_runs(HEAVY_ANALYSIS_LOCK)
 def main() -> None:
     configure_logging()
     started_at = datetime.now(UTC)

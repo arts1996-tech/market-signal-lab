@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime
 import argparse
 from pathlib import Path
 
@@ -6,9 +6,13 @@ import pandas as pd
 
 from app.analysis.demo_portfolio import run_demo_portfolio_environment
 from app.analysis.decision_tracks import DECISION_TRACK_DELAYED
-from app.analysis.market_calendar import is_exchange_session
 from app.backtest.shadow import write_forward_shadow_snapshot
 from app.core.config import get_settings
+from app.core.job_lock import (
+    HEAVY_ANALYSIS_LOCK,
+    STANDARD_FORWARD_LOCK,
+    prevent_concurrent_runs,
+)
 from app.core.logging import configure_logging
 from app.database.session import SessionLocal
 from app.services.forward_account_ledger import (
@@ -25,6 +29,10 @@ from app.services.forward_account_monitor import (
     record_forward_job_status,
 )
 from app.services.audit_integrity import AuditIntegrityError, verify_audit_chain
+from app.services.forward_job_schedule import (
+    canonical_daily_decision_at,
+    daily_schedule_reason,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -59,17 +67,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _parse_time(value: str | None) -> time | None:
-    if value is None:
-        return None
-    try:
-        hour_text, minute_text = value.split(":", maxsplit=1)
-        parsed = time(hour=int(hour_text), minute=int(minute_text))
-    except (TypeError, ValueError) as exc:
-        raise ValueError("not-before-jst must use HH:MM") from exc
-    return parsed
-
-
 def daily_preflight_reason(
     output_dir: str | Path,
     account_names: list[str],
@@ -78,28 +75,18 @@ def daily_preflight_reason(
     not_before_jst: str | None = None,
     skip_existing_files: bool = True,
 ) -> str | None:
+    schedule_reason = daily_schedule_reason(
+        observed_at, not_before_jst=not_before_jst
+    )
+    if schedule_reason:
+        return schedule_reason
     local = observed_at.tz_convert("Asia/Tokyo")
-    local_date = local.normalize()
-    if not is_exchange_session(local_date, "XTKS"):
-        return f"{local_date.date()} is not a Tokyo Stock Exchange session"
-    cutoff = _parse_time(not_before_jst)
-    if cutoff is not None and local.time().replace(tzinfo=None) < cutoff:
-        return f"current JST time is before the {not_before_jst} recording cutoff"
     date_label = local.strftime("%Y-%m-%d")
     paths = [Path(output_dir) / name / f"{date_label}.json" for name in account_names]
     if skip_existing_files and paths and all(path.exists() for path in paths):
         return f"all account snapshots for {date_label} are already frozen"
     return None
-
-
-def canonical_daily_decision_at(observed_at: pd.Timestamp) -> pd.Timestamp:
-    """Use one stable 18:30 JST decision timestamp across same-day retries."""
-
-    local = observed_at.tz_convert("Asia/Tokyo")
-    canonical = local.normalize() + pd.Timedelta(hours=18, minutes=30)
-    return canonical.tz_convert("UTC")
-
-
+@prevent_concurrent_runs(STANDARD_FORWARD_LOCK, HEAVY_ANALYSIS_LOCK)
 def main() -> None:
     args = parse_args()
     configure_logging()

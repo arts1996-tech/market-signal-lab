@@ -30,6 +30,11 @@ if [[ $STATUS -eq 0 ]]; then
   exit 0
 fi
 
+if [[ $STATUS -eq 75 ]]; then
+  record_attempt "skipped" "concurrent_run" "$STATUS"
+  exit "$STATUS"
+fi
+
 if ! "$DOCKER_BIN" compose exec -T db \
   sh -c 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null 2>&1; then
   record_attempt "error" "database_unavailable" "$STATUS"

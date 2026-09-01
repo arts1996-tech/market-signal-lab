@@ -1,11 +1,13 @@
 from datetime import UTC, datetime
 
 from app.core.logging import configure_logging
+from app.core.job_lock import HEAVY_ANALYSIS_LOCK, prevent_concurrent_runs
 from app.database.session import SessionLocal
 from app.services.analysis_service import load_market_analysis, persist_us_japan_correlation_results
 from app.services.market_service import record_job
 
 
+@prevent_concurrent_runs(HEAVY_ANALYSIS_LOCK)
 def main() -> None:
     configure_logging()
     started_at = datetime.now(UTC)

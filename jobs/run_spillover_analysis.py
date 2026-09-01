@@ -4,6 +4,7 @@ import argparse
 from datetime import UTC, datetime
 
 from app.core.logging import configure_logging
+from app.core.job_lock import HEAVY_ANALYSIS_LOCK, prevent_concurrent_runs
 from app.database.session import SessionLocal
 from app.services.analysis_service import persist_us_japan_spillover_features
 from app.services.market_service import record_job
@@ -16,6 +17,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+@prevent_concurrent_runs(HEAVY_ANALYSIS_LOCK)
 def main() -> None:
     args = parse_args()
     configure_logging()
