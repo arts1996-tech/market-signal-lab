@@ -15,6 +15,8 @@
 
 ## ネットワーク
 - StreamlitとPostgreSQLを無制限にインターネット公開しない
+- MacのStreamlitホスト公開は既定で`127.0.0.1`に限定する。Raspberry Piでは現在確認済みのLAN IPを明示し、`0.0.0.0`によるホスト全インターフェース公開を禁止する
+- コンテナ内部の`--server.address=0.0.0.0`とホスト側ポート公開を分離し、外部公開範囲は`STREAMLIT_HOST_BIND_ADDRESS`だけで管理する
 - 外部アクセスはTailscale等を想定
 - PostgreSQLは内部ネットワーク中心
 - SlackはSocket Mode
@@ -101,6 +103,7 @@
 - 証券会社別条件の分離と、認証情報・注文・ブラウザ自動操作が存在しないこと
 - `.env.example`とComposeに既定DBパスワードがなく、必須秘密が空なら起動前に拒否されること
 - 設定repr、通常ログ、書式引数、例外traceback、外部API応答、保存用エラー要約で秘密値がマスキングされること
+- MacのLab/Liteが`127.0.0.1`だけへ公開され、Raspberry Piの公開先は確認済みLAN IPの明示設定を必要とすること
 
 ## 投資分析品質
 - ウォークフォワード検証

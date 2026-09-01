@@ -75,8 +75,12 @@ cp .env.example .env
 - `JQUANTS_API_KEY`: J-Quants収集
 - `SEC_USER_AGENT`: SEC Company Facts
 - `MARKET_DATA_MODE=demo`: 明示的なデモモード
+- `DEPLOYMENT_TARGET=mac`: MacとRaspberry Piの公開規則を分離
+- `STREAMLIT_HOST_BIND_ADDRESS=127.0.0.1`: MacではLab/LiteをこのMacだけへ公開
 
 ログと保存用エラーメッセージは、URL内パスワード、APIキー、トークン等を`[REDACTED]`へ置換します。ただし、秘密値をログ出力へ渡してよいという意味ではありません。`.env`や秘密値そのものを画面、Issue、コミットへ貼り付けないでください。
+
+Compose内のStreamlitはコンテナ間通信のため`0.0.0.0`で待ち受けますが、Macのホスト公開は`DEPLOYMENT_TARGET=mac`かつ`STREAMLIT_HOST_BIND_ADDRESS=127.0.0.1`に限定します。Raspberry Piへ配置する場合は`DEPLOYMENT_TARGET=raspberry_pi`とし、接続時に確認した現在のプライベートLAN IPv4を明示設定します。起動ランナーは対象とアドレスの組み合わせを検証し、不正ならStreamlitを起動しません。DHCPでIPが変わる可能性があるため、過去のIPを固定的に使いません。`0.0.0.0`をホスト公開値に設定したり、ルーターでポート転送したりしません。
 
 ### 2. 起動
 

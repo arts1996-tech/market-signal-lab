@@ -71,6 +71,8 @@ Raspberry Pi停止中の正式記録をMacの古いDBで代替しない。
 
 - Macで全関連テストを成功させてからGit経由で配置する。
 - `.env`、秘密、ログ、DB、バックアップをGitへ含めない。
+- 配置直前にRaspberry Piの現在のLAN IPを確認し、`.env`へ`DEPLOYMENT_TARGET=raspberry_pi`と`STREAMLIT_HOST_BIND_ADDRESS=<現在のLAN IP>`を明示する。DHCPで変わり得る過去IPを流用しない。
+- `STREAMLIT_HOST_BIND_ADDRESS=0.0.0.0`、空値、ホスト名は使用しない。Macは`127.0.0.1`、Raspberry Piは確認済みのRFC1918 LAN IPだけを使う。将来Tailscaleを承認した場合は、検証規則とテストをTailscale IPへ対応させてから利用する。
 - 本番マイグレーション前にrevision、バックアップ、downgrade可否、停止影響を確認する。
 - Compose起動時にマイグレーションを自動適用しない。破壊的変更は別移行として承認を得る。
 - 配置後は対象テスト、HTTPヘルス、DB revision、collector継続、ログを確認する。
@@ -102,6 +104,9 @@ docker compose exec db dropdb -U market market_signal_lab_restore_check
 ## 9. ネットワークと障害対応
 
 - StreamlitとPostgreSQLを無制限にインターネット公開しない。
+- Compose内部ではStreamlitが`0.0.0.0`で待ち受けるが、ホスト側公開は`STREAMLIT_HOST_BIND_ADDRESS`で制限する。コンテナ内部待受を外部公開許可と解釈しない。
+- Streamlit起動ランナーはMacの非ループバック、Raspberry Piの非プライベートIP、`0.0.0.0`、IPv6、ホスト名を拒否する。
+- ポート転送、UPnP、公開リバースプロキシを設定しない。Raspberry PiのIP変更後にUIへ到達できない場合は、現在IPを再確認して`.env`を更新し、公開範囲を再検証する。
 - 外部アクセスが必要な場合はTailscale等の料金、規約、認証、失効、復旧を確認し、承認後に導入する。
 - ログの秘密マスキングをテストする。
 - 将来のSlack通知は補助であり、Slack障害時もDB記録とローカル運用確認を維持する。

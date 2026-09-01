@@ -26,4 +26,4 @@ RUN pip install . --no-deps
 
 EXPOSE 8501
 
-CMD ["streamlit", "run", "app/dashboard/streamlit_app.py", "--server.address=0.0.0.0", "--server.port=8501"]
+CMD ["python", "jobs/run_streamlit.py", "--app", "lab", "--port", "8501"]

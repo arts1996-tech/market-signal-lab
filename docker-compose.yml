@@ -36,18 +36,20 @@ services:
       JQUANTS_MIN_REQUEST_INTERVAL_SECONDS: ${JQUANTS_MIN_REQUEST_INTERVAL_SECONDS:-15}
       DATA_STALE_AFTER_DAYS: ${DATA_STALE_AFTER_DAYS:-7}
       BACKUP_DIR: ${BACKUP_DIR:-/backups}
+      DEPLOYMENT_TARGET: ${DEPLOYMENT_TARGET:-mac}
+      STREAMLIT_HOST_BIND_ADDRESS: ${STREAMLIT_HOST_BIND_ADDRESS:-127.0.0.1}
       PYTHONPATH: /app
     depends_on:
       db:
         condition: service_healthy
     ports:
-      - "8501:8501"
+      - "${STREAMLIT_HOST_BIND_ADDRESS:-127.0.0.1}:8501:8501"
     volumes:
       - .:/app
       - ./logs:/app/logs
       - ./backups:/backups
     command: >
-      streamlit run app/dashboard/streamlit_app.py --server.address=0.0.0.0 --server.port=8501
+      python jobs/run_streamlit.py --app lab --port 8501
 
   lite:
     build:
@@ -61,18 +63,20 @@ services:
       APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Tokyo}
       MARKET_DATA_MODE: ${MARKET_DATA_MODE:-live}
       DATA_STALE_AFTER_DAYS: ${DATA_STALE_AFTER_DAYS:-7}
+      DEPLOYMENT_TARGET: ${DEPLOYMENT_TARGET:-mac}
+      STREAMLIT_HOST_BIND_ADDRESS: ${STREAMLIT_HOST_BIND_ADDRESS:-127.0.0.1}
       PYTHONPATH: /app
     depends_on:
       db:
         condition: service_healthy
     ports:
-      - "8502:8502"
+      - "${STREAMLIT_HOST_BIND_ADDRESS:-127.0.0.1}:8502:8502"
     volumes:
       - .:/app
       - ./logs:/app/logs
       - ./backups:/backups
     command: >
-      streamlit run app/lite_dashboard/streamlit_app.py --server.address=0.0.0.0 --server.port=8502
+      python jobs/run_streamlit.py --app lite --port 8502
 
   jquants-collector:
     build:
